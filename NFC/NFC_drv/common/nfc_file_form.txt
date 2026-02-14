@@ -1,0 +1,45 @@
+See COPYING.txt for license details.
+
+Filetype: M1 NFC device
+Version: 4
+Device type: <Mifare Classic|Ultralight/NTAG|DESFire|ISO14443-4A|Felica|ISO15693>
+UID: <HEX bytes>
+# The following items are recorded if possible in the Tech A family
+ATQA: <xx yy>
+SAK: <zz>
+# ISO-DEP(4A) family is based on recording the entire ATS in one line
+ATS: <aa bb cc ...>
+Notes: <text>
+
+
+# Ultralight/NTAG(Type 2)
+Page 0: <b0 b1 b2 b3>
+Page 1: <...>
+...
+
+
+# Mifare Classic
+Mifare Classic type: <Mini|1K|4K>
+Data format version: 2
+Block 0: <16Byte>
+Block 1: <16Byte>
+...
+
+
+# DESFire / ISO14443-4A
+Application 000001: <meta...>  # Select
+File 01 Size: 000080           # Select
+File 01 Data: <HEX...>         # Select
+
+
+# Minimal format
+Filetype: M1 NFC device
+Version: 4
+Device type: Ultralight/NTAG
+UID: 04 A2 BC 12 34 56 78
+ATQA: 44 00
+SAK: 00
+
+
+# is Comment
+file_name.nfc
