@@ -175,6 +175,7 @@ uint8_t ir_universal_parse_file(const char *path, S_IR_Device_t *out)
             ir_save_block(out, &cur, in_block);
             memset(&cur, 0, sizeof(cur));
             strncpy(cur.name, val_str, IR_UNIVERSAL_NAME_LEN_MAX - 1);
+            cur.name[IR_UNIVERSAL_NAME_LEN_MAX - 1] = '\0';
             in_block = 1;
             continue;
         }
@@ -580,6 +581,11 @@ static bool ir_browse_level(const char *base_path,
         }
 
         if (btn.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK) {
+            /* Validate selected name doesn't contain path traversal */
+            if (strstr(names[sel], "..") || strchr(names[sel], '/') || strchr(names[sel], '\\')) {
+                continue; /* Skip invalid entries with path separators */
+            }
+            
             /* Build child path */
             snprintf(child_path, sizeof(child_path), "%s/%s", base_path, names[sel]);
 
