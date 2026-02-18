@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+#
+# Build script for M1 Firmware
+# 
+# Usage: ./build [clean]
+#   - Without arguments: performs a full build
+#   - With 'clean' argument: cleans build artifacts and rebuilds
+#
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Configuration
+PROJECT_NAME="MonstaTek_M1_v0801-ChrisUFO"
+BUILD_DIR="out/build/gcc-14_2_build-release"
+DIST_DIR="distribution"
+
+echo "========================================"
+echo "M1 Firmware Build Script"
+echo "========================================"
+
+# Clean option
+if [ "$1" == "clean" ]; then
+    echo "Cleaning build artifacts..."
+    rm -rf "$BUILD_DIR"
+    rm -rf "$DIST_DIR"
+    echo "Clean complete."
+    echo ""
+fi
+
+# Create distribution directory
+mkdir -p "$DIST_DIR"
+
+# Clean old distribution files
+echo "Cleaning old distribution files..."
+rm -f "$DIST_DIR"/*
+
+# Configure build (only if build directory doesn't exist)
+if [ ! -d "$BUILD_DIR" ]; then
+    echo "Configuring build..."
+    cmake --preset gcc-14_2_build-release
+fi
+
+# Build
+echo ""
+echo "Building firmware..."
+echo "----------------------------------------"
+cmake --build "$BUILD_DIR" --target "$PROJECT_NAME" 2>&1 || true
+
+# Check if binary was created
+if [ ! -f "$BUILD_DIR/$PROJECT_NAME.bin" ]; then
+    echo "ERROR: Build failed - .bin file not found"
+    exit 1
+fi
+
+# Append CRC32 (build may fail at post-build step, so do it manually)
+echo ""
+echo "Appending CRC32 to firmware..."
+python tools/append_crc32.py "$BUILD_DIR/$PROJECT_NAME.bin"
+
+# Copy files to distribution
+echo ""
+echo "Copying files to $DIST_DIR/..."
+echo "----------------------------------------"
+
+# Files to distribute
+cp "$BUILD_DIR/$PROJECT_NAME.bin" "$DIST_DIR/"
+cp "$BUILD_DIR/$PROJECT_NAME.hex" "$DIST_DIR/"
+cp "$BUILD_DIR/$PROJECT_NAME.elf" "$DIST_DIR/"
+cp "$BUILD_DIR/$PROJECT_NAME.md5" "$DIST_DIR/" 2>/dev/null || true
+
+# Display results
+echo ""
+echo "========================================"
+echo "Build Complete!"
+echo "========================================"
+echo ""
+echo "Distribution files:"
+ls -lh "$DIST_DIR/"
+echo ""
+echo "Files:"
+echo "  - $PROJECT_NAME.bin  : STM32 firmware (with CRC32)"
+echo "  - $PROJECT_NAME.hex   : HEX format for programmers"
+echo "  - $PROJECT_NAME.elf   : Debug symbols"
+echo "  - $PROJECT_NAME.md5   : MD5 checksum"
+echo ""
+echo "Location: $DIST_DIR/"
+echo ""
+echo "Next steps:"
+echo "  1. Copy $PROJECT_NAME.bin to SD card"
+echo "  2. Insert SD card into M1"
+echo "  3. Navigate to Settings → Firmware Update"
+echo ""

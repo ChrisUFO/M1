@@ -50,16 +50,29 @@ Adjust the path in `CMakePresets.json` if your toolchain is installed elsewhere.
 
 ### Build steps
 
+**Quick Build (Recommended):**
+```bash
+./build          # Build firmware and copy to distribution/
+./build clean    # Clean build artifacts and rebuild
+```
+
+This script automatically:
+- Configures the build (if needed)
+- Compiles the firmware
+- Appends the required CRC32 checksum
+- Copies all output files to `distribution/`
+
 **STM32CubeIDE:**
 Open the project and build in the IDE. Output: `./Release/MonstaTek_M1_v0801-ChrisUFO.elf`
 
-**Command line (CMake + Ninja):**
+**Manual CMake build:**
 ```bash
 cmake --preset gcc-14_2_build-release
 cmake --build out/build/gcc-14_2_build-release
+python tools/append_crc32.py out/build/gcc-14_2_build-release/MonstaTek_M1_v0801-ChrisUFO.bin
 ```
 
-Output directory: `out/build/gcc-14_2_build-release/`
+**Output files** (in `distribution/` or `out/build/gcc-14_2_build-release/`):
 
 | File | Use |
 |------|-----|
