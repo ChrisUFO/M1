@@ -96,8 +96,12 @@ static char *ir_trim(char *s)
 /* Parse a hex byte string like "07 00 00 00" -> return first two bytes as uint16 */
 static uint16_t ir_parse_hex_field(const char *s)
 {
-    unsigned int b0 = 0, b1 = 0;
-    sscanf(s, "%x %x", &b0, &b1);
+    char *endptr;
+    unsigned long b0 = strtoul(s, &endptr, 16);
+    if (s == endptr) {
+        return 0; /* Conversion failed */
+    }
+    unsigned long b1 = strtoul(endptr, NULL, 16);
     return (uint16_t)(b0 | (b1 << 8));
 }
 
@@ -133,8 +137,8 @@ uint8_t ir_universal_parse_file(const char *path, S_IR_Device_t *out)
     FIL     f;
     FRESULT fr;
     char    line[IR_LINE_BUF_LEN];
-    char    key[32], val[96];
     char   *p, *eq;
+    char   *key_str, *val_str;
     uint8_t in_block;
     S_IR_Cmd_t cur;
 
@@ -163,16 +167,14 @@ uint8_t ir_universal_parse_file(const char *path, S_IR_Device_t *out)
             continue;
 
         *eq = '\0';
-        strncpy(key, ir_trim(p),      sizeof(key) - 1);
-        strncpy(val, ir_trim(eq + 1), sizeof(val) - 1);
-        key[sizeof(key)-1] = '\0';
-        val[sizeof(val)-1] = '\0';
+        key_str = ir_trim(p);
+        val_str = ir_trim(eq + 1);
 
         /* Detect start of a new button block */
-        if (strcmp(key, "name") == 0) {
+        if (strcmp(key_str, "name") == 0) {
             ir_save_block(out, &cur, in_block);
             memset(&cur, 0, sizeof(cur));
-            strncpy(cur.name, val, IR_UNIVERSAL_NAME_LEN_MAX - 1);
+            strncpy(cur.name, val_str, IR_UNIVERSAL_NAME_LEN_MAX - 1);
             in_block = 1;
             continue;
         }
@@ -180,27 +182,27 @@ uint8_t ir_universal_parse_file(const char *path, S_IR_Device_t *out)
         if (!in_block)
             continue;
 
-        if (strcmp(key, "type") == 0) {
+        if (strcmp(key_str, "type") == 0) {
             /* Only support parsed (not raw) signals */
-            if (strcmp(val, "parsed") != 0)
+            if (strcmp(val_str, "parsed") != 0)
                 in_block = 0; /* skip this block */
             continue;
         }
 
-        if (strcmp(key, "protocol") == 0) {
-            cur.irmp.protocol = ir_universal_proto_to_id(val);
+        if (strcmp(key_str, "protocol") == 0) {
+            cur.irmp.protocol = ir_universal_proto_to_id(val_str);
             if (cur.irmp.protocol == IRMP_UNKNOWN_PROTOCOL)
                 in_block = 0; /* unsupported protocol, skip */
             continue;
         }
 
-        if (strcmp(key, "address") == 0) {
-            cur.irmp.address = ir_parse_hex_field(val);
+        if (strcmp(key_str, "address") == 0) {
+            cur.irmp.address = ir_parse_hex_field(val_str);
             continue;
         }
 
-        if (strcmp(key, "command") == 0) {
-            cur.irmp.command = ir_parse_hex_field(val);
+        if (strcmp(key_str, "command") == 0) {
+            cur.irmp.command = ir_parse_hex_field(val_str);
             cur.irmp.flags   = 0;
             cur.valid        = true;
             continue;
@@ -492,8 +494,13 @@ static bool ir_browse_level(const char *base_path,
                              const char *title,
                              uint8_t     level)
 {
-    /* Static storage for names to avoid large stack allocations */
-    static char names[IR_LIST_MAX_ENTRIES][IR_NAME_BUF_LEN];
+    /* Heap allocation for names to avoid permanent RAM usage in .bss */
+    char (*names)[IR_NAME_BUF_LEN] = pvPortMalloc(IR_LIST_MAX_ENTRIES * IR_NAME_BUF_LEN);
+    if (!names) {
+        ir_ui_show_error("No memory");
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        return true;
+    }
     const char *ptrs[IR_LIST_MAX_ENTRIES];
     S_M1_Buttons_Status btn;
     S_M1_Main_Q_t   q_item;
@@ -517,6 +524,7 @@ static bool ir_browse_level(const char *base_path,
     if (count == 0) {
         ir_ui_show_error("Empty folder");
         vTaskDelay(pdMS_TO_TICKS(1500));
+        vPortFree(names);
         return true;
     }
 
@@ -591,6 +599,8 @@ static bool ir_browse_level(const char *base_path,
             continue;
         }
     }
+
+    vPortFree(names);
 }
 
 /* -------------------------------------------------------------------------

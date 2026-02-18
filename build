@@ -47,7 +47,7 @@ fi
 echo ""
 echo "Building firmware..."
 echo "----------------------------------------"
-cmake --build "$BUILD_DIR" --target "$PROJECT_NAME" 2>&1 || true
+cmake --build "$BUILD_DIR" --target "$PROJECT_NAME"
 
 # Check if binary was created
 if [ ! -f "$BUILD_DIR/$PROJECT_NAME.bin" ]; then
