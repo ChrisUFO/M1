@@ -12,6 +12,13 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Add ARM toolchain to PATH if not already present
+ARM_TOOLCHAIN="/c/Program Files (x86)/Arm/GNU Toolchain mingw-w64-i686-arm-none-eabi/bin"
+if [ -d "$ARM_TOOLCHAIN" ] && [[ ":$PATH:" != *":$ARM_TOOLCHAIN:"* ]]; then
+    export PATH="$ARM_TOOLCHAIN:$PATH"
+    echo "Added ARM toolchain to PATH"
+fi
+
 # Configuration
 PROJECT_NAME="MonstaTek_M1_v0801-ChrisUFO"
 BUILD_DIR="out/build/gcc-14_2_build-release"
@@ -57,10 +64,7 @@ fi
 
 echo "Build successful (binary created)"
 
-# Append CRC32 (build may fail at post-build step, so do it manually)
-echo ""
-echo "Appending CRC32 to firmware..."
-python tools/append_crc32.py "$BUILD_DIR/$PROJECT_NAME.bin"
+# Note: CRC32 is appended by CMake post-build command
 
 # Copy files to distribution
 echo ""
