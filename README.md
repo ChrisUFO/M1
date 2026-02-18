@@ -290,6 +290,46 @@ cp -r Flipper-IRDB/TV /path/to/sdcard/IR/
 cp -r Flipper-IRDB/AC /path/to/sdcard/IR/
 ```
 
+**⚠️ Important: Memory Limitation**
+
+The M1 can display a maximum of **32 items per folder** due to memory constraints. 
+The Flipper IRDB database may contain more than 32 manufacturers per category 
+(e.g., TV has 113+ manufacturers).
+
+**To avoid "IR Error: No Memory" when browsing:**
+
+Organize manufacturers into subfolders by starting letter:
+
+```
+IR/
+  TV/
+    A/
+      Apple/
+        Apple_TV.ir
+    B/
+      Bose/
+        Bose_Soundbar.ir
+    C/
+      Samsung/
+        Samsung_BN59-01315J.ir
+```
+
+**Quick setup script:**
+
+```bash
+cd Flipper-IRDB/TV
+mkdir -p {A..Z}
+for dir in */; do
+    first_char="${dir:0:1}"
+    if [[ $first_char =~ [A-Z] ]]; then
+        mv "$dir" "$first_char/"
+    fi
+done
+```
+
+This structure keeps memory usage safe while maintaining full compatibility with 
+the Flipper IRDB file format.
+
 ### Supported IR protocols
 
 NEC, NECext, NEC42, NEC16, RC5, RC5X, RC6, RC6A, Samsung32, Samsung48,
