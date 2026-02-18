@@ -290,28 +290,24 @@ cp -r Flipper-IRDB/TV /path/to/sdcard/IR/
 cp -r Flipper-IRDB/AC /path/to/sdcard/IR/
 ```
 
-**⚠️ Important: Memory Limitation**
+**⚠️ Important: Temporary Workaround for Large Categories**
 
-The M1 can display a maximum of **32 items per folder** due to memory constraints. 
-The Flipper IRDB database may contain more than 32 manufacturers per category 
-(e.g., TV has 113+ manufacturers).
+The M1 can currently display a maximum of **32 items per folder** due to memory 
+constraints. Categories with many manufacturers (e.g., TV with 100+) will show
+"IR Error: No Memory".
 
-**To avoid "IR Error: No Memory" when browsing:**
-
-Organize manufacturers into subfolders by starting letter:
+**Current workaround** - Group manufacturers by starting letter until pagination
+is implemented (see [Issue #14](https://github.com/ChrisUFO/M1/issues/14)):
 
 ```
 IR/
   TV/
     A/
       Apple/
-        Apple_TV.ir
     B/
       Bose/
-        Bose_Soundbar.ir
-    C/
+    S/
       Samsung/
-        Samsung_BN59-01315J.ir
 ```
 
 **Quick setup script:**
@@ -327,8 +323,8 @@ for dir in */; do
 done
 ```
 
-This structure keeps memory usage safe while maintaining full compatibility with 
-the Flipper IRDB file format.
+> **Note:** This is a temporary workaround. [Issue #14](https://github.com/ChrisUFO/M1/issues/14) 
+> tracks the implementation of pagination which will remove this limitation.
 
 ### Supported IR protocols
 
