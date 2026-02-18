@@ -63,22 +63,43 @@ Output directory: `out/build/gcc-14_2_build-release/`
 
 | File | Use |
 |------|-----|
-| `MonstaTek_M1_v0801-ChrisUFO.bin` | SD card firmware update (required) |
-| `MonstaTek_M1_v0801-ChrisUFO.md5` | MD5 checksum for firmware validation (required) |
+| `MonstaTek_M1_v0801-ChrisUFO.bin` | STM32 firmware (includes CRC32) |
+| `MonstaTek_M1_v0801-ChrisUFO.md5` | MD5 hash of .bin file |
 | `MonstaTek_M1_v0801-ChrisUFO.hex` | STM32CubeProgrammer / JLink |
 | `MonstaTek_M1_v0801-ChrisUFO.elf` | Debug sessions |
 
 ## Installing Firmware via SD Card
 
-**Note:** Both `.bin` and `.md5` files are required for firmware installation.
+The M1 has two separate firmware components that can be updated:
 
-1. Copy both files to your SD card (any folder):
-   - `MonstaTek_M1_v0801-ChrisUFO.bin`
-   - `MonstaTek_M1_v0801-ChrisUFO.md5`
+### STM32 Firmware (Main Firmware)
+
+This is the primary firmware that runs the M1 device.
+
+**File:** `MonstaTek_M1_v0801-ChrisUFO.bin` (includes embedded CRC32 checksum)
+
+1. Copy the `.bin` file to your SD card (any folder)
 2. Insert the SD card into the M1
-3. On the device navigate to **Settings → Firmware Update → Image file**
+3. Navigate to **Settings → Firmware Update → Image file**
 4. Browse to and select `MonstaTek_M1_v0801-ChrisUFO.bin`
-5. Confirm — the device validates the MD5 checksum, flashes the firmware, and reboots automatically
+5. Confirm — the device validates the embedded CRC32, flashes the firmware, and reboots automatically
+
+**Note:** The build system automatically appends a CRC32 checksum to the end of the `.bin` file. Do not use the `.md5` file for STM32 updates.
+
+### ESP32 Firmware (WiFi/Bluetooth Module)
+
+This firmware is for the ESP32-C6 wireless module and uses a different update mechanism.
+
+**Files required:**
+- `esp32_firmware.bin` (the ESP32 firmware image)
+- `esp32_firmware.md5` (MD5 checksum file)
+
+1. Copy both files to your SD card under `/0:/esp32/`
+2. Navigate to **Settings → ESP32 Firmware Update**
+3. Select the firmware file
+4. The device validates the MD5 checksum before flashing
+
+**Note:** The ESP32 firmware requires both `.bin` and `.md5` files with matching names.
 
 ## Universal Remote (this fork)
 

@@ -105,6 +105,14 @@ add_custom_command(
     #COMMENT "Generating .bin file"
 )
 
+# Command to append CRC32 to .bin file (required for STM32 firmware update)
+add_custom_command(
+    COMMAND ${CMAKE_COMMAND} -E echo "Appending CRC32 to ${CMAKE_PROJECT_NAME}.bin"
+    TARGET ${CMAKE_PROJECT_NAME}
+    POST_BUILD
+    COMMAND python ${CMAKE_SOURCE_DIR}/tools/append_crc32.py ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin
+)
+
 # Command to generate .hex file
 add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E echo "Generating hex file ${CMAKE_PROJECT_NAME}.hex"
