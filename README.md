@@ -101,7 +101,7 @@ Connect to the GPIO header (pins 1-18):
 
 1. **Connect ST-Link** to GPIO pins
 2. **Connect USB** for power and serial console
-3. **Open serial terminal** (PuTTY/Tera Term) at 115200 baud - keep open for logs
+3. **Open serial terminal** (PuTTY/Tera Term) at **9600 baud** - keep open for logs
 4. **Build firmware:**
    ```bash
    ./build
@@ -117,18 +117,83 @@ Connect to the GPIO header (pins 1-18):
 
 **Pro tip:** Keep the serial terminal open during testing to see debug messages in real-time.
 
+### Serial Console (USB CDC)
+
+The M1 exposes a USB serial console for debugging and control.
+
+**Connection Settings:**
+- **Port:** COM3 (or whatever port the M1 appears as)
+- **Baud Rate:** 9600
+- **Data Bits:** 8
+- **Stop Bits:** 1
+- **Parity:** None
+- **Flow Control:** None
+
+**Terminal Programs:**
+- **Windows:** PuTTY, Tera Term, or Arduino Serial Monitor
+- **Command Line:** `screen /dev/ttyACM0 9600` (Linux/Mac)
+
 ### Serial Console Commands
 
-With USB connected and a terminal at 115200 baud, type `help` for available commands:
+With USB connected and a terminal at **9600 baud**, type `help` for available commands:
 
-- `version` - Show detailed firmware version
-- `status` - System status and active bank
+**System Commands:**
+- `version` - Show detailed firmware version (e.g., "0.8.2.0-ChrisUFO")
+- `status` - System status, active bank, and build info
 - `reboot` - Software reset (no need to disconnect battery!)
-- `log` - Show recent log messages
-- `memory` - Memory usage stats
-- `sdcard` - SD card info
-- `wifi` - WiFi/ESP32 status
-- `battery` - Battery status
+- `memory` - Show RAM/Flash usage statistics
+- `log` - Display recent debug log messages
+
+**Hardware Status:**
+- `sdcard` - SD card mount status and capacity
+- `wifi` - ESP32 WiFi module status
+- `battery` - Battery level and charging status
+
+**Utility:**
+- `cls` - Clear the terminal screen
+- `mtest` - Multi-purpose test command
+- `help` - List all available commands
+
+**Example Session:**
+```
+cli> version
+M1 Firmware Version:
+  0.8.2.0-ChrisUFO
+
+cli> status
+System Status:
+  Firmware: v0.8.2.0
+  Active Bank: 1
+
+cli> reboot
+Rebooting...
+```
+
+### Troubleshooting with Serial Console
+
+The serial console is invaluable for debugging firmware updates and other issues:
+
+**Debugging Firmware Update Failures:**
+1. Keep the serial terminal open at 9600 baud
+2. Navigate to Settings → Firmware Update → Image file
+3. Select a .bin file
+4. Watch the debug output showing:
+   - Filename validation
+   - File size checks
+   - CRC validation
+   - Error messages if something fails
+
+**Common Debug Messages:**
+```
+FW Update: File selected=1
+Filename: 'M1_v0.8.2-ChrisUFO.bin' (len=22)
+Dot found at index 18, ext len=4
+Extension: '.bin'
+File type OK
+Full path: 0:/M1_v0.8.2-ChrisUFO.bin
+File opened successfully
+FW file size: 1047576 bytes
+```
 
 ---
 
@@ -253,9 +318,11 @@ status, and — for stubs — the estimated effort and pen-testing value of comp
 | Replay | ✅ | Browse SD card files, transmit saved signal |
 | Frequency Reader | ✅ | Scans spectrum, shows strongest frequency |
 | Regional Information | ✅ | Displays regional frequency band info |
-| Radio Settings | ⚠️ | `sub_ghz_radio_settings()` calls `m1_gui_let_update_fw()` — no UI to change modulation, bandwidth, or power |
+| ~~Radio Settings~~ | 🚫 | Function exists but **not in menu** — only 4 items in submenu |
 
-**Stub effort/value:** Radio Settings — *Low effort* (add a settings menu for modulation/BW/power), *High value* (custom modulation needed for some rolling-code attacks and raw captures).
+**Menu Structure:** Sub-GHz → {Record, Replay, Frequency Reader, Regional Information}
+
+**Missing feature:** Radio Settings — Function exists but is not included in the current menu. Adding it would enable custom modulation for rolling-code attacks. *Low effort, High value*.
 
 ---
 
@@ -334,10 +401,15 @@ status, and — for stubs — the estimated effort and pen-testing value of comp
 
 | Menu Item | Status | Notes |
 |-----------|--------|-------|
-| About | ✅ | Shows firmware version and device info |
+| Storage | ✅ | SD card management: About, Explore, Mount, Unmount, Format |
+| Power | ✅ | Battery Info, Reboot, Power Off |
+| LCD & Notifications | 🚫 | Menu entry commented out — placeholder only |
+| System | 🚫 | Menu entry commented out — placeholder only |
 | Firmware Update | ✅ | Browse SD card for `.bin`, flash via bootloader |
-| LCD & Notifications | 🚫 | `settings_lcd_and_notifications()` exists but `menu_Settings_LCD_and_Notifications` is **commented out** of the Settings menu array in `m1_menu.c`; function body only shows "LCD..." placeholder text |
-| System | 🚫 | `settings_system()` exists but `menu_Settings_System` is **commented out** of the Settings menu array in `m1_menu.c`; function body only shows "SYSTEM..." placeholder text |
+| ESP32 Update | ✅ | ESP32-C6 WiFi/BT module firmware update via SD card |
+| About | ✅ | Shows firmware version and device info |
+
+**Menu Structure:** Settings → {Storage, Power, Firmware Update, ESP32 Update, About}
 
 **Disabled item effort/value:**
 - **LCD & Notifications** — *Low effort* (re-enable menu entry, implement brightness/contrast/notification LED controls), *Medium value* (quality-of-life; needed before shipping).

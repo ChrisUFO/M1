@@ -73,3 +73,144 @@ This tag appears in:
 - About menu
 - Firmware filename
 - CLI `version` command output
+
+---
+
+## Menu Structure & Feature Status
+
+This section documents the M1 menu structure, implementation status of each feature, and development priorities.
+
+### Legend
+
+| Symbol | Meaning |
+|--------|---------|
+| ✅ | Fully functional |
+| ⚠️ | Stub / placeholder (shows "firmware update" screen or empty loop) |
+| 🚫 | Disabled — code exists but item is **commented out** of the menu |
+
+### 📡 Sub-GHz
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| Record | ✅ | Full pipeline: SI4463 capture → decode → save to SD card |
+| Replay | ✅ | Browse SD card files, transmit saved signal |
+| Frequency Reader | ✅ | Scans spectrum, shows strongest frequency |
+| Regional Information | ✅ | Displays regional frequency band info |
+| ~~Radio Settings~~ | 🚫 | Function exists but **not in menu** — accessible via future update |
+
+**Location:** `m1_csrc/m1_sub_ghz.c`
+
+**Note:** Radio Settings function exists but is not included in the current Sub-GHz submenu (only 4 items shown).
+
+---
+
+### 🔴 Infrared
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| Universal Remote | ✅ | Browse Flipper-IRDB `.ir` files on SD card, transmit commands |
+| Learn New Remote | ✅ | IRMP decode, displays protocol/address/command, saves to SD card |
+| Saved Remotes | ✅ | Browse saved signals, replay last learned signal |
+
+**Location:** `m1_csrc/m1_infrared.c`, `m1_csrc/m1_ir_universal.c`
+
+---
+
+### 🔑 LF RFID (125 kHz)
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| Read | ✅ | EM4100 and H10301 decode |
+| Saved | ✅ | Emulate, write to T5577, edit, rename, delete, info |
+| Add Manually | ✅ | Enter card data manually |
+| 125 kHz Utilities | ⚠️ | `rfid_125khz_utilities()` — no utility screens implemented |
+
+**Location:** `m1_csrc/m1_rfid.c`
+
+---
+
+### 📶 NFC (13.56 MHz)
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| Read | ✅ | ISO14443A/B/F/V, Ultralight/NTAG, Mifare Classic |
+| Saved | ✅ | Emulate, edit UID, rename, delete, info |
+| NFC Tools | ⚠️ | `nfc_tools()` — no tools implemented |
+
+**Location:** `m1_csrc/m1_nfc.c`
+
+---
+
+### 📶 WiFi
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| Scan AP | ✅ | ESP32-C6 scan — shows SSID, BSSID, RSSI, channel, auth type |
+| WiFi Config | ⚠️ | `wifi_config()` — stub implementation, credential storage exists |
+
+**Location:** `m1_csrc/m1_wifi.c`
+
+---
+
+### 🔵 Bluetooth
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| Scan | ✅ | BLE device scan, shows device name and RSSI |
+| Advertise | ✅ | BLE advertisement broadcast |
+| Bluetooth Config | ⚠️ | `bluetooth_config()` — no config UI |
+
+**Location:** `m1_csrc/m1_bt.c`
+
+---
+
+### 🔌 GPIO
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| Manual Control | ✅ | Toggle individual GPIO pins |
+| 3.3 V Power | ✅ | Enable/disable 3.3 V rail |
+| 5 V Power | ✅ | Enable/disable 5 V rail |
+| USB–UART Bridge | ⚠️ | `gpio_usb_uart_bridge()` — no bridge UI |
+
+**Location:** `m1_csrc/m1_gpio.c`
+
+---
+
+### ⚙️ Settings
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| Storage | ✅ | SD card: About, Explore, Mount, Unmount, Format |
+| Power | ✅ | Battery Info, Reboot, Power Off |
+| ~~LCD & Notifications~~ | 🚫 | Function exists but menu entry commented out |
+| ~~System~~ | 🚫 | Function exists but menu entry commented out |
+| Firmware Update | ✅ | Browse SD card for `.bin`, flash via bootloader |
+| ESP32 Update | ✅ | ESP32-C6 WiFi/BT module firmware update |
+| About | ✅ | Shows firmware version and device info |
+
+**Location:** `m1_csrc/m1_settings.c`, `m1_csrc/m1_menu.c`
+
+---
+
+## Recommended Implementation Order
+
+Based on pen-testing value and implementation effort:
+
+| Priority | Feature | Effort | Value |
+|----------|---------|--------|-------|
+| 1 | **USB–UART Bridge** | Low | High | Critical for hardware hacking |
+| 2 | **Sub-GHz Radio Settings** | Low | High | Custom modulation for rolling-code |
+| 3 | **125 kHz Utilities** | Medium | High | T5577 raw write + facility-code brute-force |
+| 4 | **NFC Tools** | Medium | High | Mifare Classic dict attack |
+| 5 | **Settings: LCD & Notifications** | Low | Medium | Quality-of-life |
+| 6 | **Settings: System** | Low | Medium | Product completeness |
+| 7 | **Bluetooth Config** | Low | Medium | BLE spoofing/spam |
+| 8 | **WiFi Config** | Low–Med | Medium | Network join, HTTP attacks |
+
+## References
+
+- [Flipper Zero Firmware](https://github.com/flipperdevices/flipperzero-firmware) - Reference for LF RFID, NFC, Sub-GHz
+- [nfc-laboratory](https://github.com/josevcm/nfc-laboratory) - NFC protocol analysis
+- [AppleJuice](https://github.com/ECTO-1A/AppleJuice) - BLE advertisement spam
+- [Flipper-IRDB](https://github.com/Lucaslhm/Flipper-IRDB) - IR database
