@@ -77,7 +77,6 @@ python tools/append_crc32.py out/build/gcc-14_2_build-release/MonstaTek_M1_v0801
 | File | Use |
 |------|-----|
 | `MonstaTek_M1_v0801-ChrisUFO.bin` | STM32 firmware (includes CRC32) |
-| `MonstaTek_M1_v0801-ChrisUFO.md5` | MD5 hash of .bin file |
 | `MonstaTek_M1_v0801-ChrisUFO.hex` | STM32CubeProgrammer / JLink |
 | `MonstaTek_M1_v0801-ChrisUFO.elf` | Debug sessions |
 
@@ -97,7 +96,7 @@ This is the primary firmware that runs the M1 device.
 4. Browse to and select `MonstaTek_M1_v0801-ChrisUFO.bin`
 5. Confirm — the device validates the embedded CRC32, flashes the firmware, and reboots automatically
 
-**Note:** The build system automatically appends a CRC32 checksum to the end of the `.bin` file. Do not use the `.md5` file for STM32 updates.
+**Note:** The build system automatically appends a 4-byte CRC32 checksum to the end of the `.bin` file for validation during the update process.
 
 ### ESP32 Firmware (WiFi/Bluetooth Module)
 
