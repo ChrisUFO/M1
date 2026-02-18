@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Universal Remote** feature (`m1_csrc/m1_ir_universal.c/.h`):
-  - Flipper Zero-compatible `.ir` file support (raw and parsed signal formats)
+  - Flipper Zero-compatible `.ir` file support (parsed signal format)
   - SD card IR database layout: `0:/IR/<Category>/<Brand>/<Device>.ir`
   - 3-level SD card browser (Category → Brand → Device → Commands)
   - 20+ IR protocol mappings: NEC, NECext, NEC42, RC5, RC5X, RC6, RC6A,

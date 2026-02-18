@@ -119,11 +119,19 @@ uint8_t ir_universal_proto_to_id(const char *name)
  * Public: ir_universal_parse_file
  * ---------------------------------------------------------------------- */
 
+/* Helper to save current block to output array if valid */
+static void ir_save_block(S_IR_Device_t *out, S_IR_Cmd_t *cur, uint8_t in_block)
+{
+    if (in_block && cur->valid && out->count < IR_UNIVERSAL_CMDS_MAX) {
+        memcpy(&out->cmds[out->count], cur, sizeof(S_IR_Cmd_t));
+        out->count++;
+    }
+}
+
 uint8_t ir_universal_parse_file(const char *path, S_IR_Device_t *out)
 {
     FIL     f;
     FRESULT fr;
-    UINT    br;
     char    line[IR_LINE_BUF_LEN];
     char    key[32], val[96];
     char   *p, *eq;
@@ -142,26 +150,7 @@ uint8_t ir_universal_parse_file(const char *path, S_IR_Device_t *out)
     in_block = 0;
     memset(&cur, 0, sizeof(cur));
 
-    while (1) {
-        /* Read one line manually (FatFs has no fgets) */
-        uint16_t idx = 0;
-        bool got_line = false;
-        while (idx < sizeof(line) - 1) {
-            fr = f_read(&f, &line[idx], 1, &br);
-            if (fr != FR_OK || br == 0)
-                break;
-            if (line[idx] == '\n') {
-                idx++;
-                got_line = true;
-                break;
-            }
-            idx++;
-        }
-        line[idx] = '\0';
-
-        if (idx == 0 && br == 0)
-            break; /* EOF */
-
+    while (f_gets(line, sizeof(line), &f)) {
         p = ir_trim(line);
 
         /* Skip comments and empty lines */
@@ -181,11 +170,7 @@ uint8_t ir_universal_parse_file(const char *path, S_IR_Device_t *out)
 
         /* Detect start of a new button block */
         if (strcmp(key, "name") == 0) {
-            /* Save previous block if valid */
-            if (in_block && cur.valid && out->count < IR_UNIVERSAL_CMDS_MAX) {
-                memcpy(&out->cmds[out->count], &cur, sizeof(S_IR_Cmd_t));
-                out->count++;
-            }
+            ir_save_block(out, &cur, in_block);
             memset(&cur, 0, sizeof(cur));
             strncpy(cur.name, val, IR_UNIVERSAL_NAME_LEN_MAX - 1);
             in_block = 1;
@@ -223,10 +208,7 @@ uint8_t ir_universal_parse_file(const char *path, S_IR_Device_t *out)
     }
 
     /* Save last block */
-    if (in_block && cur.valid && out->count < IR_UNIVERSAL_CMDS_MAX) {
-        memcpy(&out->cmds[out->count], &cur, sizeof(S_IR_Cmd_t));
-        out->count++;
-    }
+    ir_save_block(out, &cur, in_block);
 
     f_close(&f);
     return out->count;
@@ -595,9 +577,11 @@ static bool ir_browse_level(const char *base_path,
                 /* Strip .ir extension for display title */
                 strncpy(child_title, names[sel], sizeof(child_title) - 1);
                 child_title[sizeof(child_title)-1] = '\0';
-                size_t tlen = strlen(child_title);
-                if (tlen > 3 && child_title[tlen-3] == '.')
-                    child_title[tlen-3] = '\0';
+                char* dot = strrchr(child_title, '.');
+                if (dot && (dot[1] == 'i' || dot[1] == 'I') &&
+                    (dot[2] == 'r' || dot[2] == 'R') && dot[3] == '\0') {
+                    *dot = '\0';
+                }
 
                 ir_run_command_ui(child_path, child_title);
             }
