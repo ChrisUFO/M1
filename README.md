@@ -140,6 +140,149 @@ cp -r Flipper-IRDB/AC /path/to/sdcard/IR/
 NEC, NECext, NEC42, NEC16, RC5, RC5X, RC6, RC6A, Samsung32, Samsung48,
 SIRC, SIRC15, SIRC20, Kaseikyo, Denon, Sharp, JVC, Panasonic, LGAIR
 
+## Menu Structure & Feature Status
+
+This section documents every menu item in the firmware, its current implementation
+status, and — for stubs — the estimated effort and pen-testing value of completing it.
+
+### Legend
+
+| Symbol | Meaning |
+|--------|---------|
+| ✅ | Fully functional |
+| ⚠️ | Stub / placeholder (shows "firmware update" screen or empty loop) |
+| 🚫 | Disabled — code exists but item is **commented out** of the menu |
+
+---
+
+### 📡 Sub-GHz
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| Record | ✅ | Full pipeline: SI4463 capture → decode → save to SD card |
+| Replay | ✅ | Browse SD card files, transmit saved signal |
+| Frequency Reader | ✅ | Scans spectrum, shows strongest frequency |
+| Regional Information | ✅ | Displays regional frequency band info |
+| Radio Settings | ⚠️ | `sub_ghz_radio_settings()` calls `m1_gui_let_update_fw()` — no UI to change modulation, bandwidth, or power |
+
+**Stub effort/value:** Radio Settings — *Low effort* (add a settings menu for modulation/BW/power), *High value* (custom modulation needed for some rolling-code attacks and raw captures).
+
+---
+
+### 🔴 Infrared
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| Universal Remote | ✅ | Browse Flipper-IRDB `.ir` files on SD card, transmit commands (this fork) |
+| Learn New Remote | ✅ | IRMP decode, displays protocol/address/command, saves to SD card |
+| Saved Remotes | ✅ | Browse saved signals, replay last learned signal |
+
+---
+
+### 🔑 LF RFID (125 kHz)
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| Read | ✅ | EM4100 and H10301 decode |
+| Saved | ✅ | Emulate, write to T5577, edit, rename, delete, info |
+| Add Manually | ✅ | Enter card data manually |
+| 125 kHz Utilities | ⚠️ | `rfid_125khz_utilities()` is an empty loop — no utility screens implemented |
+
+**Stub effort/value:** 125 kHz Utilities — *Medium effort* (implement brute-force facility code scanner, raw read/write, T5577 config), *High value* (T5577 raw write and facility-code brute-force are core pen-testing primitives; Flipper Zero's `lfrfid` and `lfrfid_worker` are directly portable since the M1 already uses the same `lfrfid` library).
+
+---
+
+### 📶 NFC (13.56 MHz)
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| Read | ✅ | ISO14443A/B/F/V, Ultralight/NTAG, Mifare Classic |
+| Saved | ✅ | Emulate, edit UID, rename, delete, info |
+| NFC Tools | ⚠️ | `nfc_tools()` calls `m1_gui_let_update_fw()` — no tools implemented |
+
+**Stub effort/value:** NFC Tools — *Medium effort* (implement card-info dump, NDEF read, Mifare Classic sector auth brute-force), *High value* (Mifare Classic dictionary attack and NDEF inspection are the most-requested NFC pen-testing features; Flipper Zero's `nfc` app and [nfc-laboratory](https://github.com/josevcm/nfc-laboratory) are good references; the M1 already has the ST RFAL stack).
+
+---
+
+### 📶 WiFi
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| Scan AP | ✅ | ESP32-C6 scan — shows SSID, BSSID, RSSI, channel, auth type |
+| WiFi Config | ⚠️ | `wifi_config()` calls `m1_gui_let_update_fw()` — no UI to join a network or configure the ESP32 |
+
+**Stub effort/value:** WiFi Config — *Low–Medium effort* (add SSID/password entry, connect command over SPI-AT), *Medium value* (connecting to a network enables HTTP-based attacks and OTA; however the ESP32-C6 SPI-AT firmware already supports `AT+CWJAP`).
+
+---
+
+### 🔵 Bluetooth
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| Scan | ✅ | BLE device scan, shows device name and RSSI |
+| Advertise | ✅ | BLE advertisement broadcast |
+| Bluetooth Config | ⚠️ | `bluetooth_config()` calls `m1_gui_let_update_fw()` — no config UI |
+
+**Stub effort/value:** Bluetooth Config — *Low effort* (expose advertisement name/interval/payload settings), *Medium value* (custom advertisement payloads enable BLE spoofing attacks; Apple/Samsung proximity spam is a popular pen-testing demo).
+
+---
+
+### 🔌 GPIO
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| Manual Control | ✅ | Toggle individual GPIO pins |
+| 3.3 V Power | ✅ | Enable/disable 3.3 V rail |
+| 5 V Power | ✅ | Enable/disable 5 V rail |
+| USB–UART Bridge | ⚠️ | `gpio_usb_uart_bridge()` calls `m1_gui_let_update_fw()` — no bridge UI |
+
+**Stub effort/value:** USB–UART Bridge — *Low effort* (route USB CDC ↔ UART peripheral; HAL plumbing already exists in `m1_usb_cdc_msc.c`), *High value* (UART bridge is essential for serial console access to target devices during hardware pen-testing).
+
+---
+
+### ⚙️ Settings
+
+| Menu Item | Status | Notes |
+|-----------|--------|-------|
+| About | ✅ | Shows firmware version and device info |
+| Firmware Update | ✅ | Browse SD card for `.bin`, flash via bootloader |
+| LCD & Notifications | 🚫 | `settings_lcd_and_notifications()` exists but `menu_Settings_LCD_and_Notifications` is **commented out** of the Settings menu array in `m1_menu.c`; function body only shows "LCD..." placeholder text |
+| System | 🚫 | `settings_system()` exists but `menu_Settings_System` is **commented out** of the Settings menu array in `m1_menu.c`; function body only shows "SYSTEM..." placeholder text |
+
+**Disabled item effort/value:**
+- **LCD & Notifications** — *Low effort* (re-enable menu entry, implement brightness/contrast/notification LED controls), *Medium value* (quality-of-life; needed before shipping).
+- **System** — *Low effort* (re-enable menu entry, implement device name, date/time, reset-to-defaults), *Medium value* (needed for a complete product experience).
+
+---
+
+### 🏆 Recommended Implementation Order
+
+Based on pen-testing value and implementation effort, here is the suggested priority:
+
+| Priority | Feature | Effort | Value | Rationale |
+|----------|---------|--------|-------|-----------|
+| 1 | **USB–UART Bridge** | Low | High | HAL already wired; one-screen UI; critical for hardware hacking |
+| 2 | **Sub-GHz Radio Settings** | Low | High | Unlocks custom modulation for rolling-code research |
+| 3 | **125 kHz Utilities** | Medium | High | T5577 raw write + facility-code brute-force; `lfrfid` lib already present |
+| 4 | **NFC Tools** | Medium | High | Mifare Classic dict attack; ST RFAL stack already present |
+| 5 | **Settings: LCD & Notifications** | Low | Medium | Re-enable + implement; needed for product completeness |
+| 6 | **Settings: System** | Low | Medium | Re-enable + implement; needed for product completeness |
+| 7 | **Bluetooth Config** | Low | Medium | BLE spoofing/spam payloads |
+| 8 | **WiFi Config** | Low–Med | Medium | Network join via existing SPI-AT `AT+CWJAP` command |
+
+### 🔗 Useful Open-Source References
+
+| Feature | Reference |
+|---------|-----------|
+| LF RFID utilities / T5577 | [flipperdevices/flipperzero-firmware — lfrfid](https://github.com/flipperdevices/flipperzero-firmware/tree/dev/lib/lfrfid) |
+| NFC / Mifare Classic attack | [flipperdevices/flipperzero-firmware — nfc](https://github.com/flipperdevices/flipperzero-firmware/tree/dev/applications/main/nfc) |
+| Sub-GHz modulation / RAW | [flipperdevices/flipperzero-firmware — subghz](https://github.com/flipperdevices/flipperzero-firmware/tree/dev/applications/main/subghz) |
+| BLE advertisement spam | [ECTO-1A/AppleJuice](https://github.com/ECTO-1A/AppleJuice) |
+| NFC protocol analysis | [josevcm/nfc-laboratory](https://github.com/josevcm/nfc-laboratory) |
+| IR database | [Lucaslhm/Flipper-IRDB](https://github.com/Lucaslhm/Flipper-IRDB) |
+
+---
+
 ## Contributing
 
 Contributions are welcome. See [CONTRIBUTING.md](.github/CONTRIBUTING.md) and the [Code of Conduct](.github/CODE_OF_CONDUCT.md).
