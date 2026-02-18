@@ -354,6 +354,7 @@ target_sources(m1_01 INTERFACE
     ../../m1_csrc/m1_gpio.c
     ../../m1_csrc/m1_i2c.c
     ../../m1_csrc/m1_infrared.c
+    ../../m1_csrc/m1_ir_universal.c
     ../../m1_csrc/m1_int_hdl.c
     ../../m1_csrc/m1_lcd.c
     ../../m1_csrc/m1_led_indicator.c
