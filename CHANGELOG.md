@@ -5,9 +5,55 @@
 All notable changes to the M1 project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 
-## [1.0.1-ChrisUFO] - 2026-02-17
+## [v0.8.2-ChrisUFO] - 2026-02-18
+
+### Added
+
+- **WiFi Credential Storage** (`m1_csrc/m1_wifi_cred.c/.h`):
+  - XOR encryption for saved WiFi passwords using device UID
+  - Support for up to 10 saved networks
+  - Auto-connect functionality for saved networks
+  - Credentials stored on SD card in `WIFI/networks.bin`
+- **Enhanced CLI Commands** (8 new commands):
+  - `version` - Show detailed firmware version with fork tag
+  - `status` - System status and active bank
+  - `battery` - Real-time battery level, voltage, and capacity
+  - `sdcard` - SD card status
+  - `wifi` - ESP32 WiFi module status
+  - `memory` - Memory usage statistics
+  - `reboot` - Software reset via serial console
+  - `log` - Debug log messages
+- **Serial Console Documentation**:
+  - USB CDC serial console at 9600 baud
+  - Comprehensive debugging via CLI
+  - Real-time debug messages during firmware updates
+- **Build System Improvements**:
+  - Automatic version extraction from header file
+  - CRC32 calculation compatible with STM32 HAL
+  - Build script now properly detects failures
+  - Version format: `M1_v{MAJOR}.{MINOR}.{BUILD}-ChrisUFO`
+- **Debugging Infrastructure**:
+  - Detailed logging in firmware update process
+  - File validation debug messages (filename, size, CRC)
+  - Serial console troubleshooting guide
+
+### Changed
+
+- Firmware version bumped to build 2 (`FW_VERSION_BUILD 2`)
+- CMakeLists.txt: Automatic version extraction from `m1_fw_update_bl.h`
+- Build script: Fixed false "successful" reporting on build failures
+- Version display: Now shows full version "Version 0.8.2" on splash screen
+- Filename format: Changed from `MonstaTek_*` to `M1_*` to reflect fork
+
+### Fixed
+
+- CRC calculation now matches STM32 HAL (32-bit word processing)
+- Build script now correctly reports build failures
+- Fixed duplicate function definitions in WiFi modules
+
+## [v0.8.1-ChrisUFO] - 2026-02-17
 
 ### Added
 
@@ -21,7 +67,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Scrollable command list UI on 128×64 OLED (u8g2, 5×8 font, 6 rows)
   - IR transmit via IRSND with on-screen "Sending…" feedback
   - Graceful error display when SD card is absent or directory is empty
-- Firmware version bumped to build 1 (`FW_VERSION_BUILD 1`)
 - Fork tag added (`FW_VERSION_FORK_TAG "ChrisUFO"`)
 
 ### Changed
@@ -29,11 +74,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `m1_csrc/m1_infrared.c`: `infrared_universal_remotes()` now delegates to
   `ir_universal_run()` instead of being a no-op stub
 - `cmake/m1_01/CMakeLists.txt`: added `m1_ir_universal.c` to build
+- Firmware version bumped to build 1 (`FW_VERSION_BUILD 1`)
 
-## [1.0.0] - 2026-02-05
+## [v0.8.0] - 2026-02-05
 
 ### Added
 
-- Initial open source release
+- Forked from [Monstatek/M1](https://github.com/Monstatek/M1) upstream v0.8.0
+- Initial ChrisUFO fork release
 - STM32H573VIT6 support (2MB Flash, 100LQFP)
 - Hardware revision 2.x support
+- Base firmware with NFC, RFID, Sub-GHz, Infrared, Battery monitoring
