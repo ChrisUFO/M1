@@ -2,32 +2,30 @@
 """
 Append STM32-compatible CRC32 to firmware binary.
 
-The M1 device expects a 4-byte CRC32 appended to the firmware .bin file.
-The CRC is calculated using STM32 HAL CRC settings:
+The M1 device uses STM32 HAL CRC which processes data as 32-bit words:
 - Polynomial: 0x4C11DB7 (CRC-32)
-- Initial value: 0xFFFFFFFF (STM32 default)
-- No input/output inversion
-- 32-bit word input
-
-This matches the STM32 HAL CRC configuration:
-- DefaultPolynomialUse = ENABLE
-- DefaultInitValueUse = ENABLE
-- InputDataInversionMode = NONE
-- OutputDataInversionMode = DISABLE
+- Initial value: 0xFFFFFFFF
+- No input/output inversion (non-reflected)
+- Processes 32-bit words (not individual bytes)
+- Uses the actual STM32 HAL CRC algorithm
 """
 
 import sys
 import struct
 
 
-def stm32_crc32(data):
+def stm32_hal_crc32(data):
     """
     Calculate CRC32 compatible with STM32 HAL CRC peripheral.
 
-    Uses the standard CRC-32 algorithm with STM32 defaults:
-    - Polynomial: 0x04C11DB7
+    The STM32 HAL CRC:
+    - Uses polynomial 0x04C11DB7
     - Initial value: 0xFFFFFFFF
-    - Final XOR: 0x00000000 (no final XOR)
+    - Processes data as 32-bit words
+    - No reflection on input or output
+
+    When STM32 processes words, it takes 4 bytes at a time and
+    calculates CRC on the 32-bit value.
     """
     # CRC-32 polynomial
     POLYNOMIAL = 0x04C11DB7
@@ -35,33 +33,27 @@ def stm32_crc32(data):
     # STM32 default initial value
     crc = 0xFFFFFFFF
 
-    # Process each byte
-    for byte in data:
-        crc ^= byte << 24
-        for _ in range(8):
+    # Process data as 32-bit words (4 bytes at a time)
+    for i in range(0, len(data), 4):
+        # Get next 4 bytes as a 32-bit word (little-endian from file)
+        word = data[i : i + 4]
+        if len(word) < 4:
+            # Pad with zeros if needed
+            word = word + b"\x00" * (4 - len(word))
+
+        # Convert to 32-bit integer (little-endian)
+        val = struct.unpack("<I", word)[0]
+
+        # XOR with current CRC
+        crc ^= val
+
+        # Process 32 bits
+        for _ in range(32):
             if crc & 0x80000000:
                 crc = (crc << 1) ^ POLYNOMIAL
             else:
                 crc <<= 1
             crc &= 0xFFFFFFFF
-
-    return crc
-
-
-def calculate_stm32_crc(data):
-    """
-    Calculate CRC32 on 32-bit words (STM32 format).
-
-    The STM32 processes data as 32-bit words. We need to ensure
-    the data is aligned to 4-byte boundary before calculating.
-    """
-    # Pad to 4-byte boundary if needed
-    padding_needed = (4 - (len(data) % 4)) % 4
-    if padding_needed:
-        data = data + b"\x00" * padding_needed
-
-    # Calculate CRC
-    crc = stm32_crc32(data)
 
     return crc
 
@@ -91,8 +83,16 @@ def main():
             data = data[:fw_end]
             print(f"Truncated file to {len(data)} bytes (removed trailing zeros)")
 
-    # Calculate CRC32
-    crc = calculate_stm32_crc(data)
+    # Pad to 4-byte boundary if needed
+    padding_needed = (4 - (len(data) % 4)) % 4
+    if padding_needed:
+        data = data + b"\x00" * padding_needed
+
+    # Calculate CRC32 using STM32 HAL algorithm
+    crc = stm32_hal_crc32(data)
+
+    # Remove padding before writing
+    data = data[:-padding_needed] if padding_needed else data
 
     # Append CRC to file (little-endian)
     with open(bin_file, "wb") as f:
