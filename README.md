@@ -63,17 +63,22 @@ Output directory: `out/build/gcc-14_2_build-release/`
 
 | File | Use |
 |------|-----|
-| `MonstaTek_M1_v0801-ChrisUFO.bin` | SD card firmware update |
+| `MonstaTek_M1_v0801-ChrisUFO.bin` | SD card firmware update (required) |
+| `MonstaTek_M1_v0801-ChrisUFO.md5` | MD5 checksum for firmware validation (required) |
 | `MonstaTek_M1_v0801-ChrisUFO.hex` | STM32CubeProgrammer / JLink |
 | `MonstaTek_M1_v0801-ChrisUFO.elf` | Debug sessions |
 
 ## Installing Firmware via SD Card
 
-1. Copy `MonstaTek_M1_v0801-ChrisUFO.bin` to your SD card (any folder)
+**Note:** Both `.bin` and `.md5` files are required for firmware installation.
+
+1. Copy both files to your SD card (any folder):
+   - `MonstaTek_M1_v0801-ChrisUFO.bin`
+   - `MonstaTek_M1_v0801-ChrisUFO.md5`
 2. Insert the SD card into the M1
 3. On the device navigate to **Settings → Firmware Update → Image file**
 4. Browse to and select `MonstaTek_M1_v0801-ChrisUFO.bin`
-5. Confirm — the device flashes and reboots automatically
+5. Confirm — the device validates the MD5 checksum, flashes the firmware, and reboots automatically
 
 ## Universal Remote (this fork)
 

@@ -114,3 +114,11 @@ add_custom_command(
 -O ihex ${TARGET_ELF} ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.hex
     #COMMENT "Generating .hex file"
 )
+
+# Command to generate .md5 file
+add_custom_command(
+    COMMAND ${CMAKE_COMMAND} -E echo "Generating md5 file ${CMAKE_PROJECT_NAME}.md5"
+    TARGET ${CMAKE_PROJECT_NAME}
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E md5sum ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin > ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.md5
+)
