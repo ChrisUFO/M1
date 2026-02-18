@@ -55,11 +55,28 @@ def main():
     with open(bin_file, "rb") as f:
         data = f.read()
 
+    # Check if a CRC was already appended (last 4 bytes are likely CRC)
+    # by looking for trailing zeros or checking if last 4 bytes look like a CRC
+    # A valid CRC is unlikely to be all zeros or all ones
+    if len(data) >= 4:
+        last_4 = struct.unpack("<I", data[-4:])[0]
+        # If last 4 bytes are zeros, likely a previous CRC run appended extra
+        if last_4 == 0:
+            # Find where actual firmware ends (last non-zero byte)
+            fw_end = len(data) - 4
+            for i in range(len(data) - 5, max(0, len(data) - 100), -1):
+                if data[i] != 0:
+                    fw_end = i + 1
+                    break
+            data = data[:fw_end]
+            print(f"Truncated file to {len(data)} bytes (removed trailing zeros)")
+
     # Calculate CRC32
     crc = calculate_stm32_crc(data)
 
     # Append CRC to file (little-endian)
-    with open(bin_file, "ab") as f:
+    with open(bin_file, "wb") as f:
+        f.write(data)
         f.write(struct.pack("<I", crc))
 
     print(f"Appended CRC32: 0x{crc:08X}")
