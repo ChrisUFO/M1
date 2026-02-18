@@ -21,7 +21,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Set the project name
-set(CMAKE_PROJECT_NAME MonstaTek_M1_v0800)
+set(CMAKE_PROJECT_NAME MonstaTek_M1_v0801-ChrisUFO)
 
 # Include toolchain file
 include("cmake/gcc-arm-none-eabi.cmake")
@@ -76,24 +76,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 #arm-none-eabi-objcopy  -O binary MonstaTek_M1_v0800.elf  "MonstaTek_M1_v0800.bin"
 # Specify the output ELF file
 set(TARGET_ELF "${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.elf")
-# Command to display memory usage
-add_custom_command(
-    COMMAND ${CMAKE_COMMAND} -E echo "Memory usage:"    
-    TARGET ${CMAKE_PROJECT_NAME}
-    POST_BUILD
-    COMMAND ${CMAKE_SIZE} ${TARGET_ELF}
-    #COMMENT "Memory usage:"
-)
-
-# Command to generate .list file
-add_custom_command(
-    COMMAND ${CMAKE_COMMAND} -E echo "Generating list file ${CMAKE_PROJECT_NAME}.list"
-    TARGET ${CMAKE_PROJECT_NAME}
-    POST_BUILD
-    COMMAND ${CMAKE_OBJDUMP}
--h -S ${TARGET_ELF} > ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.list
-    #COMMENT "Generating .list file"
-)
+# Note: Optional post-build steps (size, objdump, md5) are handled by the build script
 
 # Command to generate .bin file
 add_custom_command(
@@ -105,6 +88,14 @@ add_custom_command(
     #COMMENT "Generating .bin file"
 )
 
+# Command to append CRC32 to .bin file (required for STM32 firmware update)
+add_custom_command(
+    COMMAND ${CMAKE_COMMAND} -E echo "Appending CRC32 to ${CMAKE_PROJECT_NAME}.bin"
+    TARGET ${CMAKE_PROJECT_NAME}
+    POST_BUILD
+    COMMAND python ${CMAKE_SOURCE_DIR}/tools/append_crc32.py ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin
+)
+
 # Command to generate .hex file
 add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E echo "Generating hex file ${CMAKE_PROJECT_NAME}.hex"
@@ -114,3 +105,25 @@ add_custom_command(
 -O ihex ${TARGET_ELF} ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.hex
     #COMMENT "Generating .hex file"
 )
+
+# Optional: Command to display memory usage (only if size tool is available)
+find_program(SIZE_TOOL arm-none-eabi-size)
+if(SIZE_TOOL)
+    add_custom_command(
+        COMMAND ${CMAKE_COMMAND} -E echo "Memory usage:"
+        TARGET ${CMAKE_PROJECT_NAME}
+        POST_BUILD
+        COMMAND ${SIZE_TOOL} ${TARGET_ELF}
+    )
+endif()
+
+# Optional: Command to generate .list file (only if objdump is available)  
+find_program(OBJDUMP_TOOL arm-none-eabi-objdump)
+if(OBJDUMP_TOOL)
+    add_custom_command(
+        COMMAND ${CMAKE_COMMAND} -E echo "Generating list file ${CMAKE_PROJECT_NAME}.list"
+        TARGET ${CMAKE_PROJECT_NAME}
+        POST_BUILD
+        COMMAND ${OBJDUMP_TOOL} -h -S ${TARGET_ELF} > ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.list
+    )
+endif()

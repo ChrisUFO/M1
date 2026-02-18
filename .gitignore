@@ -49,6 +49,10 @@ Thumbs.db
 
 # Build output (contains machine-specific paths)
 out/
+distribution/
 
 # Generated compile database (contains local paths)
 compile_commands.json
+
+# Local planning documents
+PLAN.md

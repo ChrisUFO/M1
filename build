@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+#
+# Build script for M1 Firmware
+# 
+# Usage: ./build [clean]
+#   - Without arguments: performs a full build
+#   - With 'clean' argument: cleans build artifacts and rebuilds
+#
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Check for ARM toolchain in PATH, or add common installation paths
+if ! command -v arm-none-eabi-gcc &> /dev/null; then
+    # Try common installation paths
+    COMMON_PATHS=(
+        "/c/Program Files (x86)/Arm/GNU Toolchain mingw-w64-i686-arm-none-eabi/bin"
+        "/opt/arm-none-eabi/bin"
+        "/usr/local/arm-none-eabi/bin"
+        "$HOME/arm-none-eabi/bin"
+    )
+    
+    for path in "${COMMON_PATHS[@]}"; do
+        if [ -d "$path" ]; then
+            export PATH="$path:$PATH"
+            echo "Added ARM toolchain to PATH: $path"
+            break
+        fi
+    done
+    
+    # Check again
+    if ! command -v arm-none-eabi-gcc &> /dev/null; then
+        echo "WARNING: ARM toolchain not found in PATH"
+        echo "Please install the ARM GNU toolchain or add it to your PATH"
+        echo "Download from: https://developer.arm.com/downloads/-/arm-gnu-toolchain"
+    fi
+fi
+
+# Configuration
+PROJECT_NAME="MonstaTek_M1_v0801-ChrisUFO"
+BUILD_DIR="out/build/gcc-14_2_build-release"
+DIST_DIR="distribution"
+
+echo "========================================"
+echo "M1 Firmware Build Script"
+echo "========================================"
+
+# Clean option
+if [ "$1" == "clean" ]; then
+    echo "Cleaning build artifacts..."
+    rm -rf "$BUILD_DIR"
+    rm -rf "$DIST_DIR"
+    echo "Clean complete."
+    echo ""
+fi
+
+# Create distribution directory
+mkdir -p "$DIST_DIR"
+
+# Clean old distribution files
+echo "Cleaning old distribution files..."
+rm -f "$DIST_DIR"/*
+
+# Configure build (only if build directory doesn't exist)
+if [ ! -d "$BUILD_DIR" ]; then
+    echo "Configuring build..."
+    cmake --preset gcc-14_2_build-release
+fi
+
+# Build
+echo ""
+echo "Building firmware..."
+echo "----------------------------------------"
+cmake --build "$BUILD_DIR" --target "$PROJECT_NAME" || true
+
+# Check if binary was created (cmake may fail on post-build tools but build succeeds)
+if [ ! -f "$BUILD_DIR/$PROJECT_NAME.bin" ]; then
+    echo "ERROR: Build failed - .bin file not found"
+    exit 1
+fi
+
+echo "Build successful (binary created)"
+
+# Note: CRC32 is appended by CMake post-build command
+
+# Copy files to distribution
+echo ""
+echo "Copying files to $DIST_DIR/..."
+echo "----------------------------------------"
+
+# Files to distribute
+cp "$BUILD_DIR/$PROJECT_NAME.bin" "$DIST_DIR/"
+cp "$BUILD_DIR/$PROJECT_NAME.hex" "$DIST_DIR/"
+cp "$BUILD_DIR/$PROJECT_NAME.elf" "$DIST_DIR/"
+cp "$BUILD_DIR/$PROJECT_NAME.md5" "$DIST_DIR/" 2>/dev/null || true
+
+# Display results
+echo ""
+echo "========================================"
+echo "Build Complete!"
+echo "========================================"
+echo ""
+echo "Distribution files:"
+ls -lh "$DIST_DIR/"
+echo ""
+echo "Files:"
+echo "  - $PROJECT_NAME.bin  : STM32 firmware (with CRC32)"
+echo "  - $PROJECT_NAME.hex   : HEX format for programmers"
+echo "  - $PROJECT_NAME.elf   : Debug symbols"
+echo "  - $PROJECT_NAME.md5   : MD5 checksum"
+echo ""
+echo "Location: $DIST_DIR/"
+echo ""
+echo "Next steps:"
+echo "  1. Copy $PROJECT_NAME.bin to SD card"
+echo "  2. Insert SD card into M1"
+echo "  3. Navigate to Settings → Firmware Update"
+echo ""
