@@ -3,43 +3,65 @@
 Append STM32-compatible CRC32 to firmware binary.
 
 The M1 device expects a 4-byte CRC32 appended to the firmware .bin file.
-The CRC is calculated using the same settings as STM32 HAL CRC:
+The CRC is calculated using STM32 HAL CRC settings:
 - Polynomial: 0x4C11DB7 (CRC-32)
-- Initial value: 0xFFFFFFFF
+- Initial value: 0xFFFFFFFF (STM32 default)
 - No input/output inversion
 - 32-bit word input
+
+This matches the STM32 HAL CRC configuration:
+- DefaultPolynomialUse = ENABLE
+- DefaultInitValueUse = ENABLE
+- InputDataInversionMode = NONE
+- OutputDataInversionMode = DISABLE
 """
 
 import sys
 import struct
-import zlib
+
+
+def stm32_crc32(data):
+    """
+    Calculate CRC32 compatible with STM32 HAL CRC peripheral.
+
+    Uses the standard CRC-32 algorithm with STM32 defaults:
+    - Polynomial: 0x04C11DB7
+    - Initial value: 0xFFFFFFFF
+    - Final XOR: 0x00000000 (no final XOR)
+    """
+    # CRC-32 polynomial
+    POLYNOMIAL = 0x04C11DB7
+
+    # STM32 default initial value
+    crc = 0xFFFFFFFF
+
+    # Process each byte
+    for byte in data:
+        crc ^= byte << 24
+        for _ in range(8):
+            if crc & 0x80000000:
+                crc = (crc << 1) ^ POLYNOMIAL
+            else:
+                crc <<= 1
+            crc &= 0xFFFFFFFF
+
+    return crc
 
 
 def calculate_stm32_crc(data):
     """
-    Calculate CRC32 compatible with STM32 HAL CRC peripheral.
+    Calculate CRC32 on 32-bit words (STM32 format).
 
-    The STM32 uses:
-    - CRC-32 polynomial (0x4C11DB7)
-    - Initial value: 0xFFFFFFFF
-    - No bit reversal
-
-    Python's zlib.crc32 uses the same polynomial but with different init,
-    so we need to adjust.
+    The STM32 processes data as 32-bit words. We need to ensure
+    the data is aligned to 4-byte boundary before calculating.
     """
-    # STM32 HAL CRC calculates on 32-bit words
     # Pad to 4-byte boundary if needed
     padding_needed = (4 - (len(data) % 4)) % 4
     if padding_needed:
         data = data + b"\x00" * padding_needed
 
-    # Calculate CRC32 using standard CRC-32
-    # STM32: init=0xFFFFFFFF, xorout=0x00000000
-    # zlib: init=0x00000000, xorout=0xFFFFFFFF
-    # So we need to invert the result
-    crc = zlib.crc32(data, 0)
-    crc = crc & 0xFFFFFFFF
-    crc = crc ^ 0xFFFFFFFF  # Invert to match STM32 output
+    # Calculate CRC
+    crc = stm32_crc32(data)
 
     return crc
 
@@ -55,9 +77,7 @@ def main():
     with open(bin_file, "rb") as f:
         data = f.read()
 
-    # Check if a CRC was already appended (last 4 bytes are likely CRC)
-    # by looking for trailing zeros or checking if last 4 bytes look like a CRC
-    # A valid CRC is unlikely to be all zeros or all ones
+    # Check if a CRC was already appended (last 4 bytes)
     if len(data) >= 4:
         last_4 = struct.unpack("<I", data[-4:])[0]
         # If last 4 bytes are zeros, likely a previous CRC run appended extra
