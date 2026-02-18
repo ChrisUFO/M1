@@ -80,6 +80,58 @@ python tools/append_crc32.py out/build/gcc-14_2_build-release/MonstaTek_M1_v0801
 | `MonstaTek_M1_v0801-ChrisUFO.hex` | STM32CubeProgrammer / JLink |
 | `MonstaTek_M1_v0801-ChrisUFO.elf` | Debug sessions |
 
+## Development & Debugging
+
+### Flashing Firmware via ST-Link (Recommended for Development)
+
+For rapid development and debugging, use an ST-Link programmer connected to the M1's GPIO header pins. This avoids repeatedly opening the case to disconnect the battery.
+
+#### ST-Link Connection
+
+Connect to the GPIO header (pins 1-18):
+
+| ST-Link | M1 GPIO Pin | Function |
+|---------|-------------|----------|
+| VCC (3.3V) | Pin 9 (+3.3v) | Power |
+| GND | Pin 8 or 18 (GND) | Ground |
+| SWDIO | Pin 11 (PA13) | Data |
+| SWCLK | Pin 10 (PA14) | Clock |
+
+#### Quick Development Workflow
+
+1. **Connect ST-Link** to GPIO pins
+2. **Connect USB** for power and serial console
+3. **Open serial terminal** (PuTTY/Tera Term) at 115200 baud - keep open for logs
+4. **Build firmware:**
+   ```bash
+   ./build
+   ```
+5. **Flash with STM32CubeProgrammer:**
+   - Click **"Connect"**
+   - Click **"Open File"** → Select `M1_v*.bin`
+   - Set Address: `0x08000000`
+   - Click **"Program"**
+6. **Reset via ST-Link:**
+   - Click **"Reset"** button in STM32CubeProgrammer
+   - **OR** use CLI command `reboot` in serial terminal
+
+**Pro tip:** Keep the serial terminal open during testing to see debug messages in real-time.
+
+### Serial Console Commands
+
+With USB connected and a terminal at 115200 baud, type `help` for available commands:
+
+- `version` - Show detailed firmware version
+- `status` - System status and active bank
+- `reboot` - Software reset (no need to disconnect battery!)
+- `log` - Show recent log messages
+- `memory` - Memory usage stats
+- `sdcard` - SD card info
+- `wifi` - WiFi/ESP32 status
+- `battery` - Battery status
+
+---
+
 ## Installing Firmware via SD Card
 
 The M1 has two separate firmware components that can be updated:
