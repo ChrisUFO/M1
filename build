@@ -12,11 +12,30 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Add ARM toolchain to PATH if not already present
-ARM_TOOLCHAIN="/c/Program Files (x86)/Arm/GNU Toolchain mingw-w64-i686-arm-none-eabi/bin"
-if [ -d "$ARM_TOOLCHAIN" ] && [[ ":$PATH:" != *":$ARM_TOOLCHAIN:"* ]]; then
-    export PATH="$ARM_TOOLCHAIN:$PATH"
-    echo "Added ARM toolchain to PATH"
+# Check for ARM toolchain in PATH, or add common installation paths
+if ! command -v arm-none-eabi-gcc &> /dev/null; then
+    # Try common installation paths
+    COMMON_PATHS=(
+        "/c/Program Files (x86)/Arm/GNU Toolchain mingw-w64-i686-arm-none-eabi/bin"
+        "/opt/arm-none-eabi/bin"
+        "/usr/local/arm-none-eabi/bin"
+        "$HOME/arm-none-eabi/bin"
+    )
+    
+    for path in "${COMMON_PATHS[@]}"; do
+        if [ -d "$path" ]; then
+            export PATH="$path:$PATH"
+            echo "Added ARM toolchain to PATH: $path"
+            break
+        fi
+    done
+    
+    # Check again
+    if ! command -v arm-none-eabi-gcc &> /dev/null; then
+        echo "WARNING: ARM toolchain not found in PATH"
+        echo "Please install the ARM GNU toolchain or add it to your PATH"
+        echo "Download from: https://developer.arm.com/downloads/-/arm-gnu-toolchain"
+    fi
 fi
 
 # Configuration

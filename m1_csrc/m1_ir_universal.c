@@ -346,12 +346,20 @@ static uint8_t ir_list_dir(const char *path,
         if (ir_files_only) {
             /* Accept only .ir files */
             size_t len = strlen(fi.fname);
-            if (len < 3)
+            if (len < 4)
                 continue;
-            if (fi.fname[len-3] != '.' ||
-                (fi.fname[len-2] != 'i' && fi.fname[len-2] != 'I') ||
-                (fi.fname[len-1] != 'r' && fi.fname[len-1] != 'R'))
+
+            /* Check for .ir extension (case-insensitive) */
+            char c1 = fi.fname[len - 2];
+            char c2 = fi.fname[len - 1];
+
+            /* Convert to lowercase for comparison */
+            if (c1 >= 'A' && c1 <= 'Z') c1 += 'a' - 'A';
+            if (c2 >= 'A' && c2 <= 'Z') c2 += 'a' - 'A';
+
+            if (fi.fname[len - 3] != '.' || c1 != 'i' || c2 != 'r') {
                 continue;
+            }
         }
 
         strncpy(names[count], fi.fname, IR_NAME_BUF_LEN - 1);
@@ -547,6 +555,7 @@ static bool ir_browse_level(const char *base_path,
 
         if (btn.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK) {
             xQueueReset(main_q_hdl);
+            vPortFree(names);
             return true; /* go up one level */
         }
 
