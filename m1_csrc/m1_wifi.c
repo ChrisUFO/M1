@@ -51,6 +51,7 @@ void wifi_config(void);
 static uint16_t wifi_ap_list_print(ctrl_cmd_t *app_resp, bool up_dir);
 static uint8_t wifi_ap_list_validation(ctrl_cmd_t *app_resp);
 static void wifi_auto_connect(void);
+static bool wifi_ensure_initialized(void);
 
 /*************** F U N C T I O N   I M P L E M E N T A T I O N ****************/
 
@@ -99,11 +100,8 @@ void wifi_scan_ap(void)
 
     /* Graphic work starts here */
 	u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
-	if ( !m1_esp32_get_init_status() )
+	if (!wifi_ensure_initialized())
 	{
-		m1_esp32_init();
-		if ( !get_esp32_main_init_status() )
-			esp32_main_init();
 		m1_u8g2_firstpage();
 		u8g2_DrawStr(&m1_u8g2, 6, 15, "Initializing...");
 		u8g2_DrawXBMP(&m1_u8g2, M1_LCD_DISPLAY_WIDTH/2 - 18/2, M1_LCD_DISPLAY_HEIGHT/2 - 2, 18, 32, hourglass_18x32);
@@ -225,6 +223,9 @@ static uint16_t wifi_ap_list_print(ctrl_cmd_t *app_resp, bool up_dir)
 
 	if ( !init_done )
 	{
+		if (!app_resp) {
+			return 0;
+		}
 		init_done = true;
 		w_scan_p = &app_resp->u.wifi_ap_scan;
 		list = w_scan_p->out_list;
@@ -256,6 +257,13 @@ static uint16_t wifi_ap_list_print(ctrl_cmd_t *app_resp, bool up_dir)
 		i = 1;
 		up_dir = true; // Overwrite the up_dir for the AP to be displayed for the first time
 	} // if ( !init_done )
+
+	// Defensive re-validation for stale state on re-entry
+	if (!w_scan_p || !list || w_scan_p->count == 0 || list != w_scan_p->out_list)
+	{
+		init_done = false;
+		return 0;
+	}
 
 	if ( up_dir )
 	{
@@ -357,12 +365,7 @@ void wifi_config(void)
 	bool run_menu = true;
 
 	// Initialize ESP32 if not already done
-	if ( !m1_esp32_get_init_status() )
-	{
-		m1_esp32_init();
-		if ( !get_esp32_main_init_status() )
-			esp32_main_init();
-	}
+	(void)wifi_ensure_initialized();
 
 	// Initialize credential storage
 	wifi_cred_init();
@@ -476,6 +479,21 @@ static void wifi_auto_connect(void)
 }
 
 
+
+static bool wifi_ensure_initialized(void)
+{
+	if (!m1_esp32_get_init_status())
+	{
+		m1_esp32_init();
+	}
+	if (!get_esp32_main_init_status())
+	{
+		esp32_main_init();
+	}
+	return get_esp32_main_init_status();
+}
+
+
 // WiFi Join Network - Scan, select AP, enter password, connect
 void wifi_join_network(void)
 {
@@ -494,11 +512,7 @@ void wifi_join_network(void)
     char password_buffer[WIFI_MAX_PASSWORD_LEN + 1] = {0};
     
     // Initialize ESP32 if needed
-    if (!m1_esp32_get_init_status()) {
-        m1_esp32_init();
-        if (!get_esp32_main_init_status())
-            esp32_main_init();
-    }
+    (void)wifi_ensure_initialized();
     
     // Initialize credential storage
     wifi_cred_init();
@@ -918,11 +932,7 @@ void wifi_show_connection_status(void)
     bool is_connected = false;
     
     // Initialize ESP32 if needed
-    if (!m1_esp32_get_init_status()) {
-        m1_esp32_init();
-        if (!get_esp32_main_init_status())
-            esp32_main_init();
-    }
+    (void)wifi_ensure_initialized();
     
     while (!exit_menu)
     {

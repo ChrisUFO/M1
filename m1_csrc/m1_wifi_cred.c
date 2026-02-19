@@ -195,7 +195,7 @@ bool wifi_cred_save(const char* ssid, const char* password, int auth_mode)
     wifi_cred_encrypt((const uint8_t*)password, cred->encrypted_password, password_len, &cred->encrypted_len);
     
     cred->auth_mode = auth_mode;
-    cred->flags = 0x01;
+    cred->flags = WIFI_CRED_FLAG_AUTO_CONNECT;
     cred->last_connected = HAL_GetTick();
     cred_db.num_networks++;
     
@@ -227,6 +227,7 @@ bool wifi_cred_delete(const char* ssid)
                 memcpy(&cred_db.networks[j], &cred_db.networks[j + 1], sizeof(wifi_credential_t));
             }
             cred_db.num_networks--;
+            memset(&cred_db.networks[cred_db.num_networks], 0, sizeof(wifi_credential_t));
             return cred_db_save();
         }
     }
@@ -266,7 +267,7 @@ bool wifi_cred_get_auto_connect(wifi_credential_t* cred)
     int8_t newest_idx = -1;
     
     for (uint8_t i = 0; i < cred_db.num_networks; i++) {
-        if ((cred_db.networks[i].flags & 0x01) && cred_db.networks[i].last_connected > newest_time) {
+        if ((cred_db.networks[i].flags & WIFI_CRED_FLAG_AUTO_CONNECT) && cred_db.networks[i].last_connected > newest_time) {
             newest_time = cred_db.networks[i].last_connected;
             newest_idx = i;
         }
@@ -287,9 +288,9 @@ bool wifi_cred_set_auto_connect(const char* ssid, bool auto_connect)
     for (uint8_t i = 0; i < cred_db.num_networks; i++) {
         if (strcmp(cred_db.networks[i].ssid, ssid) == 0) {
             if (auto_connect) {
-                cred_db.networks[i].flags |= 0x01;
+                cred_db.networks[i].flags |= WIFI_CRED_FLAG_AUTO_CONNECT;
             } else {
-                cred_db.networks[i].flags &= ~0x01;
+                cred_db.networks[i].flags &= ~WIFI_CRED_FLAG_AUTO_CONNECT;
             }
             return cred_db_save();
         }

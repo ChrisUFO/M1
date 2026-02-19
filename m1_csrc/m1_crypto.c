@@ -65,7 +65,6 @@ static void InvMixColumns(uint8_t* state);
 static void AddRoundKey(uint8_t* state, const uint8_t* roundKey);
 static void KeyExpansion(const uint8_t* key, uint8_t* expandedKey);
 static void XorBlock(uint8_t* out, const uint8_t* a, const uint8_t* b);
-static void CopyBlock(uint8_t* out, const uint8_t* in);
 
 /*************** F U N C T I O N   I M P L E M E N T A T I O N ****************/
 
@@ -142,6 +141,7 @@ bool m1_crypto_generate_iv(uint8_t* iv)
     static uint64_t s0 = 0;
     static uint64_t s1 = 0;
     static uint32_t init = 0;
+    static uint32_t iv_counter = 0;
 
     if (!init) {
         uint64_t uid_mix = ((uint64_t)HAL_GetUIDw0() << 32) ^ HAL_GetUIDw1() ^ ((uint64_t)HAL_GetUIDw2() << 13);
@@ -163,6 +163,13 @@ bool m1_crypto_generate_iv(uint8_t* iv)
             iv[i + j] = (uint8_t)(r >> (j * 8));
         }
     }
+
+    // Monotonic uniqueness hardening (avoid accidental IV reuse)
+    iv[0] ^= (uint8_t)(iv_counter & 0xFF);
+    iv[1] ^= (uint8_t)((iv_counter >> 8) & 0xFF);
+    iv[2] ^= (uint8_t)((iv_counter >> 16) & 0xFF);
+    iv[3] ^= (uint8_t)((iv_counter >> 24) & 0xFF);
+    iv_counter++;
 
     return true;
 }

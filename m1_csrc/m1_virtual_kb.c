@@ -1095,6 +1095,9 @@ uint8_t m1_vkb_get_password(char *description, char *password_buffer, uint8_t ma
 	
 	if (password_buffer == NULL || max_len == 0)
 		return 0;
+
+	if (max_len > 65)
+		max_len = 65;
 		
 	memset(password_buffer, 0, max_len);
 
@@ -1263,4 +1266,3 @@ uint8_t m1_vkb_get_password(char *description, char *password_buffer, uint8_t ma
 	
 	return password_len;
 }// uint8_t m1_vkb_get_password(char *description, char *password_buffer, uint8_t max_len)
-

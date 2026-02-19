@@ -24,6 +24,7 @@
 #define WIFI_CRED_FILE_PATH         "WIFI/networks.bin"
 #define WIFI_CRED_MAGIC             0x57494649  // "WIFI"
 #define WIFI_CRED_VERSION           1
+#define WIFI_CRED_FLAG_AUTO_CONNECT 0x01
 
 /* ######################################### Data Types ############################################# */
 
