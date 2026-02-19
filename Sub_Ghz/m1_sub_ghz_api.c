@@ -845,6 +845,7 @@ void SI446x_Change_Radio_Setting(uint8_t mode, uint8_t pa_power)
             si446x_cmd_buffer[2] = 0;
             si446x_cmd_buffer[3] = 0;
             SI446x_Send_Cmd(4, si446x_cmd_buffer);
+            break;
 
         case RADIO_SETTING_MODE_TX:
             si446x_cmd_buffer[0] = SI446X_CMD_ID_START_TX;
@@ -864,6 +865,7 @@ void SI446x_Change_Radio_Setting(uint8_t mode, uint8_t pa_power)
             break;
 
         default: // unknown mode
+            assert(0); // Should not reach here
             break;
     } // switch (mode)
 } // void SI446x_Change_Radio_Setting(uint8_t mode, uint8_t pa_power)

@@ -572,7 +572,7 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
             char *current_key = trim(line_buff);
 
             // 3. 추출???��? 검?�하?�는 ?��? ?�확???�치?�는지 ?�인 (strcmp ?�용)
-            if (strlen(current_key) == len && !strcmp(current_key, entry)) {
+            if ((int)strlen(current_key) == len && !strcmp(current_key, entry)) {
 
             // 4. ?��? 찾았?��?�? 콜론??복원?�고 루프 ?�출
             	*colon_pos = TOKEN_COLON;
@@ -798,7 +798,7 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
      	    char *current_key = trim(line_buff);
 
      	    // 6. ?�재 ?�의 길이?� 검?�하?�는 ?�의 길이가 같고, ???��? ?�확???�치?�는지 ?�인?�니??
-     	    if (strlen(current_key) == len && !strcmp(current_key, entry)) {
+     	    if ((int)strlen(current_key) == len && !strcmp(current_key, entry)) {
 
      	    // 7. 루프 ?�출 ?�에 콜론???�시 복원?�줍?�다 (값을 추출?�야 ?��?�?.
      	    	*colon_pos = TOKEN_COLON;

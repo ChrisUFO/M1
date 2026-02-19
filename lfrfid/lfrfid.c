@@ -201,17 +201,21 @@ void lfrfid_Init(void)
 	assert(lfrfid_q_hdl != NULL);
 
 	ret = xTaskCreate(lfrfidThread, "lfrfid_task_n", M1_TASK_STACK_SIZE_1024, NULL, TASK_PRIORITY_SYS_INIT, &lfrfid_task_hdl);
+	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
 	assert(lfrfid_task_hdl!=NULL);
 	free_heap = xPortGetFreeHeapSize();
+	(void)free_heap; /* Unused: result checked via assert. May need removal later. */
 	assert(free_heap >= M1_LOW_FREE_HEAP_WARNING_SIZE);
 
 	lfrfid_stream_init();
 
 	ret = xTaskCreate(lfrfid_rxThread, "lfrfid_rx_task_n", M1_TASK_STACK_SIZE_4096, NULL, TASK_PRIORITY_SYS_INIT, &lfrfid_rx_task_hdl);
+	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
 	assert(lfrfid_rx_task_hdl!=NULL);
 	free_heap = xPortGetFreeHeapSize();
+	(void)free_heap; /* Unused: result checked via assert. May need removal later. */
 	assert(free_heap >= M1_LOW_FREE_HEAP_WARNING_SIZE);
 
 	lfrfid_read_timeout_timer_create();
@@ -219,11 +223,13 @@ void lfrfid_Init(void)
 	lfrfid_encoded_data.data = malloc(sizeof(Encoded_Data_t)*ENCODED_DATA_MAX);
 	assert(lfrfid_encoded_data.data!=NULL);
 	free_heap = xPortGetFreeHeapSize();
+	(void)free_heap; /* Unused: result checked via assert. May need removal later. */
 	assert(free_heap >= M1_LOW_FREE_HEAP_WARNING_SIZE);
 
 	lfrfid_program = malloc(sizeof(LFRFIDProgram));
 	assert(lfrfid_program!=NULL);
 	free_heap = xPortGetFreeHeapSize();
+	(void)free_heap; /* Unused: result checked via assert. May need removal later. */
 	assert(free_heap >= M1_LOW_FREE_HEAP_WARNING_SIZE);
 
 	lfrfid_tag_info_back = malloc(sizeof(LFRFID_TAG_INFO));
@@ -390,6 +396,7 @@ void bytes_to_u32_array(BitOrder order, const uint8_t in_data[], uint32_t out_da
 //lfrfid_evt_t sample_data[120];
 void lfrfid_rxThread(void *param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	uint8_t  batch_buf[LFR_TRIGGER_BYTES]; // 10개 분량
 	memset(batch_buf,0,sizeof(batch_buf));
 
@@ -437,6 +444,7 @@ void lfrfid_rxThread(void *param)
 /*============================================================================*/
 void lfrfidThread(void *param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	S_M1_Main_Q_t q_item;
 	BaseType_t ret;
 

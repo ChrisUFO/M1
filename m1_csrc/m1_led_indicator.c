@@ -81,6 +81,7 @@ void m1_led_func_recovery(void);
 /*============================================================================*/
 void m1_led_indicator_off(uint8_t *params)
 {
+    (void)params; /* Unused: stub for future work. May need removal later. */
 	active_led_func.active_led_func_id = LED_INDICATOR_OFF_FN_ID;
 	lp5814_all_off_RGB();
 } // void m1_led_indicator_off(uint8_t *params)
@@ -95,6 +96,7 @@ void m1_led_indicator_off(uint8_t *params)
 /*============================================================================*/
 void m1_led_indicator_on(uint8_t *params)
 {
+    (void)params; /* Unused: stub for future work. May need removal later. */
 	active_led_func.active_led_func_id = LED_INDICATOR_ON_FN_ID;
 	lp5814_all_off_RGB();
 	lp5814_led_on_Green(LED_ON_PWM_GREEN);
@@ -158,6 +160,7 @@ void m1_led_fast_blink(uint8_t r_g_b, uint8_t pwm_rgb, uint8_t on_off_ms)
 /*============================================================================*/
 void m1_led_fw_update_on(uint8_t *params)
 {
+    (void)params; /* Unused: stub for future work. May need removal later. */
 	//active_led_func.active_led_func_id = LED_FW_UPDATE_ON_FN_ID;
 	m1_led_fast_blink(LED_BLINK_ON_GREEN | LED_BLINK_ON_BLUE, 25, 100);
 } // void m1_led_fw_update_on(uint8_t *params)
@@ -185,6 +188,7 @@ void m1_led_fw_update_off(void)
 /*============================================================================*/
 void m1_led_batt_charged_on(uint8_t *params)
 {
+    (void)params; /* Unused: stub for future work. May need removal later. */
 	active_led_func.active_led_func_id = LED_BATTERY_CHARGED_ON_FN_ID;
 	lp5814_all_off_RGB();
 	lp5814_led_on_Red(LED_FASTBLINK_PWM_M);
@@ -199,6 +203,7 @@ void m1_led_batt_charged_on(uint8_t *params)
 /*============================================================================*/
 void m1_led_batt_full_on(uint8_t *params)
 {
+    (void)params; /* Unused: stub for future work. May need removal later. */
 	active_led_func.active_led_func_id = LED_BATTERY_FULL_ON_FN_ID;
 	lp5814_all_off_RGB();
 	lp5814_led_on_Green(LED_FASTBLINK_PWM_M);

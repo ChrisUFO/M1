@@ -82,9 +82,11 @@ void m1_wdt_init(void)
 	m1_wdt_report_init();
 
 	ret = xTaskCreate(m1_wdt_handler_task, "m1_wdt_handler_task_n", M1_TASK_STACK_SIZE_DEFAULT, NULL, TASK_PRIORITY_WDT_HANDLER, &m1_wdt_task_hdl);
+	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
 	assert(m1_wdt_task_hdl!=NULL);
 	free_heap = xPortGetFreeHeapSize();
+	(void)free_heap; /* Unused: result checked via assert. May need removal later. */
 	assert(free_heap >= M1_LOW_FREE_HEAP_WARNING_SIZE);
 } // void m1_wdt_init(void)
 
@@ -98,6 +100,7 @@ void m1_wdt_init(void)
 /******************************************************************************/
 static void m1_wdt_handler_task(void *param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	static uint32_t run_time = 0;
 
 	M1_LOG_I(M1_LOGDB_TAG, "WDT task started\r\n");

@@ -361,10 +361,10 @@ S_M1_Menu_t menu_Settings = {
 /*--------------------------------- > Wifi -----------------------------------*/
 
 S_M1_Menu_t menu_Wifi_Config = {"Config", wifi_config, NULL, NULL, 0,
-                                0,        NULL,        NULL, NULL};
+                                0,        menu_m1_icon_wifi,        NULL, {NULL}};
 
 S_M1_Menu_t menu_Wifi_Scan_AP = {"Scan AP", wifi_scan_ap, NULL, NULL, 0,
-                                 0,         NULL,         NULL, NULL};
+                                 0,         menu_m1_icon_wifi,         NULL, {NULL}};
 
 S_M1_Menu_t menu_Wifi = {"Wifi",
                          menu_wifi_init,
@@ -378,13 +378,13 @@ S_M1_Menu_t menu_Wifi = {"Wifi",
 
 /*--------------------------------- > Wifi -----------------------------------*/
 S_M1_Menu_t menu_Bluetooth_Config = {
-    "Config", bluetooth_config, NULL, NULL, 0, 0, NULL, NULL, NULL};
+    "Config", bluetooth_config, NULL, NULL, 0, 0, NULL, NULL, {NULL}};
 
 S_M1_Menu_t menu_Bluetooth_Scan = {"Scan", bluetooth_scan, NULL, NULL, 0,
-                                   0,      NULL,           NULL, NULL};
+                                   0,      NULL,           NULL, {NULL}};
 
 S_M1_Menu_t menu_Bluetooth_Advertise = {
-    "Advertise", bluetooth_advertise, NULL, NULL, 0, 0, NULL, NULL, NULL};
+    "Advertise", bluetooth_advertise, NULL, NULL, 0, 0, NULL, NULL, {NULL}};
 
 S_M1_Menu_t menu_Bluetooth = {
     "Bluetooth",
@@ -454,7 +454,8 @@ static void menu_main_init(void) {
  */
 /*============================================================================*/
 void menu_main_handler_task(void *param) {
-  uint8_t key, sel_item, n_items;
+  (void)param; /* Unused: stub for future work. May need removal later. */
+  uint8_t key, sel_item = 0, n_items;
   uint8_t menu_update_stat;
   S_M1_Buttons_Status this_button_status;
   S_M1_Main_Q_t q_item;
@@ -535,7 +536,7 @@ void menu_main_handler_task(void *param) {
 
               else // This case should never happen. It doesn't exist!
               {
-                assert(("num_menu_items=0, this_func=NULL", FALSE));
+                assert(FALSE);
               }
               key = NUM_BUTTONS_MAX; // Exit condition to stop checking other
                                      // buttons!
@@ -715,6 +716,7 @@ void menu_main_handler_task(void *param) {
  */
 /*============================================================================*/
 void subfunc_handler_task(void *param) {
+  (void)param; /* Unused: stub for future work. May need removal later. */
   while (1) {
     // Waiting for notification from menu_main_handler_task,
     // or from button_event_handler_task

@@ -256,6 +256,7 @@ static void t5577_write_block(uint8_t block, bool lock_bit, uint32_t data)
 /*============================================================================*/
 void t5577_execute_write(LFRFIDProgram* write, int block)
 {
+    (void)block; /* Unused: stub for future work. May need removal later. */
 	t5577_write_start();
     taskENTER_CRITICAL();
     for(size_t i = 0; i < write->t5577.max_blocks; i++) {

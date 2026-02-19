@@ -267,10 +267,10 @@ void infrared_learn_new_remote(void)
 					u8g2_DrawBox(&m1_u8g2, 0, 30, 128, 34); // Clear old content
 					u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
 					u8g2_DrawStr(&m1_u8g2, 15, 40, irmp_protocol_names[irmp_data.protocol]);
-					sprintf(ir_data, "Address: 0x%04X", irmp_data.address);
-					u8g2_DrawStr(&m1_u8g2, 15, 50, ir_data);
-					sprintf(ir_data, "Command: 0x%04X", irmp_data.command);
-					u8g2_DrawStr(&m1_u8g2, 15, 60, ir_data);
+					sprintf((char *)ir_data, "Address: 0x%04X", irmp_data.address);
+					u8g2_DrawStr(&m1_u8g2, 15, 50, (char *)ir_data);
+					sprintf((char *)ir_data, "Command: 0x%04X", irmp_data.command);
+					u8g2_DrawStr(&m1_u8g2, 15, 60, (char *)ir_data);
 					u8g2_NextPage(&m1_u8g2); // Update display RAM
 
 					memcpy(&irmp_loopback_data, &irmp_data, sizeof(IRMP_DATA));
@@ -350,10 +350,10 @@ void infrared_saved_remotes(void)
 	u8g2_DrawBox(&m1_u8g2, 0, 30, 128, 34); // Clear old content
 	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
 	u8g2_DrawStr(&m1_u8g2, 15, 40, irmp_protocol_names[irmp_data.protocol]);
-	sprintf(ir_data, "Address: 0x%04X", irmp_data.address);
-	u8g2_DrawStr(&m1_u8g2, 15, 50, ir_data);
-	sprintf(ir_data, "Command: 0x%04X", irmp_data.command);
-	u8g2_DrawStr(&m1_u8g2, 15, 60, ir_data);
+	sprintf((char *)ir_data, "Address: 0x%04X", irmp_data.address);
+	u8g2_DrawStr(&m1_u8g2, 15, 50, (char *)ir_data);
+	sprintf((char *)ir_data, "Command: 0x%04X", irmp_data.command);
+	u8g2_DrawStr(&m1_u8g2, 15, 60, (char *)ir_data);
 	u8g2_NextPage(&m1_u8g2); // Update display RAM
 
 	m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_M, LED_FASTBLINK_ONTIME_M);
@@ -747,6 +747,7 @@ void infrared_encode_sys_deinit(void)
 /*============================================================================*/
 static void infrared_encode_timer_cb(TimerHandle_t xTimer)
 {
+    (void)xTimer; /* Unused: stub for future work. May need removal later. */
 	S_M1_Main_Q_t q_item;
 
 	q_item.q_data.ir_tx_data = 1; // any value, not used

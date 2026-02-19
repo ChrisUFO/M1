@@ -12,6 +12,8 @@
 #ifndef M1_CLI_H_
 #define M1_CLI_H_
 
+#define MAX_INPUT_LENGTH 		64
+
 BaseType_t cmd_m1_mtest(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
 BaseType_t cmd_dfu(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
 BaseType_t cmd_dfu_help(void);

@@ -147,10 +147,10 @@ void storage_about(void)
 		u8g2_DrawStr(&m1_u8g2, 2, 20, "Type: ");
 		u8g2_DrawStr(&m1_u8g2, 32, 20, sdcard_fat_sys_defs[info->fs_type]);
 		u8g2_DrawStr(&m1_u8g2, 2, 30, "Total: ");
-		sprintf(info_str, "%uGB", info->total_cap_kb/1024);
+		sprintf(info_str, "%luGB", (unsigned long)(info->total_cap_kb/1024));
 		u8g2_DrawStr(&m1_u8g2, 37, 30, info_str);
 		u8g2_DrawStr(&m1_u8g2, 2, 40, "Free: ");
-		sprintf(info_str, "%uGB", info->free_cap_kb/1024);
+		sprintf(info_str, "%luGB", (unsigned long)(info->free_cap_kb/1024));
 		u8g2_DrawStr(&m1_u8g2, 32, 40, info_str);
     } // if ( about_ok )
     else
@@ -738,7 +738,7 @@ void storage_unmount(void)
 /*============================================================================*/
 static void browse_gui_update(uint8_t sel_item, char *file_name)
 {
-	uint8_t prn_name[BROWSE_GUI_DISP_LINE_LEN_MAX + 1] = {0};
+	char prn_name[BROWSE_GUI_DISP_LINE_LEN_MAX + 1] = {0};
 	uint8_t i, len, menu_text_y;
 	char *print_ptr;
 
@@ -771,9 +771,9 @@ static void browse_gui_update(uint8_t sel_item, char *file_name)
 	len = strlen(file_name);
 	if ( len >= BROWSE_GUI_DISP_LINE_LEN_MAX )
 	{
-		strncpy(prn_name, file_name, BROWSE_GUI_DISP_LINE_LEN_MAX);
-		strcpy(&prn_name[BROWSE_GUI_DISP_LINE_LEN_MAX - 3], "...");
-		print_ptr = prn_name;
+		strncpy((char *)prn_name, file_name, BROWSE_GUI_DISP_LINE_LEN_MAX);
+		strcpy((char *)&prn_name[BROWSE_GUI_DISP_LINE_LEN_MAX - 3], "...");
+		print_ptr = (char *)prn_name;
 	}
 	m1_info_box_display_draw(INFO_BOX_ROW_1, print_ptr);
 

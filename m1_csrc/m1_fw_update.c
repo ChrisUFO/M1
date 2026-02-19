@@ -178,7 +178,7 @@ void firmware_update_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
 {
 	uint8_t i, n_items;
 	uint8_t menu_text_y;
-	uint8_t prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
+	char prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
 
 	n_items = phmenu->num_submenu_items;
 	menu_text_y = THIS_LCD_MENU_TEXT_FIRST_ROW_Y;
@@ -216,13 +216,13 @@ void firmware_update_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
     	    	{
     	    		if ( strlen(f_info->file_name) > GUI_DISP_LINE_LEN_MAX )
     	    		{
-    	    			strncpy(prn_name, f_info->file_name, GUI_DISP_LINE_LEN_MAX - 2);
+    	    			strncpy((char *)prn_name, f_info->file_name, GUI_DISP_LINE_LEN_MAX - 2);
     	    			prn_name[GUI_DISP_LINE_LEN_MAX - 2] = 0;
-    	    			strcat(prn_name, "..");
+    	    			strcat((char *)prn_name, "..");
     	    		}
     	    		else
     	    		{
-    	    			strcpy(prn_name, f_info->file_name);
+    	    			strcpy((char *)prn_name, f_info->file_name);
     	    		}
     	    	} // if ( f_info && f_info->file_is_selected )
 
@@ -230,9 +230,9 @@ void firmware_update_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
     	    	{
     	    		case M1_FW_UPDATE_READY:
     	    			m1_info_box_display_draw(INFO_BOX_ROW_1, prn_name);
-        				sprintf(prn_name, "New ver. %d.%d.%d.%d", (uint8_t)(fw_version_new>>24), (uint8_t)(fw_version_new>>16), (uint8_t)(fw_version_new>>8), (uint8_t)fw_version_new);
+        				sprintf((char *)prn_name, "New ver. %d.%d.%d.%d", (uint8_t)(fw_version_new>>24), (uint8_t)(fw_version_new>>16), (uint8_t)(fw_version_new>>8), (uint8_t)fw_version_new);
         				m1_info_box_display_draw(INFO_BOX_ROW_2, prn_name);
-        				sprintf(prn_name, "Old ver. %d.%d.%d.%d", m1_device_stat.config.fw_version_major, m1_device_stat.config.fw_version_minor, m1_device_stat.config.fw_version_build, m1_device_stat.config.fw_version_rc);
+        				sprintf((char *)prn_name, "Old ver. %d.%d.%d.%d", m1_device_stat.config.fw_version_major, m1_device_stat.config.fw_version_minor, m1_device_stat.config.fw_version_build, m1_device_stat.config.fw_version_rc);
         				m1_info_box_display_draw(INFO_BOX_ROW_3, prn_name);
     	    			break;
 
@@ -423,7 +423,7 @@ void firmware_update_get_image_file(void)
 			sum = image_size;
 			while ( sum )
 			{
-				count = m1_fb_read_from_file(&hfile_fw, fw_payload, FW_IMAGE_CHUNK_SIZE);
+				count = m1_fb_read_from_file(&hfile_fw, (char *)fw_payload, FW_IMAGE_CHUNK_SIZE);
 				if ( !count || (count % 4 != 0) ) // Read failed?
 				{
 					uret = M1_FW_IMAGE_FILE_ACCESS_ERROR;
@@ -487,6 +487,7 @@ void firmware_update_get_image_file(void)
 				break;
 			}
 			fwver_old = *(uint32_t *)&m1_device_stat.config.fw_version_rc;
+			(void)fwver_old; /* Unused: stub for future work. May need removal later. */
 			fw_version_new = *(uint32_t *)&fwconfig.fw_version_rc;
 		} // if ( !uret )
 		else
@@ -701,6 +702,7 @@ void firmware_update_JumpTo_BL(void)
 	M1_LOG_I(M1_LOGDB_TAG, "%s", "\nBL App running");
 
 	Bl_Signature = *(uint32_t *)FLASH_BL_ADDRESS;
+	(void)Bl_Signature; /* Unused: stub for future work. May need removal later. */
 
 	// The first value stored in the vector table is the reset value of the stack pointer
 	if ( (*(uint32_t *)FLASH_BL_ADDRESS & 0x2FFE0000)==0x20000000 )

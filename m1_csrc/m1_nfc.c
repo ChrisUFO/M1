@@ -234,7 +234,7 @@ void menu_nfc_init(void)
     if (nfc_worker_task_hdl != NULL || nfc_worker_q_hdl != NULL)
     {
         platformLog("[NFC] menu_nfc_init: already initialized. task=%p, q=%p\r\n",
-                    nfc_worker_task_hdl, nfc_worker_q_hdl);
+                    (void *)nfc_worker_task_hdl, (void *)nfc_worker_q_hdl);
         return;
     }
 
@@ -253,12 +253,12 @@ void menu_nfc_init(void)
     if (ret != pdPASS || nfc_worker_task_hdl==NULL)
     {
         platformLog("[NFC] nfc_worker_task create failed! ret=%d, hdl=%p\r\n",
-                    (int)ret, nfc_worker_task_hdl);
+                    (int)ret, (void *)nfc_worker_task_hdl);
         nfc_worker_task_hdl = NULL;
         return;    
     }
 	platformLog("[NFC] xTaskCreate ret=%ld, handle=%p\r\n",
-            (long)ret, nfc_worker_task_hdl);
+            (long)ret, (void *)nfc_worker_task_hdl);
 
     
     nfc_worker_q_hdl = xQueueCreate(10, sizeof(S_M1_Main_Q_t));
@@ -733,6 +733,7 @@ static void m1_nfc_read_more_gui_create(uint8_t param)
 /*============================================================================*/
 static void m1_nfc_read_more_gui_destroy(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	;
 }
 
@@ -867,6 +868,7 @@ static void nfc_save_gui_create(uint8_t param)
 /*============================================================================*/
 static void nfc_save_gui_destroy(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	;
 }
 
@@ -884,6 +886,7 @@ static void nfc_save_gui_destroy(uint8_t param)
 /*============================================================================*/
 static void nfc_save_gui_update(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	BaseType_t ret;
 
 	ret = m1_nfc_read_more_options_save();
@@ -1007,6 +1010,7 @@ static void nfc_emulate_gui_create(uint8_t param)
 /*============================================================================*/
 static void nfc_emulate_gui_destroy(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
 	m1_app_send_q_message(nfc_worker_q_hdl, Q_EVENT_NFC_EMULATE_STOP);
 }
@@ -1167,6 +1171,7 @@ static void nfc_utils_gui_create(uint8_t param)
 /*============================================================================*/
 static void nfc_utils_gui_destroy(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
 }
 
@@ -1181,6 +1186,7 @@ static void nfc_utils_gui_destroy(uint8_t param)
 /*============================================================================*/
 static void nfc_utils_gui_update(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	m1_gui_let_update_fw();
 	/*	utils_menu	*/
 }
@@ -1334,6 +1340,7 @@ static void nfc_info_gui_create(uint8_t param)
 /*============================================================================*/
 static void nfc_info_gui_destroy(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
 }
 
@@ -1839,6 +1846,7 @@ static void nfc_edit_uid_gui_create(uint8_t param)
 /*============================================================================*/
 static void nfc_edit_uid_gui_destroy(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	s_edit_uid_started = false;  // 플래그 초기화
 }
 
@@ -2158,6 +2166,7 @@ static void nfc_rename_gui_create(uint8_t param)
 /*============================================================================*/
 static void nfc_rename_gui_destroy(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	;
 }
 
@@ -2175,6 +2184,7 @@ static void nfc_rename_gui_destroy(uint8_t param)
 /*============================================================================*/
 static void nfc_rename_gui_update(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	nfc_run_ctx_t* c = nfc_ctx_get();
 	if (!c || c->file.source_kind != LOAD_FILE) {
 		m1_uiView_display_switch(VIEW_MODE_NFC_READ_MORE, X_MENU_UPDATE_REFRESH);
@@ -2344,6 +2354,7 @@ static int nfc_saved_browse_kp_handler(void)
 /*============================================================================*/
 static void m1_nfc_saved_browse_gui_create(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	m1_uiView_display_update(0);
 }
 
@@ -2359,7 +2370,7 @@ static void m1_nfc_saved_browse_gui_create(uint8_t param)
 /*============================================================================*/
 static void m1_nfc_saved_browse_gui_destroy(uint8_t param)
 {
-
+    (void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 /*============================================================================*/
@@ -2378,6 +2389,7 @@ static void m1_nfc_saved_browse_gui_destroy(uint8_t param)
 /*============================================================================*/
 static void m1_nfc_saved_browse_gui_update(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	f_info = storage_browse();
 	if ( f_info->file_is_selected )
 	{

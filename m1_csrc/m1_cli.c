@@ -98,12 +98,12 @@ BaseType_t cmd_m1_mtest(char *pconsole, size_t xWriteBufferLen, const char *pcCo
 	/* Remove compile time warnings about unused parameters, and check the
 	write buffer is not NULL.  NOTE - for simplicity, this example assumes the
 	write buffer length is adequate, so does not check for buffer overflows. */
-	//(void)pcCommandString; // contains the command string
-    //(void)xWriteBufferLen; // contains the length of the write buffer
+    (void)xWriteBufferLen; /* Unused: stub for future work. May need removal later. */
 	int32_t cmd_type, temp32;
 	uint8_t i, n_params;
 	char *input_params[INPUT_PARAMS_MAX];
 	BaseType_t input_params_len[INPUT_PARAMS_MAX];
+	char pcCommandStringCopy[MAX_INPUT_LENGTH];
 
 	if ( num_of_params==0 ) // Help command?
 	{
@@ -120,14 +120,18 @@ BaseType_t cmd_m1_mtest(char *pconsole, size_t xWriteBufferLen, const char *pcCo
 
 	n_params = (num_of_params <= INPUT_PARAMS_MAX)?num_of_params:INPUT_PARAMS_MAX;
 
+    // Copy command string to a mutable buffer for parameter null-termination
+    strncpy(pcCommandStringCopy, pcCommandString, sizeof(pcCommandStringCopy) - 1);
+    pcCommandStringCopy[sizeof(pcCommandStringCopy) - 1] = '\0';
+
 	for (i=0; i<n_params; i++)
 	{
 	    /* Obtain the name of the source file, and the length of its name, from
 	    the command string. The name of the source file is the first parameter. */
-		input_params[i] = FreeRTOS_CLIGetParameter
+		input_params[i] = (char *)FreeRTOS_CLIGetParameter
 	                        (
 	                          /* The command string itself. */
-	                          pcCommandString,
+	                          pcCommandStringCopy,
 	                          /* Return the i parameter, starting from 1. */
 	                          i + 1,
 	                          /* Store the parameter string length. */
@@ -661,7 +665,9 @@ void cmd_m1_mtest_infrared(char *pconsole, char *input_params[], uint8_t n_param
 	uint8_t force_quit, ret;
 	S_M1_Main_Q_t q_item;
 	IRMP_DATA irmp_data;
+#if 0 /* Unused: stub for future work. May need removal later. */
 	GPIO_InitTypeDef gpio_init_struct;
+#endif
 
 	switch (cmd_type)
 	{
@@ -737,7 +743,7 @@ void cmd_m1_mtest_infrared(char *pconsole, char *input_params[], uint8_t n_param
 void ShowRegister(uint8_t reg, uint8_t value)
 {
 	uint8_t t = 0x80;
-	uint8_t msg[20];
+	char msg[20];
 
 	msg[0] = 0;
 	M1_LOG_N(M1_LOGDB_TAG, "Register %2xh: %xh\r\n", reg, value);
@@ -759,8 +765,10 @@ void ShowRegister(uint8_t reg, uint8_t value)
 /*============================================================================*/
 void cmd_m1_mtest_power(char *pconsole, char *input_params[], uint8_t n_params, uint8_t cmd_type)
 {
+    (void)pconsole; /* Unused: stub for future work. May need removal later. */
 	uint8_t 		reg = 0xff;
 	int				res = -1;
+    (void)res; /* Unused: stub for future work. May need removal later. */
 	if (n_params >=3)
 		reg = (uint8_t)atoi(input_params[2]);
 	switch (cmd_type)
@@ -798,22 +806,24 @@ void cmd_m1_mtest_power(char *pconsole, char *input_params[], uint8_t n_params, 
     		break;
 
     	case 59:
-    		S_M1_Power_Status_t SystemPowerStatus;
-    		battery_power_status_get(&SystemPowerStatus);
+            {
+                S_M1_Power_Status_t SystemPowerStatus;
+                battery_power_status_get(&SystemPowerStatus);
 
-    		M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: get battery information\r\n");
-    		//get_power_status();
-    		M1_LOG_N(M1_LOGDB_TAG, "Batt. level: %u%%\r\n", SystemPowerStatus.battery_level);
-    		M1_LOG_N(M1_LOGDB_TAG, "Batt. temp: %uC\r\n", SystemPowerStatus.battery_temp);
-    		M1_LOG_N(M1_LOGDB_TAG, "Batt. heath: %u%%\r\n", SystemPowerStatus.battery_health);
-            if (SystemPowerStatus.stat==0)
-            {
-            	M1_LOG_N(M1_LOGDB_TAG, "Batt. consumption: %dmA\r\n", SystemPowerStatus.consumption_current);
+                M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: get battery information\r\n");
+                //get_power_status();
+                M1_LOG_N(M1_LOGDB_TAG, "Batt. level: %u%%\r\n", SystemPowerStatus.battery_level);
+                M1_LOG_N(M1_LOGDB_TAG, "Batt. temp: %uC\r\n", SystemPowerStatus.battery_temp);
+                M1_LOG_N(M1_LOGDB_TAG, "Batt. heath: %u%%\r\n", SystemPowerStatus.battery_health);
+                if (SystemPowerStatus.stat==0)
+                {
+                    M1_LOG_N(M1_LOGDB_TAG, "Batt. consumption: %dmA\r\n", SystemPowerStatus.consumption_current);
+                }
+                else
+                {
+                    M1_LOG_N(M1_LOGDB_TAG, "Batt. charge current: %umA\r\n", SystemPowerStatus.charge_current);
+                }
             }
-            else
-            {
-            	M1_LOG_N(M1_LOGDB_TAG, "Batt. charge current: %umA\r\n", SystemPowerStatus.charge_current);
-    		}
     		break;
 
     	default:
@@ -976,7 +986,9 @@ void cmd_m1_mtest_subghz(char *pconsole, char *input_params[], uint8_t n_params,
 /*============================================================================*/
 void cmd_m1_mtest_esp32(char *pconsole, char *input_params[], uint8_t n_params, uint8_t cmd_type)
 {
+#if 0 /* Unused: stub for future work. May need removal later. */
 	uint32_t input1_val;
+#endif
 	ctrl_cmd_t app_req = CTRL_CMD_DEFAULT_REQ();
 
 	switch (cmd_type)
@@ -1078,8 +1090,10 @@ void cmd_m1_mtest_esp32(char *pconsole, char *input_params[], uint8_t n_params, 
 void cmd_m1_mtest_gpio(char *pconsole, char *input_params[], uint8_t n_params, uint8_t cmd_type)
 {
 	uint32_t input1_val;
+#if 0 /* Unused: stub for future work. May need removal later. */
 	int16_t rssi;
 	uint8_t mode_type;
+#endif
 
 	switch (cmd_type)
 	{
@@ -1121,9 +1135,12 @@ void cmd_m1_mtest_gpio(char *pconsole, char *input_params[], uint8_t n_params, u
 /*============================================================================*/
 void cmd_m1_mtest_nfc(char *pconsole, char *input_params[], uint8_t n_params, uint8_t cmd_type)
 {
+    (void)pconsole; /* Unused: stub for future work. May need removal later. */
+#if 0 /* Unused: stub for future work. May need removal later. */
 	uint32_t input1_val;
 	int16_t rssi;
 	uint8_t mode_type;
+#endif
 
 	M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: NFC - CLI TEST input_params[%s] cmd_type[%d] n_params[%d]\r\n", *input_params, cmd_type, n_params);
 

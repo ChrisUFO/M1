@@ -57,16 +57,24 @@ static bool bq27421_itporFlag(void);
 static bool bq27421_softReset(void);
 
 //static bool bq27421_reset(void);
+#if 0 /* Unused: stub for future work. May need removal later. */
 static bool bq27421_enterConfig(bool userControl);
+#endif
+#if 0 /* Unused: stub for future work. May need removal later. */
 static bool bq27421_exitConfig(bool userControl);
+#endif
 static bool bq27421_blockDataControl(void);
 static bool bq27421_blockDataClass(uint8_t id);
 static bool bq27421_blockDataOffset(uint8_t offset);
 static uint8_t bq27421_blockDataChecksum(void);
+#if 0 /* Unused: stub for future work. May need removal later. */
 static uint8_t bq27421_readBlockData(uint8_t offset);
+#endif
 static uint8_t bq27421_computeBlockChecksum(void);
 //static bool bq27421_writeBlockChecksum(uint8_t csum);
+#if 0 /* Unused: stub for future work. May need removal later. */
 static uint8_t bq27421_readExtendedData(uint8_t classID, uint8_t offset);
+#endif
 //static bool bq27421_writeExtendedData(uint8_t classID, uint8_t offset, uint8_t * data, uint8_t len);
 static uint8_t bq27421_checkExtendedData(uint8_t offset);
 static bool bq27421_checkSohStatus(void);
@@ -305,8 +313,8 @@ bool bq27421_i2c_read_data_block( uint8_t offset, uint8_t *data, uint8_t bytes )
 /*============================================================================*/
 bool bq27421_init( uint16_t designCapacity_mAh, uint16_t terminateVoltage_mV, uint16_t taperCurrent_mA )
 {
-    uint16_t designEnergy_mWh, taperRate, flags, checksumOld, checksumRead;
-    uint8_t checksumNew;
+    uint16_t designEnergy_mWh = 0, taperRate = 0, flags = 0, checksumOld = 0, checksumRead = 0;
+    uint8_t checksumNew = 0;
     //bool result = false;
     //if(!(bq27421_itporFlag() == 1 && bq27421_soh(SOH_STAT) != 3))
     //	return false;
@@ -1087,7 +1095,7 @@ bool bq27421_applyConfigIfMatches(uint16_t designCapacity_mAh,
 /*============================================================================*/
 static uint16_t bq27421_flags(void)
 {
-	uint16_t flags;
+	uint16_t flags = 0;
 
 	bq27421_i2c_command_read( BQ27421_FLAGS_LOW, &flags );
 
@@ -1104,7 +1112,7 @@ static uint16_t bq27421_flags(void)
 /*============================================================================*/
 static uint16_t bq27421_status(void)
 {
-	uint16_t status;
+	uint16_t status = 0;
 
 	bq27421_readControlReg(&status);
 
@@ -1265,6 +1273,7 @@ bool bq27421_softReset(void)
   * @retval
   */
 /*============================================================================*/
+#if 0 /* Unused: stub for future work. May need removal later. */
 bool bq27421_enterConfig(bool userControl)
 {
 	if (userControl) _userConfigControl = true;
@@ -1287,6 +1296,7 @@ bool bq27421_enterConfig(bool userControl)
 
 	return false;
 }
+#endif
 
 
 /*============================================================================*/
@@ -1296,6 +1306,7 @@ bool bq27421_enterConfig(bool userControl)
   * @retval
   */
 /*============================================================================*/
+#if 0 /* Unused: stub for future work. May need removal later. */
 bool bq27421_exitConfig(bool userControl)
 {
 	if (userControl) _userConfigControl = false;
@@ -1313,6 +1324,7 @@ bool bq27421_exitConfig(bool userControl)
 	}
 	return false;
 }
+#endif
 
 /*****************************************************************************
  ************************** Extended Data Commands ***************************
@@ -1371,7 +1383,7 @@ bool bq27421_blockDataOffset(uint8_t offset)
 /*============================================================================*/
 uint8_t bq27421_blockDataChecksum(void)
 {
-	uint8_t csum;
+	uint8_t csum = 0;
 	bq27421_i2c_command_read1( BQ27421_EXTENDED_CHECKSUM, &csum );
 	//i2cReadBytes(BQ27421_EXTENDED_CHECKSUM, &csum, 1);
 	return csum;
@@ -1385,6 +1397,7 @@ uint8_t bq27421_blockDataChecksum(void)
   * @retval
   */
 /*============================================================================*/
+#if 0 /* Unused: stub for future work. May need removal later. */
 uint8_t bq27421_readBlockData(uint8_t offset)
 {
 	uint8_t ret;
@@ -1392,6 +1405,7 @@ uint8_t bq27421_readBlockData(uint8_t offset)
 	bq27421_i2c_command_read1(address, &ret);
 	return ret;
 }
+#endif
 
 
 /*============================================================================*/
@@ -1488,7 +1502,8 @@ uint8_t bq27421_checkExtendedData(uint8_t offset)
 	bq27421_blockDataOffset(offset / 32); // Write 32-bit block offset (usually 0)
 
 	chksum = bq27421_computeBlockChecksum(); // Compute checksum going in
-	uint8_t oldCsum = bq27421_blockDataChecksum();
+	uint8_t oldCsum = 0;
+    oldCsum = bq27421_blockDataChecksum();
 
 	if(chksum == oldCsum)
 	{
@@ -1499,6 +1514,7 @@ uint8_t bq27421_checkExtendedData(uint8_t offset)
 }
 
 
+#if 0 /* Unused: stub for future work. May need removal later. */
 /*============================================================================*/
 /**
   * @brief
@@ -1520,6 +1536,7 @@ uint8_t bq27421_readExtendedData(uint8_t classID, uint8_t offset)
 
 	bq27421_computeBlockChecksum(); // Compute checksum going in
 	uint8_t oldCsum = bq27421_blockDataChecksum();
+    (void)oldCsum; /* Unused: stub for future work. May need removal later. */
 	/*for (int i=0; i<32; i++)
 		Serial.print(String(readBlockData(i)) + " ");*/
 	retData = bq27421_readBlockData(offset % 32); // Read from offset (limit to 0-31)
@@ -1528,6 +1545,7 @@ uint8_t bq27421_readExtendedData(uint8_t classID, uint8_t offset)
 
 	return retData;
 }
+#endif
 
 
 #if 0

@@ -52,12 +52,16 @@ FW_CFG_SECTION S_M1_FW_CONFIG_t m1_fw_config = {
 uint8_t bl_crc_check(uint32_t image_size);
 uint32_t bl_get_crc_chunk(uint32_t *data_scr, uint32_t len, bool crc_init, bool last_chunk);
 void bl_swap_banks(void);
+#if 0 /* Unused: stub for future work. May need removal later. */
 static uint8_t bl_get_protection_status(void);
 static uint8_t bl_set_protection_status(uint32_t protection);
+#endif
 static uint16_t bl_flash_if_init(void);
 static uint16_t bl_flash_if_deinit(void);
+#if 0 /* Unused: stub for future work. May need removal later. */
 static uint16_t bl_flash_if_erase(uint32_t add);
 static uint32_t bl_get_sector(uint32_t address);
+#endif
 static uint8_t bl_flash_start(uint32_t image_size);
 void fw_gui_progress_update(size_t remainder);
 /*************** F U N C T I O N   I M P L E M E N T A T I O N ****************/
@@ -100,7 +104,7 @@ uint8_t bl_crc_check(uint32_t image_size)
         return BL_CODE_OK;
     }
 
-	 M1_LOG_E(M1_LOGDB_TAG, "crc32: 0x%X, cal_crc32: 0x%X, 32-bit image size: %ld\r\n", crc32, result, image_size);
+	 M1_LOG_E(M1_LOGDB_TAG, "crc32: 0x%lX, cal_crc32: 0x%lX, 32-bit image size: %lu\r\n", (unsigned long)crc32, (unsigned long)result, (unsigned long)image_size);
 
     return BL_CODE_CHK_ERROR;
 } // uint8_t bl_crc_check(uint32_t image_size)
@@ -230,6 +234,7 @@ static uint16_t bl_flash_if_deinit(void)
   * @retval 0 if operation is successeful, MAL_FAIL else.
   */
 /*============================================================================*/
+#if 0 /* Unused: stub for future work. May need removal later. */
 static uint16_t bl_flash_if_erase(uint32_t add)
 {
 	//uint32_t startsector = 0;
@@ -266,6 +271,7 @@ static uint16_t bl_flash_if_erase(uint32_t add)
 
 	return 0;
 } // static uint16_t bl_flash_if_erase(uint32_t add)
+#endif
 
 
 
@@ -321,6 +327,7 @@ uint8_t bl_flash_if_write(uint8_t *src, uint8_t *dest, uint32_t len)
   * @retval The sector of a given address
   */
 /*============================================================================*/
+#if 0 /* Unused: stub for future work. May need removal later. */
 static uint32_t bl_get_sector(uint32_t address)
 {
 	uint32_t sector = 0;
@@ -336,6 +343,7 @@ static uint32_t bl_get_sector(uint32_t address)
 
 	return sector;
 } // static uint32_t bl_get_sector(uint32_t address)
+#endif
 
 
 
@@ -346,6 +354,7 @@ static uint32_t bl_get_sector(uint32_t address)
   * @retval The protection status
   */
 /*============================================================================*/
+#if 0 /* Unused: stub for future work. May need removal later. */
 static uint8_t bl_get_protection_status(void)
 {
     FLASH_OBProgramInitTypeDef OBStruct = {0};
@@ -367,6 +376,7 @@ static uint8_t bl_get_protection_status(void)
 
     return protection;
 } // static uint8_t bl_get_protection_status(void)
+#endif
 
 
 
@@ -377,8 +387,10 @@ static uint8_t bl_get_protection_status(void)
   * @retval BL_CODE_OK if success
   */
 /*============================================================================*/
+#if 0 /* Unused: stub for future work. May need removal later. */
 static uint8_t bl_set_protection_status(uint32_t protection)
 {
+    (void)protection; /* Unused: stub for future work. May need removal later. */
     FLASH_OBProgramInitTypeDef OBStruct = {0};
     HAL_StatusTypeDef status            = HAL_ERROR;
 
@@ -406,6 +418,7 @@ static uint8_t bl_set_protection_status(uint32_t protection)
 
     return (status == HAL_OK) ? BL_CODE_OK : BL_CODE_OBP_ERROR;
 } // static uint8_t bl_set_protection_status(uint32_t protection)
+#endif
 
 
 
@@ -549,7 +562,7 @@ static uint8_t bl_flash_binary(uint8_t *payload, size_t size)
         err = bl_flash_if_write(payload, flash_add, size);
         if (err != BL_CODE_OK)
         {
-            M1_LOG_I(M1_LOGDB_TAG, "Writing flash error at 0x%X.\r\n", flash_add);
+            M1_LOG_I(M1_LOGDB_TAG, "Writing flash error at 0x%lX.\r\n", (unsigned long)flash_add);
             return err;
         }
         write_acc += size;
@@ -610,7 +623,7 @@ uint8_t bl_flash_app(FIL *hfile)
         m1_wdt_reset();
 
         flash_err = BL_CODE_CHK_ERROR;
-		count = m1_fb_read_from_file(hfile, fw_payload, FW_IMAGE_CHUNK_SIZE);
+		count = m1_fb_read_from_file(hfile, (char *)fw_payload, FW_IMAGE_CHUNK_SIZE);
 		if ( !count || (count % 4 != 0) ) // Read failed?
 			break;
 
@@ -683,12 +696,12 @@ void fw_gui_progress_update(size_t remainder)
 		{
 			progress_percent_count++;
 			percent = FW_UPDATE_FULL_PROGRESS_FACTOR*progress_percent_count;
-			sprintf(percent_txt, "Update progress: %02d %%", percent);
+			sprintf((char *)percent_txt, "Update progress: %02d %%", percent);
 			u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG); // set to background color
 			// Draw solid box to clear existing content
 			u8g2_DrawBox(&m1_u8g2, 4, INFO_BOX_Y_POS_ROW_1 - M1_SUB_MENU_FONT_HEIGHT + 1, 120, M1_SUB_MENU_FONT_HEIGHT);
 			u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT); // return to text color
-			u8g2_DrawStr(&m1_u8g2, 4, INFO_BOX_Y_POS_ROW_1, percent_txt); // Write new content
+			u8g2_DrawStr(&m1_u8g2, 4, INFO_BOX_Y_POS_ROW_1, (char *)percent_txt); // Write new content
 			u8g2_DrawXBMP(&m1_u8g2, progress_slider_x_post, FW_UPDATE_PROGRESS_SLIDE_STRIP_ROW + 3,
 						4, 8, fw_update_slider_5x8); // Progress slider
 			progress_slider_x_post += FW_UPDATE_SLIDER_WIDTH - FW_UPDATE_SLIDER_OVERLAP;

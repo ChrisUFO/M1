@@ -57,6 +57,7 @@ typedef struct {
     S_M1_LogDebugLevel_t level;
 } S_M1_LogDebugDsc;
 
+#if 0 /* Unused: stub for future work. May need removal later. */
 static const S_M1_LogDebugDsc M1_LOGDB_DESCRIPTIONS[] = {
     {"none", LOG_DEBUG_LEVEL_NONE},
     {"error", LOG_DEBUG_LEVEL_ERROR},
@@ -65,6 +66,7 @@ static const S_M1_LogDebugDsc M1_LOGDB_DESCRIPTIONS[] = {
     {"debug", LOG_DEBUG_LEVEL_DEBUG},
     {"trace", LOG_DEBUG_LEVEL_TRACE},
 };
+#endif
 
 /***************************** V A R I A B L E S ******************************/
 
@@ -496,7 +498,7 @@ int _write(int file, char *data, int len)
 
 	xSemaphoreTake(mutex_log_write_trans, portMAX_DELAY);
 
-    len = m1_ringbuffer_write(plogdb_tx_rb, data, len);
+    len = m1_ringbuffer_write(plogdb_tx_rb, (uint8_t *)data, len);
     xQueueSend(log_q_hdl, &q_item, 0);
     //uint32_t pri_mask;
     //pri_mask = __get_PRIMASK();
@@ -519,6 +521,7 @@ int _write(int file, char *data, int len)
 /*============================================================================*/
 void log_db_handler_task(void *param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	BaseType_t ret;
 	uint8_t q_item;
 

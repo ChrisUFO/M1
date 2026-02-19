@@ -587,6 +587,7 @@ void lp5814_set_blink_timer(uint8_t r_g_b, uint16_t on_off_ms, uint8_t mode, voi
 /*============================================================================*/
 static void lp5814_stop_blink_timer(TimerHandle_t xTimer)
 {
+    (void)xTimer; /* Unused: stub for future work. May need removal later. */
 	lp5814_all_off_RGB(); // Turn off
 	lp5814_fastblink_on_R_G_B(0, 0, 0);
 	if ( blink_timer_cb_func )

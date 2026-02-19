@@ -7,6 +7,24 @@ All notable changes to the M1 project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 
+## [v0.8.5] - 2026-02-19
+
+### Changed
+
+- **Build Hardening**:
+  - Enforced `-Werror` for the `m1_core` application target.
+  - Isolated third-party drivers into a separate `m1_drivers` target with relaxed diagnostics.
+  - Firmware version bumped to `0.8.5`.
+
+### Fixed
+
+- **Static Analysis & Code Quality**:
+  - Resolved hundreds of compiler warnings (signedness, type safety, logic, and safety).
+  - Fixed standard library compatibility by adding missing syscalls in `libc_compat.c`.
+  - Fixed critical toolchain issues on Windows causing binary archives to be misinterpreted during linkage.
+  - Automated ESP32 binary resource generation using `bin2array.cmake`.
+  - Preserved code stubs and future-work logic using standardized `(void)` casts and `#if 0` blocks.
+
 ## [v0.8.4] - 2026-02-19
 
 ### Added

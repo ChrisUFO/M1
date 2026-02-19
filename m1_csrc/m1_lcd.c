@@ -57,6 +57,7 @@ void m1_lcd_cleardisplay(void);
 /*============================================================================*/
 uint8_t u8x8_byte_stm32_4wire_hw_spi(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr)
 {
+    (void)u8x8; /* Unused: stub for future work. May need removal later. */
 	HAL_StatusTypeDef status;
 
 	switch (msg)
@@ -111,6 +112,7 @@ uint8_t u8x8_byte_stm32_4wire_hw_spi(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int,
 /*============================================================================*/
 uint8_t u8x8_stm32_gpio_and_delay(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr)
 {
+    (void)arg_ptr; /* Unused: stub for future work. May need removal later. */
 	switch (msg)
 	{
 		case U8X8_MSG_GPIO_MENU_SELECT:

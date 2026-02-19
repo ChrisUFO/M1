@@ -46,6 +46,9 @@ build_log.txt
 *log.txt
 build_log_*.txt
 review_*.json
+review*.txt
+review_full.txt
+*.diff
 
 # System files
 .DS_Store
@@ -64,3 +67,8 @@ PLAN.md
 
 # AI Rules
 changelog.md
+
+# Review artifacts
+review_*.txt
+review_*.json
+all_comments.json

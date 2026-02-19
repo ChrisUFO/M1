@@ -3,19 +3,19 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(m1_01)
-add_library(m1_01 INTERFACE)
 
 # Enable CMake support for ASM and C languages
 enable_language(C ASM)
 
-target_compile_definitions(m1_01 INTERFACE 
-	USE_HAL_DRIVER 
-	STM32H573xx
+# Common configuration for all targets
+set(COMMON_DEFINITIONS
+    USE_HAL_DRIVER 
+    STM32H573xx
     STM32_THREAD_SAFE_STRATEGY=4
     $<$<CONFIG:Debug>:DEBUG>
 )
 
-target_include_directories(m1_01 INTERFACE
+set(COMMON_INCLUDES
     ../../Core/Inc
     ../../Drivers/STM32H5xx_HAL_Driver/Inc
     ../../Drivers/STM32H5xx_HAL_Driver/Inc/Legacy
@@ -65,20 +65,8 @@ target_include_directories(m1_01 INTERFACE
     ../../USB/Core/Scr
 )
 
-target_sources(m1_01 INTERFACE
-    ../../Battery/battery.c
-    ../../Core/Src/FreeRTOS_CLI.c
-    ../../Core/Src/app_freertos.c
-    ../../Core/Src/cli_app.c
-    ../../Core/Src/main.c
-    ../../Core/Src/stm32h5xx_hal_msp.c
-    ../../Core/Src/stm32h5xx_hal_timebase_tim.c
-    ../../Core/Src/stm32h5xx_it.c
-    ../../Core/Src/syscalls.c
-    ../../Core/Src/sysmem.c
-    ../../Core/Src/system_stm32h5xx.c
-    ../../Core/Startup/startup_stm32h573vitx.s
-    #../../Core/ThreadSafe/newlib_lock_glue.c
+# Target for Drivers and Middleware (External code)
+add_library(m1_drivers STATIC
     ../../Drivers/BSP/Components/ST25R3916/rfal_rfst25r3916.c
     ../../Drivers/BSP/Components/ST25R3916/st25r3916.c
     ../../Drivers/BSP/Components/ST25R3916/st25r3916_aat.c
@@ -306,11 +294,6 @@ target_sources(m1_01 INTERFACE
     ../../NFC/NFC_drv/legacy/nfc_listener.c
     ../../NFC/NFC_drv/legacy/nfc_poller.c
     ../../NFC/app_x-cube-nfcx.c
-    ../../Sub_Ghz/datatypes_utils.c
-    ../../Sub_Ghz/m1_sub_ghz_api.c
-    ../../Sub_Ghz/m1_sub_ghz_decenc.c
-    ../../Sub_Ghz/protocols/m1_princeton_decode.c
-    ../../Sub_Ghz/protocols/m1_secplus_v2_decode.c
     ../../USB/Class/CDC/Src/usbd_cdc.c
     ../../USB/Class/CDC/Src/usbd_cdc_if.c
     ../../USB/Class/CompositeBuilder/Src/usbd_composite_builder.c
@@ -324,6 +307,40 @@ target_sources(m1_01 INTERFACE
     ../../USB/Core/Src/usbd_ctlreq.c
     ../../USB/Core/Src/usbd_desc.c
     ../../USB/Core/Src/usbd_ioreq.c
+    ../../Esp32_serial_flasher/app/stm32/libc_compat.c
+)
+
+# Generate ESP32 binaries resource file
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../Esp32_serial_flasher/app/common/bin2array.cmake)
+set(ESP32_RESOURCES_C ${CMAKE_CURRENT_BINARY_DIR}/esp32_binaries.c)
+create_resources(${CMAKE_CURRENT_SOURCE_DIR}/../../Esp32_serial_flasher/app/binaries/Hello-world ${ESP32_RESOURCES_C})
+# Add stub for missing app_bin symbols to satisfy app_common.c
+file(APPEND ${ESP32_RESOURCES_C} 
+    "\n/* Stubs for missing RAM app binaries */\n"
+    "const uint8_t  ESP32_C6_app_bin[] = {0x00};\n"
+    "const uint32_t ESP32_C6_app_bin_size = 0;\n"
+)
+target_sources(m1_drivers PRIVATE ${ESP32_RESOURCES_C})
+
+target_compile_definitions(m1_drivers PRIVATE ${COMMON_DEFINITIONS})
+target_include_directories(m1_drivers PRIVATE ${COMMON_INCLUDES})
+# Relaxed warnings for drivers/third-party
+include(${CMAKE_CURRENT_SOURCE_DIR}/../driver_warnings.cmake)
+target_compile_options(m1_drivers PRIVATE ${RELAXED_DRIVER_WARNINGS})
+
+# Target for Application Core
+add_library(m1_core STATIC
+    ../../Battery/battery.c
+    ../../Core/Src/FreeRTOS_CLI.c
+    ../../Core/Src/app_freertos.c
+    ../../Core/Src/cli_app.c
+    ../../Core/Src/main.c
+    ../../Core/Src/stm32h5xx_hal_msp.c
+    ../../Core/Src/stm32h5xx_hal_timebase_tim.c
+    ../../Core/Src/stm32h5xx_it.c
+    ../../Core/Src/syscalls.c
+    ../../Core/Src/sysmem.c
+    ../../Core/Src/system_stm32h5xx.c
     ../../lfrfid/lfrfid.c
     ../../lfrfid/lfrfid_file.c
     ../../lfrfid/lfrfid_hal.c
@@ -385,17 +402,25 @@ target_sources(m1_01 INTERFACE
     ../../m1_csrc/m1_crypto.c
     ../../m1_csrc/privateprofilestring.c
     ../../m1_csrc/uiView.c
+    ../../Sub_Ghz/datatypes_utils.c
+    ../../Sub_Ghz/m1_sub_ghz_api.c
+    ../../Sub_Ghz/m1_sub_ghz_decenc.c
+    ../../Sub_Ghz/protocols/m1_princeton_decode.c
+    ../../Sub_Ghz/protocols/m1_secplus_v2_decode.c
 )
 
-target_link_directories(m1_01 INTERFACE
-)
+target_compile_definitions(m1_core PRIVATE ${COMMON_DEFINITIONS})
+target_include_directories(m1_core PRIVATE ${COMMON_INCLUDES})
+# Strict warnings for our core code
+target_compile_options(m1_core PRIVATE -Werror)
 
-target_link_libraries(m1_01 INTERFACE
-)
+# Main library target (interface for compatibility)
+add_library(m1_01 INTERFACE)
+target_link_libraries(m1_01 INTERFACE m1_core m1_drivers)
+target_include_directories(m1_01 INTERFACE ${COMMON_INCLUDES})
+target_compile_definitions(m1_01 INTERFACE ${COMMON_DEFINITIONS})
 
 # Validate that STM32CubeMX code is compatible with C standard
 if(CMAKE_C_STANDARD LESS 11)
     message(ERROR "Generated code requires C11 or higher")
 endif()
-
-

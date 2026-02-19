@@ -456,8 +456,10 @@ static uint8_t ir_list_from_file(const char *file_path,
     if (p[0] == '\0')
       continue;
 
-    strncpy(paths[count], p, IR_UNIVERSAL_PATH_LEN_MAX - 1);
-    paths[count][IR_UNIVERSAL_PATH_LEN_MAX - 1] = '\0';
+    size_t p_len = strlen(p);
+    if (p_len >= IR_UNIVERSAL_PATH_LEN_MAX) p_len = IR_UNIVERSAL_PATH_LEN_MAX - 1;
+    memcpy(paths[count], p, p_len);
+    paths[count][p_len] = '\0';
 
     /* Name is the basename of the path */
     char *base = strrchr(p, '/');
@@ -465,8 +467,11 @@ static uint8_t ir_list_from_file(const char *file_path,
       base++;
     else
       base = p;
-    strncpy(names[count], base, IR_NAME_BUF_LEN - 1);
-    names[count][IR_NAME_BUF_LEN - 1] = '\0';
+    
+    size_t base_len = strlen(base);
+    if (base_len >= IR_NAME_BUF_LEN) base_len = IR_NAME_BUF_LEN - 1;
+    memcpy(names[count], base, base_len);
+    names[count][base_len] = '\0';
 
     /* Strip .ir */
     char *dot = strrchr(names[count], '.');
@@ -518,22 +523,30 @@ static void ir_search_recursive(const char *path, const char *lower_query,
       continue;
 
     if (fi->fattrib & AM_DIR) {
-      snprintf(full_path, IR_UNIVERSAL_PATH_LEN_MAX, "%s/%s", path, fi->fname);
-      ir_search_recursive(full_path, lower_query, names, paths, count,
-                          max_entries, depth + 1);
+      int sn_ret = snprintf(full_path, IR_UNIVERSAL_PATH_LEN_MAX, "%s/%s", path, fi->fname);
+      if (sn_ret >= 0 && sn_ret < IR_UNIVERSAL_PATH_LEN_MAX) {
+        ir_search_recursive(full_path, lower_query, names, paths, count,
+                            max_entries, depth + 1);
+      }
     } else {
       /* Case-insensitive substr search using pre-lowercased query */
-      strncpy(lower_name, fi->fname, IR_NAME_BUF_LEN - 1);
-      lower_name[IR_NAME_BUF_LEN - 1] = '\0';
+      size_t fname_len = strlen(fi->fname);
+      if (fname_len >= IR_NAME_BUF_LEN) fname_len = IR_NAME_BUF_LEN - 1;
+      memcpy(lower_name, fi->fname, fname_len);
+      lower_name[fname_len] = '\0';
       for (int i = 0; lower_name[i]; i++)
         lower_name[i] = tolower((unsigned char)lower_name[i]);
 
       if (strstr(lower_name, lower_query)) {
-        strncpy(names[*count], fi->fname, IR_NAME_BUF_LEN - 1);
-        names[*count][IR_NAME_BUF_LEN - 1] = '\0';
-        snprintf(paths[*count], IR_UNIVERSAL_PATH_LEN_MAX, "%s/%s", path,
+        size_t n_len = strlen(fi->fname);
+        if (n_len >= IR_NAME_BUF_LEN) n_len = IR_NAME_BUF_LEN - 1;
+        memcpy(names[*count], fi->fname, n_len);
+        names[*count][n_len] = '\0';
+        int sn_ret2 = snprintf(paths[*count], IR_UNIVERSAL_PATH_LEN_MAX, "%s/%s", path,
                  fi->fname);
-        (*count)++;
+        if (sn_ret2 >= 0 && sn_ret2 < IR_UNIVERSAL_PATH_LEN_MAX) {
+            (*count)++;
+        }
       }
     }
   }

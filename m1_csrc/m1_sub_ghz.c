@@ -166,7 +166,7 @@ static const float subghz_fcc_ism_bands_ASIA[SUBGHZ_ISM_BANDS_LIST_ASIA][2] = {
 
 // typedef struct S_M1_SUBGHZ_ISM_REGIONS_t;
 typedef struct {
-  float (*this_region)[2];
+  const float (*this_region)[2];
   uint8_t bands_list;
 } S_M1_SUBGHZ_ISM_REGIONS_t;
 
@@ -280,7 +280,9 @@ static void sub_ghz_tx_raw_deinit(void);
 
 static void sub_ghz_set_opmode(uint8_t opmode, uint8_t band, uint8_t channel,
                                uint8_t tx_power);
+#if 0 /* Unused: stub for future work. May need removal later. */
 static void sub_ghz_display(SubGHz_Dec_Info_t decoded_data);
+#endif
 static uint8_t sub_ghz_raw_samples_init(void);
 static void sub_ghz_raw_samples_deinit(bool discard_samples);
 static void sub_ghz_transmit_raw(uint32_t source, uint32_t dest, uint32_t len,
@@ -292,7 +294,9 @@ static uint8_t sub_ghz_replay_start(bool record_mode, S_M1_SubGHz_Band band,
                                     uint8_t channel, uint8_t power);
 static uint8_t sub_ghz_replay_continue(uint8_t ret_code_in);
 static uint8_t sub_ghz_fcc_ism_band_check(uint8_t band, uint8_t channel);
+#if 0 /* Unused: stub for future work. May need removal later. */
 static void sub_ghz_buffer_rotate(S_M1_RingBuffer *prb_handle);
+#endif
 static uint8_t sub_ghz_parse_raw_data(uint8_t buffer_ptr_id);
 static uint8_t sub_ghz_file_load(void);
 
@@ -547,6 +551,7 @@ static void subghz_record_gui_create(uint8_t param) {
  */
 /*============================================================================*/
 static void subghz_record_gui_destroy(uint8_t param) {
+  (void)param; /* Unused: stub for future work. May need removal later. */
   m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF,
                     LED_FASTBLINK_ONTIME_OFF); // Turn off
 } // static void subghz_record_gui_destroy(uint8_t param)
@@ -710,7 +715,7 @@ static int subghz_record_gui_message(void) {
       // m1_buzzer_notification();
       rcv_samples = ringbuffer_get_data_slots(&subghz_rx_rawdata_rb);
       if (rcv_samples >= SUBGHZ_RAW_DATA_SAMPLES_TO_RW) {
-        M1_LOG_N(M1_LOGDB_TAG, "Raw samples %d\r\n", rcv_samples);
+        M1_LOG_N(M1_LOGDB_TAG, "Raw samples %lu\r\n", (unsigned long)rcv_samples);
         sub_ghz_rx_raw_save(false, false);
         vTaskDelay(10); // Give the system some time in case RF noise is
                         // flooding the receiver
@@ -956,12 +961,12 @@ static int subghz_record_kp_handler(void) {
         // Save recent unsaved data file from SD card, deinit all sdcard tasks
         // and return to previous screen
         sub_ghz_raw_samples_deinit(false);
-        str = strstr(&datfile_info.dat_filename[1],
+        str = strstr((char *)&datfile_info.dat_filename[1],
                      "/"); // Search for the second / sign
         if (str != NULL)
           str += 1; // Move to next character after the /
         else
-          str = datfile_info.dat_filename;
+          str = (char *)datfile_info.dat_filename;
         m1_message_box(&m1_u8g2, "Saved to:", str, "", "BACK to exit");
         m1_uiView_display_update(SUBGHZ_RECORD_DISPLAY_PARAM_READY);
       } // if (
@@ -1007,7 +1012,7 @@ static void subghz_replay_browse_gui_create(uint8_t param) {
  */
 /*============================================================================*/
 static void subghz_replay_browse_gui_destroy(uint8_t param) {
-
+  (void)param; /* Unused: stub for future work. May need removal later. */
 } // static void subghz_replay_browse_gui_destroy(uint8_t param)
 
 /*============================================================================*/
@@ -1018,6 +1023,7 @@ static void subghz_replay_browse_gui_destroy(uint8_t param) {
  */
 /*============================================================================*/
 static void subghz_replay_browse_gui_update(uint8_t param) {
+  (void)param; /* Unused: stub for future work. May need removal later. */
   while (true) {
     f_info = storage_browse();
     if (!f_info->file_is_selected) // User exits?
@@ -1126,7 +1132,7 @@ static void subghz_replay_play_gui_create(uint8_t param) {
  */
 /*============================================================================*/
 static void subghz_replay_play_gui_destroy(uint8_t param) {
-
+  (void)param; /* Unused: stub for future work. May need removal later. */
 } // static void subghz_replay_play_gui_destroy(uint8_t param)
 
 /*============================================================================*/
@@ -1145,10 +1151,10 @@ static void subghz_replay_play_gui_update(uint8_t param) {
     m1_u8g2_firstpage();
     u8g2_SetFont(&m1_u8g2, M1_DISP_RUN_MENU_FONT_B);
     u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
-    m1_float_to_string(freq_text, subghz_replay_freq, 3);
-    strcat(freq_text, "MHz ");
-    strcat(freq_text, subghz_modulation_text[subghz_replay_mod]);
-    u8g2_DrawStr(&m1_u8g2, 40, 10, freq_text);
+    m1_float_to_string((char *)freq_text, subghz_replay_freq, 3);
+    strcat((char *)freq_text, "MHz ");
+    strcat((char *)freq_text, subghz_modulation_text[subghz_replay_mod]);
+    u8g2_DrawStr(&m1_u8g2, 40, 10, (char *)freq_text);
 
     u8g2_DrawXBMP(&m1_u8g2, 0, 5, 50, 27, subghz_antenna_50x27);
     break;
@@ -1300,8 +1306,17 @@ static uint8_t sub_ghz_file_load(void) {
       break;
     if (strcmp(&f_info->file_name[uret], SUB_GHZ_FILE_EXTENSION))
       break;
-    snprintf(datfile_info.dat_filename, sizeof(datfile_info.dat_filename),
-             "%s/%s", f_info->dir_name, f_info->file_name);
+    
+    size_t d_len = strlen(f_info->dir_name);
+    size_t f_len = strlen(f_info->file_name);
+    if (d_len + f_len + 2 <= sizeof(datfile_info.dat_filename)) {
+        memcpy(datfile_info.dat_filename, f_info->dir_name, d_len);
+        datfile_info.dat_filename[d_len] = '/';
+        memcpy(&datfile_info.dat_filename[d_len+1], f_info->file_name, f_len);
+        datfile_info.dat_filename[d_len + 1 + f_len] = '\0';
+    } else {
+        break;
+    }
 
     sys_error = sub_ghz_ring_buffers_init();
     if (sys_error)
@@ -1310,7 +1325,7 @@ static uint8_t sub_ghz_file_load(void) {
     if (sys_error)
       break;
 
-    token = strtok(sdcard_dat_buffer, "\r\n"); // Filetype
+    token = strtok((char *)sdcard_dat_buffer, "\r\n"); // Filetype
     key_len = SUB_GHZ_DATAFILE_RAW_FORMAT_N;
     if (strstr(token, SUB_GHZ_DATAFILE_FILETYPE_PACKET)) {
       key_len = SUB_GHZ_DATAFILE_RAW_FORMAT_N;
@@ -1318,7 +1333,7 @@ static uint8_t sub_ghz_file_load(void) {
     } // if ( strstr(token, SUB_GHZ_DATAFILE_FILETYPE_PACKET) )
     token = strtok(NULL, "\r\n"); // Version
     token = strtok(NULL, "\r\n"); // Frequency
-    str = strstr(token, ":");
+    str = strstr((char *)token, ":");
     str += 1; // Move to the frequency value
     subghz_replay_freq = strtol(str, &end_ptr, 10);
     if (subghz_replay_freq == 0)
@@ -1468,24 +1483,24 @@ void sub_ghz_frequency_reader(void) {
       freq_found = subghz_band_steps[active_band_id][0];
       if (freq_step <= CHANNEL_STEPS_MAX)
         freq_found += freq_step * CHANNEL_STEP;
-      m1_float_to_string(float_buffer, freq_found, 3);
+      m1_float_to_string((char *)float_buffer, freq_found, 3);
 
       u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
       u8g2_DrawBox(&m1_u8g2, 10, 14, 90, 17); // Clear old content
       u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
       u8g2_SetFont(&m1_u8g2, M1_DISP_LARGE_FONT_2B);
-      u8g2_DrawStr(&m1_u8g2, 10, 30, float_buffer);
+      u8g2_DrawStr(&m1_u8g2, 10, 30, (char *)float_buffer);
       u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
       u8g2_DrawBox(&m1_u8g2, 1, INFO_BOX_Y_POS_ROW_1 + detection_count * 10 - 9,
                    M1_LCD_DISPLAY_WIDTH, 10); // Clear old content
       u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
       u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
-      sprintf(prn_buffer, "%sMHz RSSI%ddBm", float_buffer, rssi);
+      sprintf((char *)prn_buffer, "%sMHz RSSI%ddBm", (char *)float_buffer, rssi);
       u8g2_DrawStr(&m1_u8g2, 1, INFO_BOX_Y_POS_ROW_1 + detection_count * 10,
-                   prn_buffer);
+                   (char *)prn_buffer);
       m1_u8g2_nextpage(); // Update display RAM
 
-      M1_LOG_N(M1_LOGDB_TAG, float_buffer);
+      M1_LOG_N(M1_LOGDB_TAG, (char *)float_buffer);
       M1_LOG_N(M1_LOGDB_TAG, " RSSI: %ddBm\r\n", rssi);
       detection_count++;
       if (detection_count >= 3)
@@ -1563,9 +1578,9 @@ void sub_ghz_regional_information(void) {
   u8g2_FirstPage(&m1_u8g2);
   u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
   u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_B); // Set bold font
-  sprintf(freq_range, "Region: %s",
+  sprintf((char *)freq_range, "Region: %s",
           subghz_ism_regions_text[m1_device_stat.config.ism_band_region]);
-  u8g2_DrawStr(&m1_u8g2, 0, 10, freq_range);
+  u8g2_DrawStr(&m1_u8g2, 0, 10, (char *)freq_range);
   u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_N); // Set normal font
   u8g2_DrawStr(&m1_u8g2, 0, 20, "Bands:");
   row = 30;
@@ -1574,17 +1589,17 @@ void sub_ghz_regional_information(void) {
        subghz_regions_list[m1_device_stat.config.ism_band_region].bands_list;
        i++) {
     m1_float_to_string(
-        freq_l,
+        (char *)freq_l,
         subghz_regions_list[m1_device_stat.config.ism_band_region]
             .this_region[i][0],
         3);
     m1_float_to_string(
-        freq_h,
+        (char *)freq_h,
         subghz_regions_list[m1_device_stat.config.ism_band_region]
             .this_region[i][1],
         3);
-    sprintf(freq_range, "%s - %s MHz", freq_l, freq_h);
-    u8g2_DrawStr(&m1_u8g2, 0, row, freq_range);
+    sprintf((char *)freq_range, "%s - %s MHz", (char *)freq_l, (char *)freq_h);
+    u8g2_DrawStr(&m1_u8g2, 0, row, (char *)freq_range);
     row += 10;
   }
   m1_u8g2_nextpage(); // Update display RAM
@@ -2141,7 +2156,7 @@ static uint8_t sub_ghz_raw_samples_init(void) {
     double_buffer_ptr[1] = subghz_back_buffer;
 
     error =
-        m1_fb_open_file(&datfile_info.dat_file_hdl, datfile_info.dat_filename);
+        m1_fb_open_file(&datfile_info.dat_file_hdl, (char *)datfile_info.dat_filename);
     if (error)
       break;
 
@@ -2149,7 +2164,7 @@ static uint8_t sub_ghz_raw_samples_init(void) {
     if (sdcard_dat_read_size > sdcard_dat_file_size)
       sdcard_dat_read_size = sdcard_dat_file_size;
     sdcard_read_result = m1_fb_read_from_file(
-        &datfile_info.dat_file_hdl, sdcard_dat_buffer, sdcard_dat_read_size);
+        &datfile_info.dat_file_hdl, (char *)sdcard_dat_buffer, sdcard_dat_read_size);
     if (sdcard_read_result != sdcard_dat_read_size) {
       error = 1;
       break;
@@ -2169,11 +2184,11 @@ static uint8_t sub_ghz_raw_samples_init(void) {
     key_len = SUB_GHZ_DATAFILE_KEY_FORMAT_N;
     i = 0;
     token =
-        strtok(psdcard_dat_buffer, "\r\n"); // Tokenize this duplicated buffer
-    if (strstr(token, subghz_datfile_keywords[i])) {
-      if (strstr(token, SUB_GHZ_DATAFILE_FILETYPE_NOISE))
+        (uint8_t *)strtok((char *)psdcard_dat_buffer, "\r\n"); // Tokenize this duplicated buffer
+    if (strstr((char *)token, subghz_datfile_keywords[i])) {
+      if (strstr((char *)token, SUB_GHZ_DATAFILE_FILETYPE_NOISE))
         key_len = SUB_GHZ_DATAFILE_RAW_FORMAT_N;
-      else if (strstr(token, SUB_GHZ_DATAFILE_FILETYPE_PACKET))
+      else if (strstr((char *)token, SUB_GHZ_DATAFILE_FILETYPE_PACKET))
         key_len = SUB_GHZ_DATAFILE_KEY_FORMAT_N;
       else
         token = NULL; // Unknown format
@@ -2183,12 +2198,12 @@ static uint8_t sub_ghz_raw_samples_init(void) {
     }
 
     while (token != NULL) {
-      if (strstr(token, subghz_datfile_keywords[i]) == NULL)
+      if (strstr((char *)token, subghz_datfile_keywords[i]) == NULL)
         break;
-      sdcard_buffer_run_ptr += strlen(token) + 2; // 2 for "\r\n"
+      sdcard_buffer_run_ptr += strlen((char *)token) + 2; // 2 for "\r\n"
       if (++i >= key_len)
         break;
-      token = strtok(NULL, "\r\n");
+      token = (uint8_t *)strtok(NULL, "\r\n");
     } // while ( token!=NULL )
     if (i < key_len) {
       error = 1;
@@ -2228,7 +2243,7 @@ static void sub_ghz_raw_samples_deinit(bool discard_samples) {
   }
   m1_fb_close_file(&datfile_info.dat_file_hdl);
   if (discard_samples)
-    m1_fb_delete_file(datfile_info.dat_filename);
+    m1_fb_delete_file((char *)datfile_info.dat_filename);
 
   M1_LOG_D(M1_LOGDB_TAG, "sub_ghz_raw_samples_deinit %d\r\n",
            subghz_back_buffer_size);
@@ -2253,14 +2268,14 @@ static uint8_t sub_ghz_parse_raw_data(uint8_t buffer_ptr_id) {
   crlf = 0;
 
   while (true) {
-    token = strstr(sdcard_buffer_run_ptr, " "); // Find next numbers
+    token = (char *)strstr((char *)sdcard_buffer_run_ptr, " "); // Find next numbers
     if (token == NULL) {
-      token = strstr(sdcard_buffer_run_ptr,
+      token = (char *)strstr((char *)sdcard_buffer_run_ptr,
                      "\r\n"); // Find end of current data block
       do {
         if (token == NULL) // Possibly last few characters of this buffer
         {
-          if ((sdcard_buffer_run_ptr + 10) <
+          if ((uint32_t)(sdcard_buffer_run_ptr + 10) <
               sdcard_dat_buffer_end_pos) // Remaining data is too long. Not
                                          // valid!
           {
@@ -2299,7 +2314,7 @@ static uint8_t sub_ghz_parse_raw_data(uint8_t buffer_ptr_id) {
                   sdcard_dat_file_size; // Adjust the read size
             sdcard_read_result =
                 m1_fb_read_from_file(&datfile_info.dat_file_hdl,
-                                     sdcard_dat_buffer, sdcard_dat_read_size);
+                                     (char *)sdcard_dat_buffer, sdcard_dat_read_size);
             if (sdcard_read_result != sdcard_dat_read_size) {
               error_code = SUB_GHZ_RAW_DATA_PARSER_ERROR_L2;
               break;
@@ -2316,10 +2331,10 @@ static uint8_t sub_ghz_parse_raw_data(uint8_t buffer_ptr_id) {
                                       // block
             sdcard_dat_buffer[sdcard_dat_read_size] =
                 '\0'; // Add end of string to the buffer
-            token = strstr(sdcard_buffer_run_ptr, " "); // Find next numbers
+            token = (char *)strstr((char *)sdcard_buffer_run_ptr, " "); // Find next numbers
             if (token == NULL)                          // Possibly error.
             {
-              token = strstr(sdcard_buffer_run_ptr,
+              token = (char *)strstr((char *)sdcard_buffer_run_ptr,
                              "\r\n"); // Find end of current data block
               if (token == NULL)      // Real error
                 error_code = SUB_GHZ_RAW_DATA_PARSER_ERROR_L3;
@@ -2339,7 +2354,7 @@ static uint8_t sub_ghz_parse_raw_data(uint8_t buffer_ptr_id) {
     } // if ( token==NULL )
 
     *token = '\0'; // Add end of string to replace the " " at the end
-    token = sdcard_buffer_run_ptr;
+    token = (char *)sdcard_buffer_run_ptr;
     sdcard_buffer_run_ptr +=
         strlen(token) +
         1;    // Move read pointer to the next item, +1 for " " at the end
@@ -2524,24 +2539,24 @@ static uint8_t sub_ghz_rx_raw_save(bool header_init, bool last_data) {
   assert(prn_buffer != NULL);
   pfillbuffer = subghz_sdcard_write_buffer;
   if (header_init) {
-    sprintf(pfillbuffer, "%s M1 SubGHz %s\r\n", subghz_datfile_keywords[0],
+    sprintf((char *)pfillbuffer, "%s M1 SubGHz %s\r\n", subghz_datfile_keywords[0],
             SUB_GHZ_DATAFILE_FILETYPE_KEYWORD);
     sprintf(prn_buffer, "%s %d.%d\r\n", subghz_datfile_keywords[1],
             m1_device_stat.config.fw_version_major,
             m1_device_stat.config.fw_version_minor);
-    strcat(pfillbuffer, prn_buffer);
+    strcat((char *)pfillbuffer, prn_buffer);
     freq32 = subghz_band_steps[subghz_scan_config.band][0] *
              1000000; // Convert frequency from MHz to Hz
     sprintf(prn_buffer, "%s %lu\r\n", subghz_datfile_keywords[2], freq32);
-    strcat(pfillbuffer, prn_buffer);
+    strcat((char *)pfillbuffer, prn_buffer);
     sprintf(prn_buffer, "%s %s\r\n", subghz_datfile_keywords[3],
             subghz_modulation_text[subghz_scan_config.modulation]);
-    strcat(pfillbuffer, prn_buffer);
-    m1_sdm_fill_buffer(pfillbuffer, strlen(pfillbuffer));
-    return 0;
+    strcat((char *)pfillbuffer, prn_buffer);
+    m1_sdm_fill_buffer(pfillbuffer, strlen((char *)pfillbuffer));
+    goto cleanup;
   } // if ( header_init )
 
-  sprintf(pfillbuffer, "%s", SUB_GHZ_DATAFILE_DATA_KEYWORD);
+  sprintf((char *)pfillbuffer, "%s", SUB_GHZ_DATAFILE_DATA_KEYWORD);
   // m1_test_gpio_pull_high();
   // sub_ghz_rx_pause();
   n_samples_to_rw = SUBGHZ_RAW_DATA_SAMPLES_TO_RW;
@@ -2564,16 +2579,18 @@ static uint8_t sub_ghz_rx_raw_save(bool header_init, bool last_data) {
   sign = 0;
   for (count = 0; count < n_samples_to_rw; count++) {
     sprintf(prn_buffer, " %s%u", sign_text[sign], *pdata);
-    strcat(pfillbuffer, prn_buffer);
+    strcat((char *)pfillbuffer, prn_buffer);
     pdata++;
     sign ^= 1;
   }
-  strcat(pfillbuffer, "\r\n");
+  strcat((char *)pfillbuffer, "\r\n");
 
-  m1_sdm_fill_buffer(pfillbuffer, strlen(pfillbuffer));
+  m1_sdm_fill_buffer(pfillbuffer, strlen((char *)pfillbuffer));
 
+cleanup:
   if (prn_buffer != NULL)
     free(prn_buffer);
+  return 0;
 } // static uint8_t sub_ghz_rx_raw_save(bool header_init, bool last_data)
 
 /*============================================================================*/
@@ -2765,6 +2782,7 @@ static uint8_t sub_ghz_fcc_ism_band_check(uint8_t band, uint8_t channel) {
  * @retval None
  */
 /*============================================================================*/
+#if 0 /* Unused: stub for future work. May need removal later. */
 static void sub_ghz_buffer_rotate(S_M1_RingBuffer *prb_handle) {
   uint16_t first, middle, last, next;
   uint16_t swap_val;
@@ -2802,6 +2820,7 @@ static void sub_ghz_buffer_rotate(S_M1_RingBuffer *prb_handle) {
   } // while ( next != first )
 
 } // static void sub_ghz_buffer_rotate(S_M1_RingBuffer *prb_handle)
+#endif
 
 /*============================================================================*/
 /**
@@ -2810,7 +2829,8 @@ static void sub_ghz_buffer_rotate(S_M1_RingBuffer *prb_handle) {
  * @retval None
  */
 /*============================================================================*/
-void sub_ghz_display(SubGHz_Dec_Info_t decoded_data) {
+#if 0 /* Unused: stub for future work. May need removal later. */
+static void sub_ghz_display(SubGHz_Dec_Info_t decoded_data) {
   char hexString[64];
   uint32_t value;
 
@@ -2837,3 +2857,4 @@ void sub_ghz_display(SubGHz_Dec_Info_t decoded_data) {
   subghz_decenc_ctl.subghz_reset_data();
 
 } // void sub_ghz_display(SubGHz_Dec_Info_t decoded_data)
+#endif

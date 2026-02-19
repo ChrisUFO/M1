@@ -141,7 +141,7 @@
 #define IRMP_SUPPORT_TECHNICS_PROTOCOL                                         \
   0 // TECHNICS             >= 10000                 ~250 bytes
 #define IRMP_SUPPORT_PANASONIC_PROTOCOL                                        \
-  1 // PANASONIC Beamer     >= 10000                 ~250 bytes
+  0 // PANASONIC Beamer     >= 10000                 ~250 bytes
 #define IRMP_SUPPORT_MITSU_HEAVY_PROTOCOL                                      \
   0 // Mitsubishi Aircond   >= 10000                 ~250 bytes
 #define IRMP_SUPPORT_VINCENT_PROTOCOL                                          \

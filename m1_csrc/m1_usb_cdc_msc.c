@@ -164,7 +164,9 @@ static void cdc_start_usb2ser(void);
 void m1_usb_cdc_comdefault(void);
 void m1_usb_cdc_comconfig(void);
 void usb_cdc_init(void);
+#if 0 /* Unused: stub for future work. May need removal later. */
 static void usb_cdc_deinit(void);
+#endif
 void MX_USB_PCD_Init(void);
 void HAL_PCD_MspInit(PCD_HandleTypeDef* hpcd);
 void HAL_PCD_MspDeInit(PCD_HandleTypeDef* hpcd);
@@ -329,10 +331,12 @@ void vUsb2SerTask(void *pvParameters)
   size_t bytes_remaining;
   uint8_t* current_buffer_ptr;
   enCdcMode prev_cdc_mode = m1_usbcdc_mode;
+  (void)prev_cdc_mode; /* Unused: stub for future work. May need removal later. */
 
   UNUSED(pvParameters);
 
   const TickType_t xMaxBlockTime = pdMS_TO_TICKS(500);
+  (void)xMaxBlockTime; /* Unused: stub for future work. May need removal later. */
 
   for(;;)
   {
@@ -699,6 +703,7 @@ void usb_cdc_init(void)
   * @retval None
   */
 /*============================================================================*/
+#if 0 /* Unused: stub for future work. May need removal later. */
 static void usb_cdc_deinit(void)
 {
   if (hpcd_USB_DRD_FS.State != HAL_PCD_STATE_RESET)
@@ -706,6 +711,7 @@ static void usb_cdc_deinit(void)
     USBD_DeInit(&hUsbDeviceFS);
   }
 } // void usb_cdc_deinit(void)
+#endif
 
 
 /*============================================================================*/

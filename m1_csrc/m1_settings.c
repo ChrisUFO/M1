@@ -314,7 +314,7 @@ void settings_about(void)
 /*============================================================================*/
 static void settings_about_display_choice(uint8_t choice)
 {
-	uint8_t prn_name[20];
+	char prn_name[20];
 
 	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG); // Set background color
 	u8g2_DrawBox(&m1_u8g2, 0, 0, M1_LCD_DISPLAY_WIDTH, ABOUT_BOX_Y_POS_ROW_5 + 1); // Clear old content
@@ -326,11 +326,11 @@ static void settings_about_display_choice(uint8_t choice)
 			u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_B); // Set bold font
 			u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_1, "FW version info:");
 			u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_N); // Set normal font
-			sprintf(prn_name, "%d.%d.%d.%d", m1_device_stat.config.fw_version_major, m1_device_stat.config.fw_version_minor, m1_device_stat.config.fw_version_build, m1_device_stat.config.fw_version_rc);
-			u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_2, prn_name);
+			sprintf((char *)prn_name, "%d.%d.%d.%d", m1_device_stat.config.fw_version_major, m1_device_stat.config.fw_version_minor, m1_device_stat.config.fw_version_build, m1_device_stat.config.fw_version_rc);
+			u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_2, (char *)prn_name);
 			u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_3, FW_VERSION_FORK_TAG);
-			sprintf(prn_name, "Active bank: %d", (m1_device_stat.active_bank==BANK1_ACTIVE)?1:2);
-			u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_4, prn_name);
+			sprintf((char *)prn_name, "Active bank: %d", (m1_device_stat.active_bank==BANK1_ACTIVE)?1:2);
+			u8g2_DrawStr(&m1_u8g2, 0, ABOUT_BOX_Y_POS_ROW_4, (char *)prn_name);
 			break;
 
 		case 1: // Company info

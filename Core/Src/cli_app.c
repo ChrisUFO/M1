@@ -40,7 +40,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "m1_esp32_hal.h"
 #include "m1_bq27421.h"
 
-#define MAX_INPUT_LENGTH 		64
 #define USING_VS_CODE_TERMINAL 	0
 #define USING_OTHER_TERMINAL 	1 // e.g. Putty, TerraTerm
 
@@ -207,6 +206,7 @@ void vCommandConsoleTask(void *pvParameters)
 /*============================================================================*/
 BaseType_t cmd_clearScreen(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
 {
+    (void)num_of_params; /* Unused: stub for future work. May need removal later. */
     /* Remove compile time warnings about unused parameters, and check the
 	write buffer is not NULL.  NOTE - for simplicity, this example assumes the
 	write buffer length is adequate, so does not check for buffer overflows. */
