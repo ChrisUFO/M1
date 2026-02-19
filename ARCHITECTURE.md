@@ -83,6 +83,9 @@ Current Settings submenu:
 
 - **STM32CubeIDE:** Uses `.project` and `.cproject`
 - **VS Code / CMake:** Uses `CMakeLists.txt` and `CMakePresets.json`
+- **Zero-Warning Core Architecture:** The build is split into two primary static libraries:
+  - `m1_core`: Contains all ChrisUFO application logic. Built with strict `-Werror` enforcement.
+  - `m1_drivers`: Contains third-party middleware (HAL, FreeRTOS, RFAL). Built with relaxed diagnostics to isolate legacy warnings.
 
 ## Versioning
 

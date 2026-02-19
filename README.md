@@ -68,17 +68,16 @@ Open the project and build in the IDE. Output: `./Release/MonstaTek_M1_v0802-Chr
 **Manual CMake build:**
 ```bash
 cmake --preset gcc-14_2_build-release
-cmake --build out/build/gcc-14_2_build-release
-python tools/append_crc32.py out/build/gcc-14_2_build-release/MonstaTek_M1_v0802-ChrisUFO.bin
+cmake --build out/build/gcc-14_2_build-release --target M1_v0.8.5-ChrisUFO
 ```
 
 **Output files** (in `distribution/` or `out/build/gcc-14_2_build-release/`):
 
 | File | Use |
 |------|-----|
-| `MonstaTek_M1_v0804-ChrisUFO.bin` | STM32 firmware (includes CRC32) |
-| `MonstaTek_M1_v0804-ChrisUFO.hex` | STM32CubeProgrammer / JLink |
-| `MonstaTek_M1_v0804-ChrisUFO.elf` | Debug sessions |
+| `M1_v0.8.5-ChrisUFO.bin` | STM32 firmware (includes CRC32) |
+| `M1_v0.8.5-ChrisUFO.hex` | STM32CubeProgrammer / JLink |
+| `M1_v0.8.5-ChrisUFO.elf` | Debug sessions |
 
 ## Development & Debugging
 
