@@ -36,7 +36,7 @@
  * ---------------------------------------------------------------------- */
 
 #define IR_LIST_MAX_ENTRIES                                                    \
-  32 /* max dirs/files shown per level; limited for RAM headroom (see issue    \
+  16 /* max dirs/files shown per level; limited for RAM headroom (see issue    \
         #14) */
 #define IR_NAME_BUF_LEN (FF_MAX_LFN + 1)
 #define IR_LINE_BUF_LEN 128 /* max line length in a .ir file      */
@@ -47,8 +47,8 @@
 #define IR_FAVORITES_FILE "0:/System/ir_favorites.txt"
 #define IR_MAX_RECENT 10
 #define IR_MAX_FAVORITES 20
-#define IR_SEARCH_MAX_RESULTS 64
-#define IR_MAX_RECURSION_DEPTH 8
+#define IR_SEARCH_MAX_RESULTS 32
+#define IR_MAX_RECURSION_DEPTH 5
 
 /* -------------------------------------------------------------------------
  * Protocol name -> IRMP ID mapping table
@@ -350,8 +350,7 @@ static void ir_add_recent(const char *path) {
            f_gets(lines[count], IR_UNIVERSAL_PATH_LEN_MAX, &f)) {
       char *p = ir_trim(lines[count]);
       if (p[0] != '\0' && strcmp(p, path) != 0) {
-        strncpy(lines[count], p, IR_UNIVERSAL_PATH_LEN_MAX - 1);
-        lines[count][IR_UNIVERSAL_PATH_LEN_MAX - 1] = '\0';
+        memmove(lines[count], p, strlen(p) + 1);
         count++;
       }
     }
@@ -412,8 +411,7 @@ static void ir_toggle_favorite(const char *path) {
           already_fav = true;
           /* skip adding to the list we will rewrite (removing it) */
         } else {
-          strncpy(lines[count], p, IR_UNIVERSAL_PATH_LEN_MAX - 1);
-          lines[count][IR_UNIVERSAL_PATH_LEN_MAX - 1] = '\0';
+          memmove(lines[count], p, strlen(p) + 1);
           count++;
         }
       }
@@ -490,49 +488,66 @@ static void ir_search_recursive(const char *path, const char *lower_query,
                                 char paths[][IR_UNIVERSAL_PATH_LEN_MAX],
                                 uint8_t *count, uint8_t max_entries,
                                 uint8_t depth) {
-  DIR dir;
-  FILINFO fi;
-  char full_path[IR_UNIVERSAL_PATH_LEN_MAX];
+  DIR *dir = NULL;
+  FILINFO *fi = NULL;
+  char *full_path = NULL;
+  char *lower_name = NULL;
 
-  /* Hardening: recursion depth limit */
-  if (depth > IR_MAX_RECURSION_DEPTH)
-    return;
-  if (*count >= max_entries)
-    return;
-
-  if (f_opendir(&dir, path) != FR_OK)
+  /* Hardening: recursion depth limit and result limit */
+  if (depth > IR_MAX_RECURSION_DEPTH || *count >= max_entries)
     return;
 
-  while (f_readdir(&dir, &fi) == FR_OK && fi.fname[0] != '\0' &&
+  /* Allocate large buffers on the heap to avoid stack overflow */
+  dir = pvPortMalloc(sizeof(DIR));
+  fi = pvPortMalloc(sizeof(FILINFO));
+  full_path = pvPortMalloc(IR_UNIVERSAL_PATH_LEN_MAX);
+  lower_name = pvPortMalloc(IR_NAME_BUF_LEN);
+
+  if (!dir || !fi || !full_path || !lower_name)
+    goto cleanup;
+
+  if (f_opendir(dir, path) != FR_OK)
+    goto cleanup;
+
+  while (f_readdir(dir, fi) == FR_OK && fi->fname[0] != '\0' &&
          *count < max_entries) {
     /* Skip . and .. entries and hidden/system files */
-    if (fi.fname[0] == '.')
+    if (fi->fname[0] == '.')
       continue;
-    if (fi.fattrib & (AM_HID | AM_SYS))
+    if (fi->fattrib & (AM_HID | AM_SYS))
       continue;
 
-    if (fi.fattrib & AM_DIR) {
-      snprintf(full_path, sizeof(full_path), "%s/%s", path, fi.fname);
+    if (fi->fattrib & AM_DIR) {
+      snprintf(full_path, IR_UNIVERSAL_PATH_LEN_MAX, "%s/%s", path, fi->fname);
       ir_search_recursive(full_path, lower_query, names, paths, count,
                           max_entries, depth + 1);
     } else {
       /* Case-insensitive substr search using pre-lowercased query */
-      char lower_name[IR_NAME_BUF_LEN];
-      strncpy(lower_name, fi.fname, sizeof(lower_name));
-      lower_name[sizeof(lower_name) - 1] = '\0';
+      strncpy(lower_name, fi->fname, IR_NAME_BUF_LEN - 1);
+      lower_name[IR_NAME_BUF_LEN - 1] = '\0';
       for (int i = 0; lower_name[i]; i++)
         lower_name[i] = tolower((unsigned char)lower_name[i]);
 
       if (strstr(lower_name, lower_query)) {
-        strncpy(names[*count], fi.fname, IR_NAME_BUF_LEN - 1);
+        strncpy(names[*count], fi->fname, IR_NAME_BUF_LEN - 1);
         names[*count][IR_NAME_BUF_LEN - 1] = '\0';
         snprintf(paths[*count], IR_UNIVERSAL_PATH_LEN_MAX, "%s/%s", path,
-                 fi.fname);
+                 fi->fname);
         (*count)++;
       }
     }
   }
-  f_closedir(&dir);
+  f_closedir(dir);
+
+cleanup:
+  if (dir)
+    vPortFree(dir);
+  if (fi)
+    vPortFree(fi);
+  if (full_path)
+    vPortFree(full_path);
+  if (lower_name)
+    vPortFree(lower_name);
 }
 
 /* -------------------------------------------------------------------------
@@ -961,7 +976,7 @@ static bool ir_browse_level(const char *base_path, const char *title,
 static void ir_show_fixed_list(const char *title, char names[][IR_NAME_BUF_LEN],
                                char paths[][IR_UNIVERSAL_PATH_LEN_MAX],
                                uint8_t count) {
-  const char *ptrs[IR_MAX_FAVORITES];
+  const char *ptrs[IR_SEARCH_MAX_RESULTS];
   uint8_t sel = 0, row_offset = 0;
   S_M1_Buttons_Status btn;
   S_M1_Main_Q_t q_item;
