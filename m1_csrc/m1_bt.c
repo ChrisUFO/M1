@@ -485,7 +485,7 @@ static uint16_t ble_scan_list_print(ctrl_cmd_t *app_resp, bool up_dir)
 	y_offset = 14 + M1_GUI_FONT_HEIGHT - 1;
 	// Format BSSID to hex string (XX:XX:XX:XX:XX:XX)
     char bssid_str[18];
-    sprintf(bssid_str, "%02X:%02X:%02X:%02X:%02X:%02X",
+    snprintf(bssid_str, sizeof(bssid_str), "%02X:%02X:%02X:%02X:%02X:%02X",
             list[i].bssid[0], list[i].bssid[1], list[i].bssid[2],
             list[i].bssid[3], list[i].bssid[4], list[i].bssid[5]);
 	// Draw text
