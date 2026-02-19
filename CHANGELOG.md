@@ -72,6 +72,32 @@ and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 
 ## [v0.8.1-ChrisUFO] - 2026-02-17
 
+## [1.0.2-ChrisUFO] - 2026-02-18
+
+### Added
+
+- USB DFU mode entry in **Settings -> Firmware update -> USB DFU mode** with explicit confirmation/cancel flow
+- `dfu` CLI command to reboot directly into STM32 ROM USB DFU mode
+- Startup operation flag `DEV_OP_STATUS_USB_DFU_REQUEST` for reliable DFU handoff across reset
+- DFU transition hardening:
+  - confirmation timeout path (no infinite wait)
+  - USB stack deinit status checks before ROM jump
+  - pre-reset user feedback screen when preparing DFU reboot
+- Architecture and user docs updated for DFU flow, troubleshooting, tested matrix, and limitations
+
+### Changed
+
+- Firmware version build bumped to `0.8.2` (`FW_VERSION_BUILD 2`)
+- `ARCHITECTURE.md` rewritten to match actual repository structure and current firmware update pathways
+- CMake post-build pipeline now gracefully skips `.bin/.hex/CRC` generation when `arm-none-eabi-objcopy` is not found, instead of hard failing link completion
+
+### Validation Notes
+
+- Firmware compiles and links with CMake target for this branch (`MonstaTek_M1_v0802-ChrisUFO.elf`).
+- When `arm-none-eabi-objcopy` is unavailable, CMake emits a warning and skips `.bin/.hex/CRC` generation instead of failing the build.
+
+## [1.0.1-ChrisUFO] - 2026-02-17
+
 ### Added
 
 - **Universal Remote** feature (`m1_csrc/m1_ir_universal.c/.h`):
