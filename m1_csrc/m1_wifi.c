@@ -473,6 +473,7 @@ static void wifi_auto_connect(void)
 		wifi_cred_decrypt(cred.encrypted_password, (uint8_t *)decrypted_pwd, cred.encrypted_len);
 		strncpy((char *)connect_req.u.wifi_ap_config.pwd, decrypted_pwd, PASSWORD_LENGTH - 1);
 		connect_req.u.wifi_ap_config.pwd[PASSWORD_LENGTH - 1] = 0;
+		memset(decrypted_pwd, 0, sizeof(decrypted_pwd));
 	}
 
 	(void)wifi_connect_ap(&connect_req); // silent fail by design
@@ -579,7 +580,10 @@ void wifi_join_network(void)
                 if (list[selected_ap].ssid[0] == 0x00)
                     strcpy(prn_msg, "*hidden*");
                 else
+                {
                     strncpy(prn_msg, (char*)list[selected_ap].ssid, M1_LCD_DISPLAY_WIDTH/M1_GUI_FONT_WIDTH);
+                    prn_msg[(M1_LCD_DISPLAY_WIDTH/M1_GUI_FONT_WIDTH) - 1] = '\0';
+                }
                 u8g2_DrawStr(&m1_u8g2, 2, y_offset, prn_msg);
                 y_offset += M1_GUI_FONT_HEIGHT;
 
@@ -765,6 +769,7 @@ void wifi_join_network(void)
                 m1_u8g2_nextpage();
                 m1_hard_delay(2000);
             }
+            memset(password_buffer, 0, sizeof(password_buffer));
         }
     }
     

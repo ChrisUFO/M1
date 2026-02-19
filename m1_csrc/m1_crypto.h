@@ -32,7 +32,7 @@ bool m1_crypto_init(void);
 void m1_crypto_derive_key(uint8_t* key, uint8_t len);
 
 // Encrypt data (adds IV prefix to output)
-// Output buffer must be input_len + 16 (for IV)
+// Output buffer must be input_len + 32 bytes worst case (IV + full PKCS7 block)
 bool m1_crypto_encrypt(const uint8_t* input, uint8_t* output, uint8_t input_len, uint8_t* output_len);
 
 // Decrypt data (expects IV prefix in input)

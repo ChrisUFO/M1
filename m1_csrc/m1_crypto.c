@@ -81,9 +81,8 @@ bool m1_crypto_init(void)
 	
 	// Derive key from device UID
 	m1_crypto_derive_key(crypto_key, M1_CRYPTO_KEY_SIZE);
-	
-	// TODO: Initialize STM32H5 CRYP peripheral if available
-	// HAL_CRYP_Init(&hcryp);
+
+	// Hardware CRYP path is tracked separately; software AES is active in this build.
 	
 	crypto_initialized = true;
 	return true;
@@ -191,6 +190,10 @@ bool m1_crypto_encrypt(const uint8_t* input, uint8_t* output, uint8_t input_len,
 	if (!crypto_initialized) {
 		m1_crypto_init();
 	}
+
+	if (!input || !output || !output_len) {
+		return false;
+	}
 	
     uint8_t iv[M1_CRYPTO_IV_SIZE];
     if (!m1_crypto_generate_iv(iv)) {
@@ -208,8 +211,9 @@ bool m1_crypto_encrypt(const uint8_t* input, uint8_t* output, uint8_t input_len,
 	
 	uint8_t prev_cipher[M1_CRYPTO_BLOCK_SIZE];
 	memcpy(prev_cipher, iv, M1_CRYPTO_BLOCK_SIZE);
-	
-	uint8_t padded_len = ((input_len + 15) / 16) * 16;  // PKCS7 padding
+
+	// PKCS7 always appends at least one full block.
+	uint8_t padded_len = (uint8_t)(((input_len / M1_CRYPTO_BLOCK_SIZE) + 1U) * M1_CRYPTO_BLOCK_SIZE);
 	
 	for (uint8_t block = 0; block < padded_len / 16; block++) {
 		// Prepare block with PKCS7 padding
@@ -269,9 +273,17 @@ bool m1_crypto_decrypt(const uint8_t* input, uint8_t* output, uint8_t input_len,
 	if (!crypto_initialized) {
 		m1_crypto_init();
 	}
+
+	if (!input || !output || !output_len) {
+		return false;
+	}
 	
 	if (input_len < M1_CRYPTO_IV_SIZE + 16) {
 		return false;  // Too short
+	}
+
+	if (((input_len - M1_CRYPTO_IV_SIZE) % M1_CRYPTO_BLOCK_SIZE) != 0U) {
+		return false;
 	}
 	
 	uint8_t iv[M1_CRYPTO_IV_SIZE];
@@ -576,6 +588,11 @@ static void KeyExpansion(const uint8_t* key, uint8_t* expandedKey)
 			
 			// XOR with Rcon
 			temp[0] ^= Rcon[rcon_idx++];
+		}
+		else if (i % 32 == 16) {
+			for (uint8_t j = 0; j < 4; j++) {
+				temp[j] = sbox[temp[j]];
+			}
 		}
 		
 		// XOR with word 32 bytes (8 words) back

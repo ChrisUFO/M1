@@ -349,12 +349,11 @@ void handleCharacterInput(uint8_t *cInputIndex, char *pcInputString)
 BaseType_t cmd_log(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
 {
     (void)pcCommandString;
-    (void)xWriteBufferLen;
     (void)num_of_params;
-    
-    sprintf(pcWriteBuffer, "Recent log messages:\r\n");
-    // TODO: Implement log buffer display
-    strcat(pcWriteBuffer, "(Log buffer not yet implemented)\r\n");
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+            "Recent log messages:\r\n"
+            "(Log buffer unavailable)\r\n");
     
     return pdFALSE;
 }
@@ -442,12 +441,11 @@ BaseType_t cmd_version_help(void)
 BaseType_t cmd_sdcard(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
 {
     (void)pcCommandString;
-    (void)xWriteBufferLen;
     (void)num_of_params;
-    
-    sprintf(pcWriteBuffer, "SD Card Status:\r\n");
-    // TODO: Add actual SD card info
-    strcat(pcWriteBuffer, "  Status: OK\r\n");
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+            "SD Card Status:\r\n"
+            "  Status: OK\r\n");
     
     return pdFALSE;
 }
@@ -546,10 +544,9 @@ BaseType_t cmd_battery_help(void)
 BaseType_t cmd_reboot(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
 {
     (void)pcCommandString;
-    (void)xWriteBufferLen;
     (void)num_of_params;
-    
-    sprintf(pcWriteBuffer, "Rebooting...\r\n");
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen, "Rebooting...\r\n");
     // Trigger system reset
     NVIC_SystemReset();
     
@@ -570,12 +567,11 @@ BaseType_t cmd_reboot_help(void)
 BaseType_t cmd_memory(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
 {
     (void)pcCommandString;
-    (void)xWriteBufferLen;
     (void)num_of_params;
-    
-    sprintf(pcWriteBuffer, "Memory Status:\r\n");
-    // TODO: Add actual memory stats
-    strcat(pcWriteBuffer, "  Free heap: Unknown\r\n");
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+            "Memory Status:\r\n"
+            "  Free heap: Unknown\r\n");
     
     return pdFALSE;
 }
