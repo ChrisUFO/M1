@@ -658,14 +658,14 @@ static bool ir_run_command_ui(const char *file_path, const char *device_name) {
 
     if (q_item.q_evt_type == Q_EVENT_IRRED_TX) {
       /* TX complete notification */
-      if (tx_active) {
+      if (tx_active && infrared_transmit(0) == IR_TX_COMPLETED) {
         m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF,
                           LED_FASTBLINK_ONTIME_OFF);
         infrared_encode_sys_deinit();
         infrared_encode_sys_init();
         tx_active = false;
         /* Redraw list after send */
-        ir_ui_draw_list(device_name, ptrs, dev->count, sel, row_offset);
+        ir_ui_draw_list(dtitle, ptrs, dev->count, sel, row_offset);
       }
       continue;
     }
@@ -685,7 +685,6 @@ static bool ir_run_command_ui(const char *file_path, const char *device_name) {
     if (btn.event[BUTTON_RIGHT_KP_ID] == BUTTON_EVENT_CLICK) {
       ir_toggle_favorite(file_path);
       /* Redraw with updated title */
-      char dtitle[64];
       if (ir_is_favorite(file_path))
         snprintf(dtitle, sizeof(dtitle), "* %s", device_name);
       else
@@ -739,6 +738,7 @@ static bool ir_run_command_ui(const char *file_path, const char *device_name) {
 
       irsnd_generate_tx_data(dev->cmds[sel].irmp);
       infrared_transmit(1);
+      infrared_transmit(0); /* Start the first frame */
       tx_active = true;
       continue;
     }
@@ -1057,6 +1057,9 @@ static void ir_dashboard(void) {
           uint8_t c = ir_list_from_file(IR_FAVORITES_FILE, names, paths,
                                         IR_MAX_FAVORITES);
           ir_show_fixed_list("Favorites", names, paths, c);
+        } else {
+          ir_ui_show_error("No memory");
+          vTaskDelay(pdMS_TO_TICKS(1500));
         }
         if (names)
           vPortFree(names);
@@ -1072,6 +1075,9 @@ static void ir_dashboard(void) {
           uint8_t c =
               ir_list_from_file(IR_RECENT_FILE, names, paths, IR_MAX_RECENT);
           ir_show_fixed_list("Recent", names, paths, c);
+        } else {
+          ir_ui_show_error("No memory");
+          vTaskDelay(pdMS_TO_TICKS(1500));
         }
         if (names)
           vPortFree(names);
@@ -1101,6 +1107,9 @@ static void ir_dashboard(void) {
               ir_ui_show_error("No matches found");
               vTaskDelay(pdMS_TO_TICKS(1500));
             }
+          } else {
+            ir_ui_show_error("No memory");
+            vTaskDelay(pdMS_TO_TICKS(1500));
           }
           if (names)
             vPortFree(names);

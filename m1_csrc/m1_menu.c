@@ -117,13 +117,13 @@ S_M1_Menu_t menu_125KHz_RFID = {
 
 /*-------------------------------- > NFC -------------------------------------*/
 
-S_M1_Menu_t menu_NFC_Read = {"Read", nfc_read, NULL, NULL,  0,
+S_M1_Menu_t menu_NFC_Read = {"Read", m1_nfc_read, NULL, NULL,  0,
                              0,      NULL,     NULL, {NULL}};
 
-S_M1_Menu_t menu_NFC_Saved = {"Saved", nfc_saved, NULL, NULL,  0,
+S_M1_Menu_t menu_NFC_Saved = {"Saved", m1_nfc_saved, NULL, NULL,  0,
                               0,       NULL,      NULL, {NULL}};
 
-S_M1_Menu_t menu_NFC_Tools = {"Tools", nfc_tools, NULL, NULL,  0,
+S_M1_Menu_t menu_NFC_Tools = {"Tools", m1_nfc_tools, NULL, NULL,  0,
                               0,       NULL,      NULL, {NULL}};
 
 S_M1_Menu_t menu_NFC = {"NFC",
