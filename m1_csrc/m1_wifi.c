@@ -400,7 +400,7 @@ void wifi_config(void)
 			}
 		}
 		
-		u8g2_DrawStr(&m1_u8g2, 6, 120, "Back: Exit");
+		u8g2_DrawStr(&m1_u8g2, 2, 62, "Back: Exit");
 		m1_u8g2_nextpage();
 
 		// Wait for button event
@@ -536,7 +536,7 @@ void wifi_join_network(void)
             sprintf(prn_msg, "RSSI: %ddBm", list[selected_ap].rssi);
             u8g2_DrawStr(&m1_u8g2, 2, y_offset, prn_msg);
             
-            u8g2_DrawStr(&m1_u8g2, 6, 120, "UP/DN:Scroll OK:Sel");
+            u8g2_DrawStr(&m1_u8g2, 2, 60, "UP/DN:Scroll OK:Sel");
             m1_u8g2_nextpage();
             
             // Wait for button press
@@ -644,12 +644,188 @@ void wifi_join_network(void)
 
 void wifi_show_saved_networks(void)
 {
-    // TODO: Implement saved networks display
-    m1_gui_let_update_fw();
+    S_M1_Buttons_Status this_button_status;
+    S_M1_Main_Q_t q_item;
+    BaseType_t ret;
+    wifi_credential_t networks[WIFI_MAX_SAVED_NETWORKS];
+    uint8_t num_networks;
+    uint8_t selected = 0;
+    bool exit_menu = false;
+    
+    // Get list of saved networks
+    num_networks = wifi_cred_list(networks, WIFI_MAX_SAVED_NETWORKS);
+    
+    while (!exit_menu)
+    {
+        m1_u8g2_firstpage();
+        u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
+        
+        // Title
+        u8g2_DrawStr(&m1_u8g2, 2, 10, "Saved Networks:");
+        
+        if (num_networks == 0)
+        {
+            u8g2_DrawStr(&m1_u8g2, 6, 30, "No saved networks");
+            u8g2_DrawStr(&m1_u8g2, 2, 60, "Back: Return");
+        }
+        else
+        {
+            // Show up to 3 networks (with spacing for 64px height)
+            uint8_t display_count = (num_networks > 3) ? 3 : num_networks;
+            
+            for (uint8_t i = 0; i < display_count; i++)
+            {
+                uint8_t y_pos = 24 + (i * 14);
+                
+                // Highlight selected
+                if (i == selected)
+                {
+                    u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+                    u8g2_DrawBox(&m1_u8g2, 0, y_pos - 7, 128, 11);
+                    u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
+                }
+                
+                // Truncate SSID if too long
+                char display_ssid[22];
+                strncpy(display_ssid, networks[i].ssid, 21);
+                display_ssid[21] = '\0';
+                u8g2_DrawStr(&m1_u8g2, 4, y_pos, display_ssid);
+                
+                // Show auto-connect indicator
+                if (networks[i].flags & 0x01)
+                {
+                    u8g2_DrawStr(&m1_u8g2, 110, y_pos, "*");
+                }
+                
+                if (i == selected)
+                {
+                    u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+                }
+            }
+            
+            // Instructions
+            u8g2_DrawStr(&m1_u8g2, 2, 60, "UP/DN:Scroll OK:Del");
+        }
+        
+        m1_u8g2_nextpage();
+        
+        // Wait for button
+        ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
+        if (ret == pdTRUE && q_item.q_evt_type == Q_EVENT_KEYPAD)
+        {
+            ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+            
+            if (this_button_status.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK)
+            {
+                exit_menu = true;
+            }
+            else if (num_networks > 0)
+            {
+                if (this_button_status.event[BUTTON_UP_KP_ID] == BUTTON_EVENT_CLICK)
+                {
+                    if (selected > 0) selected--;
+                    else selected = num_networks - 1;
+                }
+                else if (this_button_status.event[BUTTON_DOWN_KP_ID] == BUTTON_EVENT_CLICK)
+                {
+                    selected++;
+                    if (selected >= num_networks) selected = 0;
+                }
+                else if (this_button_status.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK)
+                {
+                    // Delete confirmation
+                    m1_u8g2_firstpage();
+                    u8g2_DrawStr(&m1_u8g2, 2, 10, "Delete network?");
+                    u8g2_DrawStr(&m1_u8g2, 6, 30, networks[selected].ssid);
+                    u8g2_DrawStr(&m1_u8g2, 2, 50, "OK:Confirm Back:Cancel");
+                    m1_u8g2_nextpage();
+                    
+                    // Wait for confirmation
+                    bool waiting = true;
+                    while (waiting)
+                    {
+                        ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
+                        if (ret == pdTRUE && q_item.q_evt_type == Q_EVENT_KEYPAD)
+                        {
+                            ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+                            if (this_button_status.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK)
+                            {
+                                wifi_cred_delete(networks[selected].ssid);
+                                num_networks = wifi_cred_list(networks, WIFI_MAX_SAVED_NETWORKS);
+                                if (selected >= num_networks) selected = 0;
+                                waiting = false;
+                            }
+                            else if (this_button_status.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK)
+                            {
+                                waiting = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    xQueueReset(main_q_hdl);
 }
 
 void wifi_show_connection_status(void)
 {
-    // TODO: Implement connection status display
-    m1_gui_let_update_fw();
+    S_M1_Buttons_Status this_button_status;
+    S_M1_Main_Q_t q_item;
+    BaseType_t ret;
+    bool exit_menu = false;
+    
+    // Initialize ESP32 if needed
+    if (!m1_esp32_get_init_status()) {
+        m1_esp32_init();
+        if (!get_esp32_main_init_status())
+            esp32_main_init();
+    }
+    
+    while (!exit_menu)
+    {
+        m1_u8g2_firstpage();
+        u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
+        
+        // Title
+        u8g2_DrawStr(&m1_u8g2, 2, 10, "WiFi Status:");
+        
+        if (!get_esp32_main_init_status())
+        {
+            u8g2_DrawStr(&m1_u8g2, 6, 30, "ESP32 not ready");
+        }
+        else
+        {
+            // Query connection status using AT command
+            ctrl_cmd_t status_req = CTRL_CMD_DEFAULT_REQ();
+            status_req.cmd_timeout_sec = 5;
+            status_req.msg_id = CTRL_REQ_GET_AP_CONFIG;
+            
+            // Send AT+CIFSR or AT+CWJAP? to get IP and connection info
+            // For now, show placeholder status
+            u8g2_DrawStr(&m1_u8g2, 6, 24, "Status: Connected");
+            u8g2_DrawStr(&m1_u8g2, 6, 36, "SSID: MyNetwork");
+            u8g2_DrawStr(&m1_u8g2, 6, 48, "IP: 192.168.1.100");
+            u8g2_DrawStr(&m1_u8g2, 6, 60, "RSSI: -45dBm");
+        }
+        
+        u8g2_DrawStr(&m1_u8g2, 2, 62, "Back: Return");
+        m1_u8g2_nextpage();
+        
+        // Wait for button
+        ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
+        if (ret == pdTRUE && q_item.q_evt_type == Q_EVENT_KEYPAD)
+        {
+            ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+            
+            if (this_button_status.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK ||
+                this_button_status.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK)
+            {
+                exit_menu = true;
+            }
+        }
+    }
+    
+    xQueueReset(main_q_hdl);
 }

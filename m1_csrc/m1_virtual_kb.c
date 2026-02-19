@@ -1133,31 +1133,28 @@ uint8_t m1_vkb_get_password(char *description, char *password_buffer, uint8_t ma
 				u8g2_DrawStr(&m1_u8g2, 6, 20, display_buffer);
 			}
 			
-			// Row 3: Character selector with prev/current/next
-			// Spacing: Password box ends at y=24, gap, then prev/next at y=30, gap, then current at y=34-56
-			
+			// Row 3: Character selector with prev/current/next horizontally aligned
 			// Calculate prev/next indices with wrapping
 			uint8_t prev_index = (char_index == 0) ? (max_chars[current_mode] - 1) : (char_index - 1);
 			uint8_t next_index = (char_index + 1) % max_chars[current_mode];
 			
-			// Small prev/next characters (above the large current char)
-			u8g2_SetFont(&m1_u8g2, u8g2_font_5x7_tr);
-			char prev_char[2] = {char_sets[current_mode][prev_index], '\0'};
-			u8g2_DrawStr(&m1_u8g2, 38, 30, prev_char);
-			char next_char[2] = {char_sets[current_mode][next_index], '\0'};
-			u8g2_DrawStr(&m1_u8g2, 82, 30, next_char);
-			
-			// Current character (large and highlighted) - box spans y=34 to y=56
+			// Current character (large and highlighted) - centered
 			char current_char[2] = {char_sets[current_mode][char_index], '\0'};
 			u8g2_SetFont(&m1_u8g2, u8g2_font_10x20_tr);
-			u8g2_DrawBox(&m1_u8g2, 52, 34, 24, 22);  // Inverted box
+			u8g2_DrawBox(&m1_u8g2, 52, 28, 24, 22);  // Inverted box at y=28-50
 			u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
-			u8g2_DrawStr(&m1_u8g2, 58, 52, current_char);  // Text inside box
+			u8g2_DrawStr(&m1_u8g2, 58, 46, current_char);  // Text inside box
 			u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
 			
-			// Row 4: Instructions (y=58 and y=62) - below current char box
+			// Small prev/next characters beside the current char (same baseline y=46)
 			u8g2_SetFont(&m1_u8g2, u8g2_font_5x7_tr);
-			u8g2_DrawStr(&m1_u8g2, 2, 58, "<>:Char Up/Dn:Mode");
+			char prev_char[2] = {char_sets[current_mode][prev_index], '\0'};
+			u8g2_DrawStr(&m1_u8g2, 34, 46, prev_char);
+			char next_char[2] = {char_sets[current_mode][next_index], '\0'};
+			u8g2_DrawStr(&m1_u8g2, 90, 46, next_char);
+			
+			// Row 4: Instructions (y=56 and y=62) - below current char box with gap
+			u8g2_DrawStr(&m1_u8g2, 2, 56, "<>:Char Up/Dn:Mode");
 			if (password_len > 0)
 			{
 				u8g2_DrawStr(&m1_u8g2, 2, 62, "OK:Add  Back:Done");
