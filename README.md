@@ -402,9 +402,9 @@ status, and — for stubs — the estimated effort and pen-testing value of comp
 | Menu Item | Status | Notes |
 |-----------|--------|-------|
 | Scan AP | ✅ | ESP32-C6 scan — shows SSID, BSSID, RSSI, channel, auth type |
-| WiFi Config | ⚠️ | `wifi_config()` calls `m1_gui_let_update_fw()` — no UI to join a network or configure the ESP32 |
+| WiFi Config | ✅ | Join network, manual hidden SSID entry, encrypted saved credentials, status view, disconnect |
 
-**Stub effort/value:** WiFi Config — *Low–Medium effort* (add SSID/password entry, connect command over SPI-AT), *Medium value* (connecting to a network enables HTTP-based attacks and OTA; however the ESP32-C6 SPI-AT firmware already supports `AT+CWJAP`).
+**Implemented:** WiFi Config now supports AP scan selection, manual SSID entry, password entry with show/hide toggle, encrypted credential storage, saved-network management (delete + auto-connect toggle), and status/disconnect flow.
 
 ---
 

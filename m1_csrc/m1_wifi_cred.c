@@ -242,6 +242,18 @@ uint8_t wifi_cred_list(wifi_credential_t* out_networks, uint8_t max_count)
     for (uint8_t i = 0; i < count; i++) {
         memcpy(&out_networks[i], &cred_db.networks[i], sizeof(wifi_credential_t));
     }
+
+    // Most recently used first
+    for (uint8_t i = 0; i < count; i++) {
+        for (uint8_t j = i + 1; j < count; j++) {
+            if (out_networks[j].last_connected > out_networks[i].last_connected) {
+                wifi_credential_t tmp;
+                memcpy(&tmp, &out_networks[i], sizeof(wifi_credential_t));
+                memcpy(&out_networks[i], &out_networks[j], sizeof(wifi_credential_t));
+                memcpy(&out_networks[j], &tmp, sizeof(wifi_credential_t));
+            }
+        }
+    }
     return count;
 }
 

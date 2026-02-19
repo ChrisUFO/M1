@@ -275,8 +275,8 @@ testing, and OTA firmware updates for the ESP32.
 | Sub-feature | Description |
 |-------------|-------------|
 | **Join Network** | Select from scan results, enter password via virtual keyboard, connect |
-| **Saved Networks** | Store credentials on SD card (encrypted), auto-connect |
-| **Connection Status** | Show IP address, gateway, RSSI after connect |
+| **Saved Networks** | Store credentials on SD card (encrypted), auto-connect toggle, delete |
+| **Connection Status** | Show connection state, SSID, IP (when available), RSSI, disconnect |
 | **Forget Network** | Remove saved credentials |
 
 #### What to leverage
@@ -288,9 +288,8 @@ testing, and OTA firmware updates for the ESP32.
 | [Flipper Zero `wifi_marauder`](https://github.com/0xchocolate/flipperzero-wifi-marauder) | Reference for ESP32 AT command orchestration from a Flipper app |
 
 #### Security note
-Saved WiFi credentials must be stored encrypted on the SD card. Use the STM32H5
-hardware AES peripheral (`HAL_CRYP_*`) with a device-unique key derived from the
-MCU UID (`HAL_GetUID`).
+Saved WiFi credentials are stored encrypted on SD card with AES-256-CBC and a
+device-unique key derived from MCU UID (`HAL_GetUID`).
 
 ---
 
@@ -351,4 +350,4 @@ Use these as the issue titles:
 - [ ] `feat(rfid): implement 125 kHz Utilities (T5577 raw, brute-force, clone)` *(Phase 2.1)*
 - [ ] `feat(nfc): implement NFC Tools (dump, NDEF, Mifare Classic dict attack)` *(Phase 2.2)*
 - [ ] `feat(bt): implement Bluetooth Config (advertisement payload editor)` *(Phase 3.1)*
-- [ ] `feat(wifi): implement WiFi Config (join network, saved credentials)` *(Phase 3.2)*
+- [x] `feat(wifi): implement WiFi Config (join network, saved credentials)` *(Phase 3.2)*

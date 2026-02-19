@@ -106,17 +106,16 @@ void m1_crypto_derive_key(uint8_t* key, uint8_t len)
 	uid[0] = HAL_GetUIDw0();
 	uid[1] = HAL_GetUIDw1();
 	uid[2] = HAL_GetUIDw2();
-	
-	// Simple key derivation - XOR expand to fill key buffer
+
+	// Derive key bytes using splitmix64 expansion from UID seed.
+	uint64_t seed = ((uint64_t)uid[0] << 32) ^ (uint64_t)uid[1] ^ ((uint64_t)uid[2] << 13) ^ 0xA5A5A5A5A5A5A5A5ULL;
 	for (uint8_t i = 0; i < len; i++) {
-		uint8_t byte_idx = i % 12;  // 12 bytes = 96 bits
-		uint8_t word_idx = byte_idx / 4;
-		uint8_t shift = (byte_idx % 4) * 8;
-		
-		key[i] = (uid[word_idx] >> shift) & 0xFF;
-		
-		// Add some mixing with position
-		key[i] ^= (i * 0x9E) ^ 0x37;
+		seed += 0x9E3779B97F4A7C15ULL;
+		uint64_t z = seed;
+		z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+		z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+		z = z ^ (z >> 31);
+		key[i] = (uint8_t)(z & 0xFF);
 	}
 }
 
