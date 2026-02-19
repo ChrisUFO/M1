@@ -590,7 +590,7 @@ static void firmware_update_usb_dfu_request_and_reset(void)
 	M1_LOG_I(M1_LOGDB_TAG, "USB DFU mode requested. Rebooting...\r\n");
 	vTaskDelay(pdMS_TO_TICKS(150));
 	NVIC_SystemReset();
-}
+} // static void firmware_update_usb_dfu_request_and_reset(void)
 
 
 /*============================================================================*/
