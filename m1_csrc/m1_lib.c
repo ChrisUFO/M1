@@ -230,8 +230,8 @@ void m1_strtoupper(char *str)
 /*============================================================================*/
 void m1_float_to_string(char *out_str, float in_val, uint8_t in_fraction)
 {
-	uint8_t 	fraction[5]; // '.xxx' plus End of String
-	uint8_t 	format[7];
+	char fraction[8]; // '.xxx' plus End of String
+	char format[10];
 	uint32_t 	integer;
 
 	if (in_val >= 1)
@@ -246,7 +246,7 @@ void m1_float_to_string(char *out_str, float in_val, uint8_t in_fraction)
 	sprintf(format, ".%%0%dlu", in_fraction);
 	sprintf(fraction, format, (uint32_t)in_val);
 
-	strcat(out_str, (char *)fraction);
+	strcat(out_str, fraction);
 } // void m1_float_to_string(char *out_str, float in_val, uint8_t in_fraction)
 
 

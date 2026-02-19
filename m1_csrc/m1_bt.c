@@ -484,7 +484,7 @@ static uint16_t ble_scan_list_print(ctrl_cmd_t *app_resp, bool up_dir)
 
 	y_offset = 14 + M1_GUI_FONT_HEIGHT - 1;
 	// Draw text
-	u8g2_DrawStr(&m1_u8g2, 2, y_offset, list[i].bssid);
+	u8g2_DrawStr(&m1_u8g2, 2, y_offset, (char *)list[i].bssid);
 	y_offset += M1_GUI_FONT_HEIGHT + M1_GUI_ROW_SPACING;
 	sprintf(prn_msg, "RSSI: %ddBm", list[i].rssi);
 	u8g2_DrawStr(&m1_u8g2, 2, y_offset, prn_msg);

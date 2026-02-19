@@ -124,7 +124,7 @@ BaseType_t cmd_m1_mtest(char *pconsole, size_t xWriteBufferLen, const char *pcCo
 	{
 	    /* Obtain the name of the source file, and the length of its name, from
 	    the command string. The name of the source file is the first parameter. */
-		input_params[i] = FreeRTOS_CLIGetParameter
+		input_params[i] = (char *)FreeRTOS_CLIGetParameter
 	                        (
 	                          /* The command string itself. */
 	                          pcCommandString,
@@ -746,12 +746,12 @@ void ShowRegister(uint8_t reg, uint8_t value)
 	M1_LOG_N("     ", "7 6 5 4 3 2 1 0\r\n");
 	for(int i = 0; i < 8; ++i) {
 		if ((value & t) != 0)
-			strcat(msg, "1 ");
+			strcat((char *)msg, "1 ");
 		else
-			strcat(msg, "0 ");
+			strcat((char *)msg, "0 ");
 		t >>= 1;
 	}
-	M1_LOG_N("     ", "%s\r\n", msg);
+	M1_LOG_N("     ", "%s\r\n", (char *)msg);
 }
 
 /*============================================================================*/
@@ -802,22 +802,24 @@ void cmd_m1_mtest_power(char *pconsole, char *input_params[], uint8_t n_params, 
     		break;
 
     	case 59:
-    		S_M1_Power_Status_t SystemPowerStatus;
-    		battery_power_status_get(&SystemPowerStatus);
+            {
+                S_M1_Power_Status_t SystemPowerStatus;
+                battery_power_status_get(&SystemPowerStatus);
 
-    		M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: get battery information\r\n");
-    		//get_power_status();
-    		M1_LOG_N(M1_LOGDB_TAG, "Batt. level: %u%%\r\n", SystemPowerStatus.battery_level);
-    		M1_LOG_N(M1_LOGDB_TAG, "Batt. temp: %uC\r\n", SystemPowerStatus.battery_temp);
-    		M1_LOG_N(M1_LOGDB_TAG, "Batt. heath: %u%%\r\n", SystemPowerStatus.battery_health);
-            if (SystemPowerStatus.stat==0)
-            {
-            	M1_LOG_N(M1_LOGDB_TAG, "Batt. consumption: %dmA\r\n", SystemPowerStatus.consumption_current);
+                M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: get battery information\r\n");
+                //get_power_status();
+                M1_LOG_N(M1_LOGDB_TAG, "Batt. level: %u%%\r\n", SystemPowerStatus.battery_level);
+                M1_LOG_N(M1_LOGDB_TAG, "Batt. temp: %uC\r\n", SystemPowerStatus.battery_temp);
+                M1_LOG_N(M1_LOGDB_TAG, "Batt. heath: %u%%\r\n", SystemPowerStatus.battery_health);
+                if (SystemPowerStatus.stat==0)
+                {
+                    M1_LOG_N(M1_LOGDB_TAG, "Batt. consumption: %dmA\r\n", SystemPowerStatus.consumption_current);
+                }
+                else
+                {
+                    M1_LOG_N(M1_LOGDB_TAG, "Batt. charge current: %umA\r\n", SystemPowerStatus.charge_current);
+                }
             }
-            else
-            {
-            	M1_LOG_N(M1_LOGDB_TAG, "Batt. charge current: %umA\r\n", SystemPowerStatus.charge_current);
-    		}
     		break;
 
     	default:

@@ -234,7 +234,7 @@ void menu_nfc_init(void)
     if (nfc_worker_task_hdl != NULL || nfc_worker_q_hdl != NULL)
     {
         platformLog("[NFC] menu_nfc_init: already initialized. task=%p, q=%p\r\n",
-                    nfc_worker_task_hdl, nfc_worker_q_hdl);
+                    (void *)nfc_worker_task_hdl, (void *)nfc_worker_q_hdl);
         return;
     }
 
@@ -253,12 +253,12 @@ void menu_nfc_init(void)
     if (ret != pdPASS || nfc_worker_task_hdl==NULL)
     {
         platformLog("[NFC] nfc_worker_task create failed! ret=%d, hdl=%p\r\n",
-                    (int)ret, nfc_worker_task_hdl);
+                    (int)ret, (void *)nfc_worker_task_hdl);
         nfc_worker_task_hdl = NULL;
         return;    
     }
 	platformLog("[NFC] xTaskCreate ret=%ld, handle=%p\r\n",
-            (long)ret, nfc_worker_task_hdl);
+            (long)ret, (void *)nfc_worker_task_hdl);
 
     
     nfc_worker_q_hdl = xQueueCreate(10, sizeof(S_M1_Main_Q_t));

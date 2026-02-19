@@ -200,7 +200,7 @@ static uint16_t wifi_ap_list_print(ctrl_cmd_t *app_resp, bool up_dir) {
   static wifi_ap_scan_list_t *w_scan_p;
   static wifi_scanlist_t *list;
   static bool init_done = false;
-  char prn_msg[25];
+  char prn_msg[64];
   uint8_t y_offset;
 
   if (!app_resp && !up_dir) // reset condition?
@@ -279,10 +279,10 @@ static uint16_t wifi_ap_list_print(ctrl_cmd_t *app_resp, bool up_dir) {
     strcpy(prn_msg, "*hidden*");
   else
     snprintf(prn_msg, sizeof(prn_msg), "%s",
-             list[i].ssid);
+             (char *)list[i].ssid);
   u8g2_DrawStr(&m1_u8g2, 2, y_offset, prn_msg);
   y_offset += M1_GUI_FONT_HEIGHT;
-  u8g2_DrawStr(&m1_u8g2, 2, y_offset, list[i].bssid);
+  u8g2_DrawStr(&m1_u8g2, 2, y_offset, (char *)list[i].bssid);
   y_offset += M1_GUI_FONT_HEIGHT + M1_GUI_ROW_SPACING;
   sprintf(prn_msg, "RSSI: %ddBm", list[i].rssi);
   u8g2_DrawStr(&m1_u8g2, 2, y_offset, prn_msg);
@@ -527,7 +527,7 @@ void wifi_join_network(void) {
       u8g2_DrawStr(&m1_u8g2, 2, M1_GUI_ROW_SPACING + M1_GUI_FONT_HEIGHT,
                    "Select AP:");
 
-      char prn_msg[25];
+      char prn_msg[64];
       sprintf(prn_msg, "%d/%d", selected_ap + 1, total_items);
       u8g2_DrawStr(&m1_u8g2, M1_LCD_DISPLAY_WIDTH - 6 * M1_GUI_FONT_WIDTH,
                    M1_GUI_ROW_SPACING + M1_GUI_FONT_HEIGHT, prn_msg);
@@ -546,7 +546,7 @@ void wifi_join_network(void) {
         if (list[selected_ap].ssid[0] == 0x00)
           strcpy(prn_msg, "*hidden*");
         else {
-          snprintf(prn_msg, (M1_LCD_DISPLAY_WIDTH / M1_GUI_FONT_WIDTH), "%s",
+          snprintf(prn_msg, sizeof(prn_msg), "%s",
                    (char *)list[selected_ap].ssid);
         }
         u8g2_DrawStr(&m1_u8g2, 2, y_offset, prn_msg);
@@ -636,7 +636,10 @@ void wifi_join_network(void) {
       if (m1_vkb_get_filename("Enter SSID:", "", ssid_buf) == 0) {
         connecting = false;
       } else {
-        strncpy((char *)target_ssid, ssid_buf, SSID_LENGTH - 1);
+        size_t s_len = strlen(ssid_buf);
+        if (s_len >= SSID_LENGTH) s_len = SSID_LENGTH - 1;
+        memcpy(target_ssid, ssid_buf, s_len);
+        target_ssid[s_len] = '\0';
       }
 
       // Security type selection
@@ -685,8 +688,10 @@ void wifi_join_network(void) {
       need_password = (manual_auth_mode != WIFI_AUTH_OPEN);
     } else {
       need_password = (list[selected_ap].encryption_mode != 0);
-      strncpy((char *)target_ssid, (char *)list[selected_ap].ssid,
-              SSID_LENGTH - 1);
+      size_t s_len = strlen((char *)list[selected_ap].ssid);
+      if (s_len >= SSID_LENGTH) s_len = SSID_LENGTH - 1;
+      memcpy(target_ssid, list[selected_ap].ssid, s_len);
+      target_ssid[s_len] = '\0';
     }
 
     // Get password if needed

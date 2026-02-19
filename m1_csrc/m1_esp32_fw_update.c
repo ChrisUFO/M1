@@ -141,7 +141,7 @@ void setting_esp32_exit(void)
 /******************************************************************************/
 void setting_esp32_xkey_handler(S_M1_Key_Event event, uint8_t button_id, uint8_t sel_item)
 {
-	uint8_t prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
+	char prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
 
 	if ( sel_item != 1) // Not the Start Address?
 		return;
@@ -264,7 +264,7 @@ void setting_esp32_image_file(void)
 		    	uret = M1_FW_CRC_FILE_INVALID;
 		    	break;
 		    } // if ( image_size != MD5_SIZE_ROM )
-		    count = m1_fb_read_from_file(&hfile_fw, hex_md5_infile, MD5_SIZE_ROM);
+		    count = m1_fb_read_from_file(&hfile_fw, (char *)hex_md5_infile, MD5_SIZE_ROM);
 		    m1_fb_close_file(&hfile_fw);
 		    if ( count != MD5_SIZE_ROM )
 		    {
@@ -298,7 +298,7 @@ void setting_esp32_image_file(void)
 			sum = image_size;
 			while ( sum )
 			{
-				count = m1_fb_read_from_file(&hfile_fw, payload, ESP32_IMAGE_CHUNK_SIZE);
+				count = m1_fb_read_from_file(&hfile_fw, (char *)payload, ESP32_IMAGE_CHUNK_SIZE);
 				if ( !count ) // Read failed?
 				{
 					uret = M1_FW_IMAGE_FILE_ACCESS_ERROR;
@@ -481,7 +481,7 @@ static esp_loader_error_t m1_fw_app(FIL *hfile)
 		while ( write_size )
 		{
 			flash_err = ESP_LOADER_ERROR_FAIL;
-			count = m1_fb_read_from_file(hfile, buffer, ESP32_IMAGE_CHUNK_SIZE);
+			count = m1_fb_read_from_file(hfile, (char *)buffer, ESP32_IMAGE_CHUNK_SIZE);
 			if ( !count ) // Read failed?
 				break;
 			flash_err = m1_fw_flash_binary(buffer, count);
@@ -643,7 +643,7 @@ void setting_esp32_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
 #if 0 /* Unused: stub for future work. May need removal later. */
 	bool trunc;
 #endif
-	uint8_t prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
+	char prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
 	uint16_t msg_len, msg_id;
 	uint8_t *pboot_info;
 
@@ -757,7 +757,7 @@ void setting_esp32_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
 		    					if ( !i ) // First boot message
 		    					{
 		    						// Read part of the info message
-		    						strncpy(prn_name, pboot_info + msg_id, msg_len - msg_id);
+		    						strncpy(prn_name, (char *)(pboot_info + msg_id), msg_len - msg_id);
 		    						m1_info_box_display_draw(INFO_BOX_ROW_2, prn_name);
 		    						i++; // Move to next boot message
 		    					} // if ( !i )
@@ -765,7 +765,7 @@ void setting_esp32_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
 		    					{
 		    						// Read full info message
 		    						msg_len = (msg_len <= GUI_DISP_LINE_LEN_MAX)?msg_len:GUI_DISP_LINE_LEN_MAX;
-		    						strncpy(prn_name, pboot_info, msg_len);
+		    						strncpy(prn_name, (char *)pboot_info, msg_len);
 		    						m1_info_box_display_draw(INFO_BOX_ROW_3, prn_name);
 		    						break; // Having read enough info messages, let break
 		    					} // else

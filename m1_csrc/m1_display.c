@@ -115,7 +115,7 @@ uint8_t m1_gui_submenu_update(const char *phmenu[], uint8_t num_items, uint8_t s
 
 void m1_info_box_display_init(bool high_box);
 void m1_info_box_display_clear(void);
-void m1_info_box_display_draw(uint8_t box_row, const uint8_t *ptext);
+void m1_info_box_display_draw(uint8_t box_row, const char *ptext);
 uint8_t m1_message_box(u8g2_t *u8g2, const char *title1, const char *title2, const char *title3, const char *buttons);
 void m1_draw_bottom_bar(u8g2_t *u8g2, const uint8_t *lbitmap, const char *ltext, const char *rtext, const uint8_t *rbitmap);
 void m1_draw_icon(uint8_t color, u8g2_uint_t x, u8g2_uint_t y, u8g2_uint_t w, u8g2_uint_t h, const uint8_t *bitmap);
@@ -249,7 +249,7 @@ uint8_t m1_gui_submenu_update(const char *phmenu[], uint8_t num_items, uint8_t s
 			sel_item++;
 			if ( sel_item >= n_items )
 				sel_item = 0;
-			// No break here!
+			/* fallthrough */
 
 		case MENU_UPDATE_MOVE_DOWN: // moving down
 			if ( n_items > menu_window_sizes[menu_level_id] )
@@ -295,7 +295,7 @@ uint8_t m1_gui_submenu_update(const char *phmenu[], uint8_t num_items, uint8_t s
 				sel_item--;
 			else
 				sel_item = n_items - 1;
-			// No break here!
+			/* fallthrough */
 
 		case MENU_UPDATE_MOVE_UP: // moving up
 			if ( n_items >= menu_window_sizes[menu_level_id] )
@@ -568,7 +568,7 @@ void m1_info_box_display_clear(void)
   * @retval None
   */
 /*============================================================================*/
-void m1_info_box_display_draw(uint8_t box_row, const uint8_t *ptext)
+void m1_info_box_display_draw(uint8_t box_row, const char *ptext)
 {
 	uint8_t yn;
 
@@ -579,7 +579,7 @@ void m1_info_box_display_draw(uint8_t box_row, const uint8_t *ptext)
 	yn += info_box_first_row;
 
 	u8g2_DrawStr(&m1_u8g2, 4, yn, ptext);
-} // void m1_info_box_display_draw(uint8_t box_row, const uint8_t *ptext)
+} // void m1_info_box_display_draw(uint8_t box_row, const char *ptext)
 
 
 

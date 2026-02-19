@@ -48,7 +48,7 @@ typedef struct {
   const char *file_infix;
   const char *file_suffix;
   const char *file_ext;
-  uint8_t dat_filename[128];
+  uint8_t dat_filename[256];
   FIL dat_file_hdl;
 } S_M1_SDM_DatFileInfo_t;
 

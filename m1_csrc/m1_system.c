@@ -497,7 +497,7 @@ static void battery_indicator_update(void)
 /*============================================================================*/
 static void lcd_saver_update(void)
 {
-	uint8_t static saver_mode = 0;
+	static uint8_t saver_mode = 0;
 	uint32_t delta;
 
 	delta = HAL_GetTick() - m1_device_stat.active_timestamp;
@@ -544,7 +544,7 @@ void startup_device_init(void)
     m1_device_stat.sub_func = NULL;
 
     // Read configuration data from device flash
-    memcpy((uint8_t *)&m1_device_stat.config, (__IO uint8_t *)FW_CONFiG_ADDRESS, sizeof(S_M1_FW_CONFIG_t));
+    memcpy((uint8_t *)&m1_device_stat.config, (uint8_t *)FW_CONFiG_ADDRESS, sizeof(S_M1_FW_CONFIG_t));
 
 	//SBF: System standby flag
 	//This bit is set by hardware and cleared only by a POR or by setting the CSSF bit.
@@ -641,7 +641,7 @@ void startup_config_handler(void)
 			    		// User requests the update rollback.
 			    		M1_LOG_I(M1_LOGDB_TAG, "Update rollback requested!\r\n");
 			    		// Display rollback confirm message here
-			    		bu_reg_read = (__IO uint32_t *)(FW_CONFiG_ADDRESS + M1_FLASH_BANK_SIZE); // Always read data from the other bank
+			    		bu_reg_read = (uint32_t *)(FW_CONFiG_ADDRESS + M1_FLASH_BANK_SIZE); // Always read data from the other bank
 			    		k = FW_CONFiG_SIZE/4 - 1; // Convert to 32-bit and exclude the last slot for the add-on CRC32
 			    		for (i=0; i<k; i++)
 			    		{
@@ -660,7 +660,7 @@ void startup_config_handler(void)
 			    			{
 			    				M1_LOG_N(M1_LOGDB_TAG, "OK\r\n");
 			    				i++; // Move to CRC32 location which is right after the Magic Number 2
-					    		memcpy((uint8_t *)&old_fw_config, (__IO uint8_t *)(FW_CONFiG_ADDRESS + M1_FLASH_BANK_SIZE), i*4);
+					    		memcpy((uint8_t *)&old_fw_config, (uint8_t *)(FW_CONFiG_ADDRESS + M1_FLASH_BANK_SIZE), i*4);
 			    				fw_ver_new = *(uint32_t *)&m1_device_stat.config.fw_version_rc;
 			    				fw_ver_old = *(uint32_t *)&old_fw_config.fw_version_rc;
 			    				if ( fw_ver_old < fw_ver_new ) // Existing FW in bank 2 is older than current FW?

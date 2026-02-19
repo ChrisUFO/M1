@@ -235,7 +235,7 @@ int32_t m1_spi_hal_wrapper(const uint8_t * const pTxData, uint8_t * const pRxDat
 		  	  	  	  	  	  	  	  	  	  .dev_id = SPI_DEVICE_NFC,
 						  	  	  	  	  	  .timeout = 2000,
 											  .pdata_rx = pRxData,
-											  .pdata_tx = pTxData,
+											  .pdata_tx = (uint8_t *)pTxData,
 											  .data_len = Length
   	  	  	  	  	  	  	  	  	  	  };
 

@@ -36,14 +36,15 @@ message(STATUS "Building ${CMAKE_PROJECT_NAME}")
 # Include toolchain file
 include("cmake/gcc-arm-none-eabi.cmake")
 
+# Core project settings
+project(${CMAKE_PROJECT_NAME})
+
 # Enable compile command to ease indexing with e.g. clangd
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 
 # Enable CMake support for ASM and C languages
 enable_language(C ASM)
 
-# Core project settings
-project(${CMAKE_PROJECT_NAME})
 message("Build type: " ${CMAKE_BUILD_TYPE})
 
 # Create an executable object type

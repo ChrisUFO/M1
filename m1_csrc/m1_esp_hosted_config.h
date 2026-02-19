@@ -64,9 +64,13 @@
 #define CONFIG_UNITY_CRITICAL_LEAK_LEVEL_LWIP		UNITY_CRITICAL_LEAK_LEVEL_LWIP
 
 #define WIFI_PROV_SCAN_MAX_ENTRIES			16 // range 1-255, defined in esp-idf-v5.3.1/components/wifi_provisioning/Kconfig
+#ifndef CONFIG_WIFI_PROV_SCAN_MAX_ENTRIES
 #define CONFIG_WIFI_PROV_SCAN_MAX_ENTRIES	WIFI_PROV_SCAN_MAX_ENTRIES
+#endif
 #define WIFI_PROV_AUTOSTOP_TIMEOUT			30 // range 5-600, defined in esp-idf-v5.3.1/components/wifi_provisioning/Kconfig
+#ifndef CONFIG_WIFI_PROV_AUTOSTOP_TIMEOUT
 #define CONFIG_WIFI_PROV_AUTOSTOP_TIMEOUT	WIFI_PROV_AUTOSTOP_TIMEOUT
+#endif
 
 bool get_esp32_ready_status(void);
 void test_get_available_wifi(void);

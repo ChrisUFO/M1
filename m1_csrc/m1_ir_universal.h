@@ -40,7 +40,7 @@
 #define IR_UNIVERSAL_CMDS_MAX 64
 
 /* Maximum path length for a .ir file on the SD card */
-#define IR_UNIVERSAL_PATH_LEN_MAX 256
+#define IR_UNIVERSAL_PATH_LEN_MAX 512
 
 /*
  * One parsed IR command entry from a .ir file.

@@ -77,21 +77,21 @@ static EM4100_Decoder_t g_em4100_16_dec;
 /********************* F U N C T I O N   P R O T O T Y P E S ******************/
 
 static bool Check_Even_Parity(const uint8_t* data_bits, uint8_t length);
-static uint8_t GetBitFromFrame(EM4100_Decoder_t* dec, uint8_t bit_index);
-static bool em4100_decoder_execute(void* proto, uint16_t size, void* dec);
+static uint8_t GetBitFromFrame(const EM4100_Decoder_t* dec, uint8_t bit_index);
+static bool em4100_decoder_execute(void* proto, int size, void* dec);
 
 static uint8_t* protocol_em4100_get_data(void* proto);
 void protocol_em4100_decoder_begin(void* proto);
-bool protocol_em4100_decoder_execute(void* proto, uint16_t size);
+bool protocol_em4100_decoder_execute(void* proto, int size);
 bool protocol_em4100_encoder_begin(void* proto);
 void protocol_em4100_encoder_send(void* proto);
-void protocol_em4100_write_begin(void* protocol, void *data);
+bool protocol_em4100_write_begin(void* protocol, void *data);
 void protocol_em4100_write_send(void* proto);
 void protocol_em4100_render_data(void* protocol, char *result);
 void protocol_em4100_32_decoder_begin(void* proto);
-bool protocol_em4100_32_decoder_execute(void* proto, uint16_t size);
+bool protocol_em4100_32_decoder_execute(void* proto, int size);
 void protocol_em4100_16_decoder_begin(void* proto);
-bool protocol_em4100_16_decoder_execute(void* proto, uint16_t size);
+bool protocol_em4100_16_decoder_execute(void* proto, int size);
 
 //************************** C O N S T A N T **********************************/
 
@@ -402,7 +402,7 @@ static inline bool decoder_is_full(const EM4100_Decoder_t *dec) {
 /*============================================================================*/
 bool em4100_is_valid(const EM4100_Decoder_t *dec)
 {
-	uint8_t* frame = dec->frame_buffer;
+	const uint8_t* frame = dec->frame_buffer;
 
     if (!frame) return false;
 
@@ -476,7 +476,7 @@ bool em4100_is_valid(const EM4100_Decoder_t *dec)
   * @retval
   */
 /*============================================================================*/
-bool em4100_decoder_execute(void* proto, uint16_t size, void* dec)
+bool em4100_decoder_execute(void* proto, int size, void* dec)
 {
 	lfrfid_evt_t temp_stream[FRAME_CHUNK_SIZE];
     uint8_t normalized_count;
@@ -487,7 +487,7 @@ bool em4100_decoder_execute(void* proto, uint16_t size, void* dec)
     //memcpy(temp_stream, new_stream, size * sizeof(lfrfid_evt_t));
 
     //if (g_decoder.state != DECODER_STATE_IDLE && g_decoder.detected_half_bit_us != 0) {
-    normalized_count = manchester_symbol_feed(temp_stream, new_stream, size, pdec->detected_half_bit_us);
+    normalized_count = manchester_symbol_feed(temp_stream, new_stream, (uint8_t)size, pdec->detected_half_bit_us);
     //}
     //p = &temp_stream[0];
 
@@ -596,7 +596,7 @@ static bool Check_Even_Parity(const uint8_t* data_bits, uint8_t length)
  * @return 해당 비트의 값 (0 또는 1)
  */
 /*============================================================================*/
-static uint8_t GetBitFromFrame(EM4100_Decoder_t*dec, uint8_t bit_index)
+static uint8_t GetBitFromFrame(const EM4100_Decoder_t*dec, uint8_t bit_index)
 {
     // 비트가 저장된 바이트의 인덱스를 계산
     uint8_t byte_idx = bit_index / 8;
@@ -908,7 +908,7 @@ void protocol_em4100_16_decoder_begin(void* proto)
   * @retval
   */
 /*============================================================================*/
-bool protocol_em4100_decoder_execute(void* proto, uint16_t size)
+bool protocol_em4100_decoder_execute(void* proto, int size)
 {
 	lfrfid_evt_t* p = (lfrfid_evt_t*)proto;
 
@@ -926,7 +926,7 @@ bool protocol_em4100_decoder_execute(void* proto, uint16_t size)
   * @retval
   */
 /*============================================================================*/
-bool protocol_em4100_32_decoder_execute(void* proto, uint16_t size)
+bool protocol_em4100_32_decoder_execute(void* proto, int size)
 {
 	lfrfid_evt_t* p = (lfrfid_evt_t*)proto;
 
@@ -944,7 +944,7 @@ bool protocol_em4100_32_decoder_execute(void* proto, uint16_t size)
   * @retval
   */
 /*============================================================================*/
-bool protocol_em4100_16_decoder_execute(void* proto, uint16_t size)
+bool protocol_em4100_16_decoder_execute(void* proto, int size)
 {
 	lfrfid_evt_t* p = (lfrfid_evt_t*)proto;
 
@@ -1061,7 +1061,7 @@ void protocol_em4100_encoder_send(void* proto)
   * @retval
   */
 /*============================================================================*/
-void protocol_em4100_write_begin(void* protocol, void *data)
+bool protocol_em4100_write_begin(void* protocol, void *data)
 {
 	LFRFID_TAG_INFO* tag_data = (LFRFID_TAG_INFO*)protocol;
 	LFRFIDProgram* write = (LFRFIDProgram*)data;
@@ -1081,6 +1081,7 @@ void protocol_em4100_write_begin(void* protocol, void *data)
 		}
 	}
 #endif
+    return true;
 }
 
 

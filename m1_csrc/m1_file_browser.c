@@ -488,7 +488,7 @@ S_M1_file_info *m1_fb_display(S_M1_Buttons_Status *button_status)
 	char name[FF_MAX_LFN + 1];
 	FRESULT res;
 	static DIR directory;
-	FILINFO file_info, this_file;
+	FILINFO file_info = {0}, this_file = {0};
 	const S_M1_menu_icon_data *fb_icon;
 	S_M1_file_browser_ext f_ext;
 	static uint16_t num_of_files;
@@ -496,7 +496,6 @@ S_M1_file_info *m1_fb_display(S_M1_Buttons_Status *button_status)
 	static uint16_t gui_width, gui_height;
 	static uint16_t scroll_h;
 	uint16_t scroll_y, count, len;
-	uint16_t l, k;
 	uint8_t y_offset, disp_max_column, ext_len;
 	static uint8_t spacing;
 	static bool scroll_ok;
@@ -508,8 +507,7 @@ S_M1_file_info *m1_fb_display(S_M1_Buttons_Status *button_status)
 		gui_max_row = pfb_hdl->gui_height / pfb_hdl->font_h;
 		spacing = pfb_hdl->font_h_spacing;
 
-		if (pfb_hdl->x < 0 || pfb_hdl->y < 0 ||
-			pfb_hdl->x + pfb_hdl->gui_width > M1_LCD_DISPLAY_WIDTH ||
+		if (pfb_hdl->x + pfb_hdl->gui_width > M1_LCD_DISPLAY_WIDTH ||
 			pfb_hdl->y + pfb_hdl->gui_height > M1_LCD_DISPLAY_HEIGHT||
 			gui_max_column < 3 ||
 			gui_max_row < 1  )
@@ -593,8 +591,8 @@ S_M1_file_info *m1_fb_display(S_M1_Buttons_Status *button_status)
 	       			pfb_hdl->info.file_is_selected = FALSE;
 	       			if (pfb_hdl->dir_level) // Being at sub-directory
 	       			{
-	       				l = strlen(pfb_hdl->info.dir_name) - 1;
-	       				k = 0;
+	       				int32_t l = strlen(pfb_hdl->info.dir_name) - 1;
+	       				uint8_t k = 0;
 	       				while (l >= 0 && !k)
 	       				{
 	       					if (pfb_hdl->info.dir_name[l]=='/')
@@ -739,7 +737,7 @@ S_M1_file_info *m1_fb_display(S_M1_Buttons_Status *button_status)
    	   								strncpy(name, file_info.fname, disp_max_column - 2 - ext_len);
    	   								name[disp_max_column - 2 - ext_len] = 0;
    	   								strcat(name, "..");
-   	   								strncat(name, &file_info.fname[len - 1], ext_len);
+   	   								strcat(name, &file_info.fname[len - 1]);
    								}
    								else
    								{

@@ -498,7 +498,7 @@ int _write(int file, char *data, int len)
 
 	xSemaphoreTake(mutex_log_write_trans, portMAX_DELAY);
 
-    len = m1_ringbuffer_write(plogdb_tx_rb, data, len);
+    len = m1_ringbuffer_write(plogdb_tx_rb, (uint8_t *)data, len);
     xQueueSend(log_q_hdl, &q_item, 0);
     //uint32_t pri_mask;
     //pri_mask = __get_PRIMASK();

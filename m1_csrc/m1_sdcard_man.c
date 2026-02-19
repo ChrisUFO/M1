@@ -122,7 +122,7 @@ static uint8_t m1_sdm_check_low_sdcard(void)
 /*============================================================================*/
 static void m1_sdm_main_task(void *argument)
 {
-	BaseType_t ret;
+	BaseType_t ret = pdFALSE;
     (void)ret; /* Unused: stub for future work. May need removal later. */
 	S_M1_SdCardManager_Q_t evt;
 
@@ -177,7 +177,7 @@ static void m1_sdm_main_task(void *argument)
 /*============================================================================*/
 static uint8_t m1_sdm_startstop_logging(void)
 {
-	uint8_t ret;
+	uint8_t ret = 0;
 
 	if (sd_logging_active==0)
 	{
@@ -372,6 +372,7 @@ void m1_sdm_task_init(void)
 
 	/* Start thread */
 	ret = xTaskCreate(m1_sdm_main_task, "SDManager_MainTask", M1_TASK_STACK_SIZE_1024, NULL, TASK_PRIORITY_SDCARD_MANAGER, &m1_sdm_task_hdl);
+	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
 	assert(m1_sdm_task_hdl!=NULL);
 
@@ -568,18 +569,18 @@ uint8_t m1_sdm_file_init(S_M1_SDM_DatFileInfo_t *pfileinfo)
 	    }
 	} // if (!m1_fb_check_existence(dir_name))
 
-	sprintf(pfileinfo->dat_filename, "%s%s%s_", pfileinfo->file_prefix, pfileinfo->file_infix, pfileinfo->file_suffix);
-	file_number = m1_sdm_getlastfilenumber(pfileinfo->dir_name, pfileinfo->dat_filename);
+	sprintf((char *)pfileinfo->dat_filename, "%s%s%s_", pfileinfo->file_prefix, pfileinfo->file_infix, pfileinfo->file_suffix);
+	file_number = m1_sdm_getlastfilenumber((char *)pfileinfo->dir_name, (char *)pfileinfo->dat_filename);
 	file_number++;
     //srand(HAL_GetTick());
     do
     {
-    	sprintf(pfileinfo->dat_filename, "%s/%s%s%s_%d%s", pfileinfo->dir_name, pfileinfo->file_prefix, pfileinfo->file_infix, pfileinfo->file_suffix, file_number++, pfileinfo->file_ext);
-    } while (m1_fb_check_existence(pfileinfo->dat_filename));
+    	sprintf((char *)pfileinfo->dat_filename, "%s/%s%s%s_%lu%s", pfileinfo->dir_name, pfileinfo->file_prefix, pfileinfo->file_infix, pfileinfo->file_suffix, (unsigned long)file_number++, pfileinfo->file_ext);
+    } while (m1_fb_check_existence((char *)pfileinfo->dat_filename));
 
     m1_pdatfile_hdl = &pfileinfo->dat_file_hdl;
 
-    ret = m1_fb_open_new_file(m1_pdatfile_hdl, pfileinfo->dat_filename);
+    ret = m1_fb_open_new_file(m1_pdatfile_hdl, (char *)pfileinfo->dat_filename);
     if (ret)
     {
     	M1_LOG_E(M1_LOGDB_TAG, "Error creating file on SD card!");
@@ -590,7 +591,7 @@ uint8_t m1_sdm_file_init(S_M1_SDM_DatFileInfo_t *pfileinfo)
     if ( ret )
     {
     	m1_fb_close_file(m1_pdatfile_hdl);
-    	m1_fb_delete_file(pfileinfo->dat_filename);
+    	m1_fb_delete_file((char *)pfileinfo->dat_filename);
     	return 2;
     }
 
@@ -668,7 +669,7 @@ uint8_t m1_sdm_flush_buffer(void)
 		ret = m1_sdm_write_buffer(src, psrc);
 	}
 
-	M1_LOG_N(M1_LOGDB_TAG, "m1_sdm_flush_buffer: buffer_id %d write_size %d q messages: %d\r\n", sdwrite_buffer_id, psrc, q_empty);
+	M1_LOG_N(M1_LOGDB_TAG, "m1_sdm_flush_buffer: buffer_id %d write_size %u q messages: %lu\r\n", sdwrite_buffer_id, (unsigned int)psrc, (unsigned long)q_empty);
 
 	dev_sd_hdl.buff_info.sd_write_buffer_idx = 0;
 	sdwrite_buffer_id = 0;

@@ -78,30 +78,39 @@ void m1_tasks_init(void)
 	dummyTimerHandle = osTimerNew(m1_dummytimer_task, osTimerOnce, NULL, &dumyTimer_attributes);
 
 	ret = xTaskCreate(system_periodic_task, "system_periodic_task_n", M1_TASK_STACK_SIZE_DEFAULT, NULL, TASK_PRIORITY_SYSTEM_TASK_HANDLER, &system_task_hdl);
+	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
 	assert(system_task_hdl!=NULL);
 	free_heap = xPortGetFreeHeapSize(); // xPortGetMinimumEverFreeHeapSize()
+	(void)free_heap; /* Unused: result checked via assert. May need removal later. */
 	assert(free_heap >= M1_LOW_FREE_HEAP_WARNING_SIZE);
 
 	ret = xTaskCreate(sdcard_detection_task, "sdcard_detection_task_n", M1_TASK_STACK_SIZE_DEFAULT, NULL, TASK_PRIORITY_SDCARD_HANDLER, &sdcard_task_hdl);
+	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
 	assert(system_task_hdl!=NULL);
 	free_heap = xPortGetFreeHeapSize();
+	(void)free_heap; /* Unused: result checked via assert. May need removal later. */
 	assert(free_heap >= M1_LOW_FREE_HEAP_WARNING_SIZE);
 
 	ret = xTaskCreate(menu_main_handler_task, "menu_main_handler_task_n", M1_TASK_STACK_SIZE_1024/*M1_TASK_STACK_SIZE_DEFAULT*/, NULL, TASK_PRIORITY_MENU_MAIN_HANDLER, &menu_main_handler_task_hdl);
+	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
 	assert(menu_main_handler_task_hdl!=NULL);
 	free_heap = xPortGetFreeHeapSize();
+	(void)free_heap; /* Unused: result checked via assert. May need removal later. */
 	assert(free_heap >= M1_LOW_FREE_HEAP_WARNING_SIZE);
 
 	ret = xTaskCreate(subfunc_handler_task, "subfunc_handler_task_n", M1_TASK_STACK_SIZE_4096, NULL, TASK_PRIORITY_SUBFUNC_HANDLER, &subfunc_handler_task_hdl);
+	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
 	assert(subfunc_handler_task_hdl!=NULL);
 	free_heap = xPortGetFreeHeapSize();
+	(void)free_heap; /* Unused: result checked via assert. May need removal later. */
 	assert(free_heap >= M1_LOW_FREE_HEAP_WARNING_SIZE);
 
 	ret = xTaskCreate(log_db_handler_task, "log_db_handler_task_n", M1_TASK_STACK_SIZE_1024, NULL, TASK_PRIORITY_LOG_DB_HANDLER, &log_db_task_hdl);
+	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
 	assert(log_db_task_hdl!=NULL);
 	free_heap = xPortGetFreeHeapSize();

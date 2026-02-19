@@ -129,7 +129,7 @@ void EXTI15_IRQHandler(void)
 /**
   *
   * @brief EXTI line detection callback, used as SPI handshake GPIO
-  * /*
+  *
   * This function is called when the handshake line goes high.
   * There are two ways to trigger the GPIO interrupt:
   * 1. Master sends data, slave has received successfully

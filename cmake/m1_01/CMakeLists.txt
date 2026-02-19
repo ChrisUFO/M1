@@ -307,12 +307,25 @@ add_library(m1_drivers STATIC
     ../../USB/Core/Src/usbd_ctlreq.c
     ../../USB/Core/Src/usbd_desc.c
     ../../USB/Core/Src/usbd_ioreq.c
+    ../../Esp32_serial_flasher/app/stm32/libc_compat.c
 )
+
+# Generate ESP32 binaries resource file
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../Esp32_serial_flasher/app/common/bin2array.cmake)
+set(ESP32_RESOURCES_C ${CMAKE_CURRENT_BINARY_DIR}/esp32_binaries.c)
+create_resources(${CMAKE_CURRENT_SOURCE_DIR}/../../Esp32_serial_flasher/app/binaries/Hello-world ${ESP32_RESOURCES_C})
+# Add stub for missing app_bin symbols to satisfy app_common.c
+file(APPEND ${ESP32_RESOURCES_C} 
+    "\n/* Stubs for missing RAM app binaries */\n"
+    "const uint8_t  ESP32_C6_app_bin[] = {0x00};\n"
+    "const uint32_t ESP32_C6_app_bin_size = 0;\n"
+)
+target_sources(m1_drivers PRIVATE ${ESP32_RESOURCES_C})
 
 target_compile_definitions(m1_drivers PRIVATE ${COMMON_DEFINITIONS})
 target_include_directories(m1_drivers PRIVATE ${COMMON_INCLUDES})
 # Relaxed warnings for drivers/third-party
-target_compile_options(m1_drivers PRIVATE -Wno-unused-parameter -Wno-type-limits -Wno-unused-variable -Wno-unused-function -Wno-overlength-strings -Wno-sign-compare -Wno-pointer-sign -Wno-overflow -Wno-free-labels -Wno-enum-int-mismatch)
+target_compile_options(m1_drivers PRIVATE -Wno-unused-parameter -Wno-type-limits -Wno-unused-variable -Wno-unused-function -Wno-overlength-strings -Wno-sign-compare -Wno-pointer-sign -Wno-overflow -Wno-free-labels -Wno-enum-int-mismatch -Wno-maybe-uninitialized -Wno-unused-but-set-variable)
 
 # Target for Application Core
 add_library(m1_core STATIC
