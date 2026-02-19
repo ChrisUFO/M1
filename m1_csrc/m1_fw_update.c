@@ -29,6 +29,8 @@
 
 #define FLASH_BL_ADDRESS	0x08000000
 #define FLASH_SYSTEM_MEMORY_ADDRESS	0x0BF97000
+#define SRAM_ADDRESS_MASK	0x2FFE0000U
+#define SRAM_BASE_ADDRESS	0x20000000U
 #define DFU_CONFIRM_TIMEOUT_MS	10000
 
 #define M1_LOGDB_TAG		"FW-UPDATE"
@@ -520,6 +522,7 @@ static bool firmware_update_usb_dfu_confirm(void)
 	BaseType_t ret;
 	TickType_t start_tick;
 	TickType_t elapsed;
+	char timeout_msg[24];
 
 	m1_u8g2_firstpage();
 	do
@@ -528,7 +531,8 @@ static bool firmware_update_usb_dfu_confirm(void)
 		u8g2_DrawStr(&m1_u8g2, 4, 12, "Enter USB DFU mode?");
 		u8g2_DrawStr(&m1_u8g2, 4, 26, "RIGHT/OK: Yes");
 		u8g2_DrawStr(&m1_u8g2, 4, 38, "LEFT/BACK: No");
-		u8g2_DrawStr(&m1_u8g2, 4, 52, "Timeout in 10 sec");
+		snprintf(timeout_msg, sizeof(timeout_msg), "Timeout in %lu sec", (unsigned long)(DFU_CONFIRM_TIMEOUT_MS / 1000U));
+		u8g2_DrawStr(&m1_u8g2, 4, 52, timeout_msg);
 	} while (m1_u8g2_nextpage());
 
 	start_tick = xTaskGetTickCount();
@@ -633,7 +637,8 @@ void firmware_update_enter_usb_dfu(void)
 
 	M1_LOG_I(M1_LOGDB_TAG, "Entering USB DFU mode...\r\n");
 
-	if ((*(uint32_t *)FLASH_SYSTEM_MEMORY_ADDRESS & 0x2FFE0000U) != 0x20000000U)
+	/* Verify SP points to SRAM range before jumping to system memory bootloader. */
+	if ((*(uint32_t *)FLASH_SYSTEM_MEMORY_ADDRESS & SRAM_ADDRESS_MASK) != SRAM_BASE_ADDRESS)
 	{
 		M1_LOG_I(M1_LOGDB_TAG, "Invalid system bootloader vector table\r\n");
 		return;
