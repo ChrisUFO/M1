@@ -865,6 +865,7 @@ void SI446x_Change_Radio_Setting(uint8_t mode, uint8_t pa_power)
             break;
 
         default: // unknown mode
+            assert(0); // Should not reach here
             break;
     } // switch (mode)
 } // void SI446x_Change_Radio_Setting(uint8_t mode, uint8_t pa_power)

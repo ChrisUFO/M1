@@ -67,3 +67,8 @@ PLAN.md
 
 # AI Rules
 changelog.md
+
+# Review artifacts
+review_*.txt
+review_*.json
+all_comments.json

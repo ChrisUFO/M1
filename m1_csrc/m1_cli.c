@@ -98,13 +98,12 @@ BaseType_t cmd_m1_mtest(char *pconsole, size_t xWriteBufferLen, const char *pcCo
 	/* Remove compile time warnings about unused parameters, and check the
 	write buffer is not NULL.  NOTE - for simplicity, this example assumes the
 	write buffer length is adequate, so does not check for buffer overflows. */
-	(void)pcCommandString; /* Unused: stub for future work. May need removal later. */
     (void)xWriteBufferLen; /* Unused: stub for future work. May need removal later. */
 	int32_t cmd_type, temp32;
 	uint8_t i, n_params;
 	char *input_params[INPUT_PARAMS_MAX];
 	BaseType_t input_params_len[INPUT_PARAMS_MAX];
-	char pcCommandStringCopy[64]; // MAX_INPUT_LENGTH from cli_app.c
+	char pcCommandStringCopy[MAX_INPUT_LENGTH];
 
 	if ( num_of_params==0 ) // Help command?
 	{

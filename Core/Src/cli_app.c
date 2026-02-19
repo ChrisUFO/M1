@@ -40,7 +40,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "m1_esp32_hal.h"
 #include "m1_bq27421.h"
 
-#define MAX_INPUT_LENGTH 		64
 #define USING_VS_CODE_TERMINAL 	0
 #define USING_OTHER_TERMINAL 	1 // e.g. Putty, TerraTerm
 
