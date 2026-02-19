@@ -524,9 +524,10 @@ static void ir_search_recursive(const char *path, const char *lower_query,
 
     if (fi->fattrib & AM_DIR) {
       int sn_ret = snprintf(full_path, IR_UNIVERSAL_PATH_LEN_MAX, "%s/%s", path, fi->fname);
-      (void)sn_ret;
-      ir_search_recursive(full_path, lower_query, names, paths, count,
-                          max_entries, depth + 1);
+      if (sn_ret >= 0 && sn_ret < IR_UNIVERSAL_PATH_LEN_MAX) {
+        ir_search_recursive(full_path, lower_query, names, paths, count,
+                            max_entries, depth + 1);
+      }
     } else {
       /* Case-insensitive substr search using pre-lowercased query */
       size_t fname_len = strlen(fi->fname);
@@ -543,8 +544,9 @@ static void ir_search_recursive(const char *path, const char *lower_query,
         names[*count][n_len] = '\0';
         int sn_ret2 = snprintf(paths[*count], IR_UNIVERSAL_PATH_LEN_MAX, "%s/%s", path,
                  fi->fname);
-        (void)sn_ret2;
-        (*count)++;
+        if (sn_ret2 >= 0 && sn_ret2 < IR_UNIVERSAL_PATH_LEN_MAX) {
+            (*count)++;
+        }
       }
     }
   }

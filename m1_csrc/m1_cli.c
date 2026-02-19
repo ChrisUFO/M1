@@ -743,19 +743,19 @@ void cmd_m1_mtest_infrared(char *pconsole, char *input_params[], uint8_t n_param
 void ShowRegister(uint8_t reg, uint8_t value)
 {
 	uint8_t t = 0x80;
-	uint8_t msg[20];
+	char msg[20];
 
 	msg[0] = 0;
 	M1_LOG_N(M1_LOGDB_TAG, "Register %2xh: %xh\r\n", reg, value);
 	M1_LOG_N("     ", "7 6 5 4 3 2 1 0\r\n");
 	for(int i = 0; i < 8; ++i) {
 		if ((value & t) != 0)
-			strcat((char *)msg, "1 ");
+			strcat(msg, "1 ");
 		else
-			strcat((char *)msg, "0 ");
+			strcat(msg, "0 ");
 		t >>= 1;
 	}
-	M1_LOG_N("     ", "%s\r\n", (char *)msg);
+	M1_LOG_N("     ", "%s\r\n", msg);
 }
 
 /*============================================================================*/

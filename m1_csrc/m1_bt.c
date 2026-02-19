@@ -483,8 +483,13 @@ static uint16_t ble_scan_list_print(ctrl_cmd_t *app_resp, bool up_dir)
 	u8g2_DrawStr(&m1_u8g2, M1_LCD_DISPLAY_WIDTH - 6*M1_GUI_FONT_WIDTH, M1_GUI_ROW_SPACING + M1_GUI_FONT_HEIGHT, prn_msg);
 
 	y_offset = 14 + M1_GUI_FONT_HEIGHT - 1;
+	// Format BSSID to hex string (XX:XX:XX:XX:XX:XX)
+    char bssid_str[18];
+    sprintf(bssid_str, "%02X:%02X:%02X:%02X:%02X:%02X",
+            list[i].bssid[0], list[i].bssid[1], list[i].bssid[2],
+            list[i].bssid[3], list[i].bssid[4], list[i].bssid[5]);
 	// Draw text
-	u8g2_DrawStr(&m1_u8g2, 2, y_offset, (char *)list[i].bssid);
+	u8g2_DrawStr(&m1_u8g2, 2, y_offset, bssid_str);
 	y_offset += M1_GUI_FONT_HEIGHT + M1_GUI_ROW_SPACING;
 	sprintf(prn_msg, "RSSI: %ddBm", list[i].rssi);
 	u8g2_DrawStr(&m1_u8g2, 2, y_offset, prn_msg);
