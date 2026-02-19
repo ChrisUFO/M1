@@ -597,8 +597,7 @@ static uint8_t ir_list_dir(const char *path, char names[][IR_NAME_BUF_LEN],
     }
 
     if (count < max_entries) {
-      strncpy(names[count], fi.fname, IR_NAME_BUF_LEN - 1);
-      names[count][IR_NAME_BUF_LEN - 1] = '\0';
+      snprintf(names[count], IR_NAME_BUF_LEN, "%s", fi.fname);
       count++;
     } else {
       if (more_items)

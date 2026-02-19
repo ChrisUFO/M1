@@ -29,7 +29,6 @@
 #include "m1_sub_ghz_decenc.h"
 #include "uiView.h"
 
-
 /*************************** D E F I N E S ************************************/
 
 #define SUBGHZ_RAW_DATA_SAMPLES_MAX 64000 // data type of sample: uint16_t
@@ -455,7 +454,7 @@ static void sub_ghz_set_opmode(uint8_t opmode, uint8_t band, uint8_t channel,
     // sourced in real-time, OOK Mode: TX_DIRECT_MODE_TYPE[7]
     // TX_DIRECT_MODE_GPIO[6:5]	MOD_SOURCE[4:3]	MOD_TYPE[2:0]
     //					1 10
-    //01				000
+    // 01				000
     SI446x_Change_ModType(0xC8 | mod_type);
     // Read INTs, clear pending ones
     SI446x_Get_IntStatus(0, 0, 0);
@@ -1301,8 +1300,8 @@ static uint8_t sub_ghz_file_load(void) {
       break;
     if (strcmp(&f_info->file_name[uret], SUB_GHZ_FILE_EXTENSION))
       break;
-    sprintf(datfile_info.dat_filename, "%s/%s", f_info->dir_name,
-            f_info->file_name);
+    snprintf(datfile_info.dat_filename, sizeof(datfile_info.dat_filename),
+             "%s/%s", f_info->dir_name, f_info->file_name);
 
     sys_error = sub_ghz_ring_buffers_init();
     if (sys_error)
@@ -1727,7 +1726,8 @@ static void sub_ghz_rx_init(void) {
    * of the selected trigger input (tim_trgi) reinitializes the counter and
    * generates an update of the registers. -Recommended by Reference Manual
    */
-  tim_master_conf.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE; // TIM_SMCR_MSM;
+  tim_master_conf.MasterSlaveMode =
+      TIM_MASTERSLAVEMODE_DISABLE; // TIM_SMCR_MSM;
   tim_master_conf.MasterOutputTrigger = TIM_TRGO_RESET;
   if (HAL_TIMEx_MasterConfigSynchronization(&timerhdl_subghz_rx,
                                             &tim_master_conf) != HAL_OK) {
@@ -1948,7 +1948,7 @@ static void sub_ghz_tx_raw_init(void) {
   // Disable Output Compare 4 preload enable so that the CCR4 register will be
   // updated immediately when its value changes
   //__HAL_TIM_DISABLE_OCxPRELOAD(&timerhdl_subghz_tx,
-  //SUBGHZ_TX_TIMER_TX_CHANNEL);
+  // SUBGHZ_TX_TIMER_TX_CHANNEL);
 
   /* Peripheral clock enable */
   __HAL_RCC_GPDMA1_CLK_ENABLE();
@@ -2428,7 +2428,7 @@ static void sub_ghz_transmit_raw(uint32_t source, uint32_t dest, uint32_t len,
   timerhdl_subghz_tx.Instance->CCR4 = 0; // initial value
 
   //	__HAL_TIM_URS_ENABLE(&timerhdl_subghz_tx); // Enable URS to temporarily
-  //disable the UIF when the UG bit is set
+  // disable the UIF when the UG bit is set
   // Generate Update Event (set UG bit) to reload the DMA source data[0] to the
   // ARR register
   HAL_TIM_GenerateEvent(&timerhdl_subghz_tx, TIM_EVENTSOURCE_UPDATE);
@@ -2436,7 +2436,7 @@ static void sub_ghz_transmit_raw(uint32_t source, uint32_t dest, uint32_t len,
   // reload the DMA source data[0] to the ARR shadow register
   HAL_TIM_GenerateEvent(&timerhdl_subghz_tx, TIM_EVENTSOURCE_UPDATE);
   //	__HAL_TIM_URS_DISABLE(&timerhdl_subghz_tx); // Disable URS to enable the
-  //UIF again
+  // UIF again
 
   // Start the timer
   HAL_TIMEx_PWMN_Start(&timerhdl_subghz_tx, SUBGHZ_TX_TIMER_TX_CHANNEL);
