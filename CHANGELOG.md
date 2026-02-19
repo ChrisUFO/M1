@@ -7,6 +7,26 @@ All notable changes to the M1 project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 
+## [v0.8.4] - 2026-02-19
+
+### Added
+
+- **IR Universal Remote Enhancements**:
+  - **Dashboard UI**: New start screen with Favorites, Recent, and Search options.
+  - **Pagination**: Support for folders with virtually unlimited entries in the IR database.
+  - **Search**: Fast text-based searching through the IR database folder structure.
+  - **Recent History**: Automatic tracking of the last 10 remotes used.
+  - **Favorites**: Manual pinning of frequently used remotes for instant access.
+  - **Fast Scroll**: Use Left/Right keys to jump multiple pages in lists.
+
+### Changed
+
+- Firmware version bumped to `0.8.4`.
+
+### Fixed
+
+- **Issue #14**: Fixed 32-item limit in IR database browsing.
+
 ## [v0.8.3] - 2026-02-19
 
 ### Added

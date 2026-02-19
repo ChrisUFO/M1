@@ -94,7 +94,7 @@ Version is defined in `m1_csrc/m1_fw_update_bl.h`:
 ```c
 #define FW_VERSION_MAJOR    0
 #define FW_VERSION_MINOR    8
-#define FW_VERSION_BUILD    2
+#define FW_VERSION_BUILD    4
 #define FW_VERSION_RC       0
 #define FW_VERSION_FORK_TAG "ChrisUFO"
 ```
@@ -102,8 +102,8 @@ Version is defined in `m1_csrc/m1_fw_update_bl.h`:
 ### Version Format
 
 - **Filename:** `M1_v{MAJOR}.{MINOR}.{BUILD}-{FORK_TAG}.bin`
-- **Example:** `M1_v0.8.2-ChrisUFO.bin`
-- **Display:** "Version 0.8.2" on splash screen and About menu
+- **Example:** `M1_v0.8.4-ChrisUFO.bin`
+- **Display:** "Version 0.8.4" on splash screen and About menu
 
 ### Changelog
 
@@ -192,7 +192,7 @@ This section documents the M1 menu structure, implementation status of each feat
 
 | Menu Item | Status | Notes |
 |-----------|--------|-------|
-| Universal Remote | ✅ | Browse Flipper-IRDB `.ir` files on SD card, transmit commands |
+| Universal Remote | ✅ | Dashboard UI with Search, Favorites, Recent, and Paginated browsing |
 | Learn New Remote | ✅ | IRMP decode, displays protocol/address/command, saves to SD card |
 | Saved Remotes | ✅ | Browse saved signals, replay last learned signal |
 

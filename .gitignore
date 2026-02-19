@@ -42,6 +42,9 @@ logs/
 *.temp
 *.bak
 *.backup
+build_log.txt
+*log.txt
+build_log_*.txt
 
 # System files
 .DS_Store
@@ -54,5 +57,10 @@ distribution/
 # Generated compile database (contains local paths)
 compile_commands.json
 
+
 # Local planning documents
 PLAN.md
+
+# AI Rules
+changelog.md
+

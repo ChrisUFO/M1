@@ -104,33 +104,33 @@ typedef enum {
 static uint16_t s_page_scroll = 0;
 static uint16_t s_info_mode   = 0;
 static bool s_edit_uid_started = false;  // Edit UID 시작 플래그
-static uint8_t nfc_uiview_gui_latest_param;
-static S_M1_NFC_Record_t record_stat;
+static uint8_t m1_nfc_uiview_gui_latest_param;
+static S_M1_NFC_Record_t m1_nfc_record_stat;
 //static FIL nfc_file;
 //static DIR nfc_dir;
 static S_M1_file_info *f_info = NULL;
 
 /********************* F U N C T I O N   P R O T O T Y P E S ******************/
-void nfc_read(void);
-void nfc_tools(void);
-void nfc_saved(void);
-static uint8_t nfc_read_more_options_save(void);
-static uint8_t nfc_read_more_options_delete(void);
+void m1_nfc_read(void);
+void m1_nfc_tools(void);
+void m1_nfc_saved(void);
+static uint8_t m1_nfc_read_more_options_save(void);
+static uint8_t m1_nfc_read_more_options_delete(void);
 void m1_nfc_info_more_draw(void);
 
 /* For each mode init/create/update/destroy/message prototype */
-static void nfc_read_gui_init(void);
-static void nfc_read_gui_create(uint8_t param);
-static void nfc_read_gui_destroy(uint8_t param);
-static void nfc_read_gui_update(uint8_t param);
-static int  nfc_read_gui_message(void);
-static int nfc_read_kp_handler(void);
+static void m1_nfc_read_gui_init(void);
+static void m1_nfc_read_gui_create(uint8_t param);
+static void m1_nfc_read_gui_destroy(uint8_t param);
+static void m1_nfc_read_gui_update(uint8_t param);
+static int  m1_nfc_read_gui_message(void);
+static int m1_nfc_read_kp_handler(void);
 
-static void nfc_read_more_gui_init(void);
-static void nfc_read_more_gui_create(uint8_t param);
-static void nfc_read_more_gui_destroy(uint8_t param);
-static void nfc_read_more_gui_update(uint8_t param);
-static int  nfc_read_more_gui_message(void);
+static void m1_nfc_read_more_gui_init(void);
+static void m1_nfc_read_more_gui_create(uint8_t param);
+static void m1_nfc_read_more_gui_destroy(uint8_t param);
+static void m1_nfc_read_more_gui_update(uint8_t param);
+static int  m1_nfc_read_more_gui_message(void);
 static int nfc_read_more_kp_handler(void);
 
 static void nfc_save_gui_init(void);
@@ -176,27 +176,27 @@ static void nfc_rename_gui_update(uint8_t param);
 static int  nfc_rename_gui_message(void);
 static int nfc_rename_kp_handler(void);
 
-static void nfc_saved_browse_gui_init(void);
-static void nfc_saved_browse_gui_create(uint8_t param);
-static void nfc_saved_browse_gui_destroy(uint8_t param);
-static void nfc_saved_browse_gui_update(uint8_t param);
-static int  nfc_saved_browse_gui_message(void);
+static void m1_nfc_saved_browse_gui_init(void);
+static void m1_nfc_saved_browse_gui_create(uint8_t param);
+static void m1_nfc_saved_browse_gui_destroy(uint8_t param);
+static void m1_nfc_saved_browse_gui_update(uint8_t param);
+static int  m1_nfc_saved_browse_gui_message(void);
 static int nfc_saved_browse_kp_handler(void);
 
 /*============================================================================*/
 /*                            table of ui view                                */
 /*============================================================================*/
-static const view_func_t view_nfc_read_table[] = {
+static const view_func_t m1_view_nfc_read_table[] = {
     NULL,               // Empty
-    nfc_read_gui_init,      // VIEW_MODE_NFC_READ
-    nfc_read_more_gui_init,   // VIEW_MODE_NFC_READ_MORE
+    m1_nfc_read_gui_init,      // VIEW_MODE_NFC_READ
+    m1_nfc_read_more_gui_init,   // VIEW_MODE_NFC_READ_MORE
     nfc_save_gui_init,      // VIEW_MODE_NFC_SAVE
     nfc_emulate_gui_init,   // VIEW_MODE_NFC_EMULATE
     nfc_utils_gui_init,     // VIEW_MODE_NFC_UTILS
     nfc_info_gui_init,      // VIEW_MODE_NFC_INFO
     nfc_edit_uid_gui_init,  // VIEW_MODE_NFC_EDIT_UID
     nfc_rename_gui_init,    // VIEW_MODE_NFC_RENAME
-    nfc_saved_browse_gui_init, // VIEW_MODE_NFC_SAVED_BROWSE
+    m1_nfc_saved_browse_gui_init, // VIEW_MODE_NFC_SAVED_BROWSE
 };
 #if 0
 static const view_func_t view_nfc_tools_table[] = {
@@ -314,7 +314,7 @@ void menu_nfc_deinit(void)
 
 /*============================================================================*/
 /**
- * @brief nfc_read - Main NFC read function
+ * @brief m1_nfc_read - Main NFC read function
  * 
  * This function handles the NFC card reading workflow. It registers
  * the NFC read view table, switches to the read view mode, and enters
@@ -323,13 +323,13 @@ void menu_nfc_deinit(void)
  * @retval None
  */
 /*============================================================================*/
-void nfc_read(void)
+void m1_nfc_read(void)
 {
-	platformLog("nfc_read()\r\n");
+	platformLog("m1_nfc_read()\r\n");
 	m1_gui_submenu_update(NULL, 0, 0, X_MENU_UPDATE_INIT);
-	nfc_uiview_gui_latest_param = 0xFF; // Initialize with an invalid parameter
+	m1_nfc_uiview_gui_latest_param = 0xFF; // Initialize with an invalid parameter
 	// init
-	m1_uiView_functions_init(VIEW_MODE_NFC_END, view_nfc_read_table);
+	m1_uiView_functions_init(VIEW_MODE_NFC_END, m1_view_nfc_read_table);
 	m1_uiView_display_switch(VIEW_MODE_NFC_READ, NFC_READ_DISPLAY_PARAM_READING_READY);
 
 	// loop
@@ -337,12 +337,12 @@ void nfc_read(void)
 	{
 		;
 	}
-	platformLog("nfc_read()-exit\r\n");
+	platformLog("m1_nfc_read()-exit\r\n");
 }
 
 /*============================================================================*/
 /**
- * @brief nfc_read_kp_handler - Handle keypad input for NFC read view
+ * @brief m1_nfc_read_kp_handler - Handle keypad input for NFC read view
  * 
  * Processes button events in the NFC read view:
  * - BACK: Exit to idle view
@@ -353,7 +353,7 @@ void nfc_read(void)
  * @retval 1 Continue processing
  */
 /*============================================================================*/
-static int nfc_read_kp_handler(void)
+static int m1_nfc_read_kp_handler(void)
 {
 	S_M1_Buttons_Status this_button_status;
 	BaseType_t ret;
@@ -363,7 +363,7 @@ static int nfc_read_kp_handler(void)
 	{
 		if ( this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK ) 		// exit, return
 		{
-			platformLog("nfc_read_kp_handler[BUTTON_BACK_KP_ID]\r\n");
+			platformLog("m1_nfc_read_kp_handler[BUTTON_BACK_KP_ID]\r\n");
 			m1_uiView_display_switch(VIEW_MODE_IDLE, 0);
 			xQueueReset(main_q_hdl); // Reset main q before return
 			return 0;
@@ -371,20 +371,20 @@ static int nfc_read_kp_handler(void)
 		} // if ( m1_buttons_status[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK )
 		else if(this_button_status.event[BUTTON_LEFT_KP_ID]==BUTTON_EVENT_CLICK )	// retry
 		{
-			if ( nfc_uiview_gui_latest_param==NFC_READ_DISPLAY_PARAM_READING_COMPLETE )
+			if ( m1_nfc_uiview_gui_latest_param==NFC_READ_DISPLAY_PARAM_READING_COMPLETE )
 			{
-				platformLog("nfc_read_kp_handler[BUTTON_LEFT_KP_ID]\r\n");
+				platformLog("m1_nfc_read_kp_handler[BUTTON_LEFT_KP_ID]\r\n");
 				m1_uiView_display_switch(VIEW_MODE_NFC_READ, NFC_READ_DISPLAY_PARAM_READING_READY);
-			} // if ( nfc_uiview_gui_latest_param==NFC_READ_DISPLAY_PARAM_READING_COMPLETE )
+			} // if ( m1_nfc_uiview_gui_latest_param==NFC_READ_DISPLAY_PARAM_READING_COMPLETE )
 		}
 		else if(this_button_status.event[BUTTON_RIGHT_KP_ID]==BUTTON_EVENT_CLICK )	// more
 		{
-			if ( nfc_uiview_gui_latest_param==NFC_READ_DISPLAY_PARAM_READING_COMPLETE )
+			if ( m1_nfc_uiview_gui_latest_param==NFC_READ_DISPLAY_PARAM_READING_COMPLETE )
 			{
-				platformLog("nfc_read_kp_handler[BUTTON_RIGHT_KP_ID]\r\n");
+				platformLog("m1_nfc_read_kp_handler[BUTTON_RIGHT_KP_ID]\r\n");
 				m1_uiView_display_switch(VIEW_MODE_NFC_READ_MORE, X_MENU_UPDATE_RESET);
-				nfc_uiview_gui_latest_param = X_MENU_UPDATE_RESET; // Update latest param
-			} // if ( nfc_uiview_gui_latest_param==NFC_READ_DISPLAY_PARAM_READING_COMPLETE )
+				m1_nfc_uiview_gui_latest_param = X_MENU_UPDATE_RESET; // Update latest param
+			} // if ( m1_nfc_uiview_gui_latest_param==NFC_READ_DISPLAY_PARAM_READING_COMPLETE )
 		} // else if(this_button_status.event[BUTTON_RIGHT_KP_ID]==BUTTON_EVENT_CLICK )
 	}
 
@@ -394,7 +394,7 @@ static int nfc_read_kp_handler(void)
 
 /*============================================================================*/
 /**
- * @brief nfc_read_gui_create - Create and initialize NFC read view
+ * @brief m1_nfc_read_gui_create - Create and initialize NFC read view
  * 
  * Initializes the NFC read view. If param is 0, starts the NFC reading
  * process by sending a start read event to the worker queue and enabling
@@ -404,12 +404,12 @@ static int nfc_read_kp_handler(void)
  * @retval None
  */
 /*============================================================================*/
-static void nfc_read_gui_create(uint8_t param)
+static void m1_nfc_read_gui_create(uint8_t param)
 {
-	platformLog("nfc_read_gui_create param[%d]\r\n", param);
+	platformLog("m1_nfc_read_gui_create param[%d]\r\n", param);
 	if( param==NFC_READ_DISPLAY_PARAM_READING_READY )
 	{
-		record_stat = NFC_RECORD_IDLE;
+		m1_nfc_record_stat = NFC_RECORD_IDLE;
 		m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_M, LED_FASTBLINK_ONTIME_M);
 		m1_app_send_q_message(nfc_worker_q_hdl, Q_EVENT_NFC_START_READ);
 		vTaskDelay(50);
@@ -420,7 +420,7 @@ static void nfc_read_gui_create(uint8_t param)
 
 /*============================================================================*/
 /**
- * @brief nfc_read_gui_destroy - Destroy NFC read view and cleanup resources
+ * @brief m1_nfc_read_gui_destroy - Destroy NFC read view and cleanup resources
  * 
  * Cleans up the NFC read view by turning off LED blink indication
  * and sending a read completion event to the worker queue.
@@ -429,16 +429,16 @@ static void nfc_read_gui_create(uint8_t param)
  * @retval None
  */
 /*============================================================================*/
-static void nfc_read_gui_destroy(uint8_t param)
+static void m1_nfc_read_gui_destroy(uint8_t param)
 {
-	platformLog("nfc_read_gui_destroy param[%d]\r\n", param);
+	platformLog("m1_nfc_read_gui_destroy param[%d]\r\n", param);
 	m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF); // Turn off
 	m1_app_send_q_message(nfc_worker_q_hdl, Q_EVENT_NFC_READ_COMPLETE);
 }
 
 
 /*============================================================================*/
- /* @brief nfc_read_gui_update - Update NFC read view display
+ /* @brief m1_nfc_read_gui_update - Update NFC read view display
  * 
  * Updates the display based on the read state:
  * - param 0: Shows "Reading" screen with instructions
@@ -448,13 +448,13 @@ static void nfc_read_gui_destroy(uint8_t param)
  * @retval None
  */
 /*============================================================================*/
-static void nfc_read_gui_update(uint8_t param)
+static void m1_nfc_read_gui_update(uint8_t param)
 {
-    if ( nfc_uiview_gui_latest_param==X_MENU_UPDATE_RESET )
+    if ( m1_nfc_uiview_gui_latest_param==X_MENU_UPDATE_RESET )
     {
     	m1_gui_submenu_update(NULL, 0, 0, X_MENU_UPDATE_RESTORE);
     }
-    nfc_uiview_gui_latest_param = param; // Update new param
+    m1_nfc_uiview_gui_latest_param = param; // Update new param
 
     /* Graphic work starts here */
     u8g2_FirstPage(&m1_u8g2); // This call required for page drawing in mode 1
@@ -510,7 +510,7 @@ static void nfc_read_gui_update(uint8_t param)
 
 
 /*============================================================================*/
- /* @brief nfc_read_gui_message - Process messages for NFC read view
+ /* @brief m1_nfc_read_gui_message - Process messages for NFC read view
  * 
  * Handles messages from the main queue:
  * - Q_EVENT_KEYPAD: Processes button events
@@ -520,7 +520,7 @@ static void nfc_read_gui_update(uint8_t param)
  * @retval 1 Continue processing
  */
 /*============================================================================*/
-static int nfc_read_gui_message(void)
+static int m1_nfc_read_gui_message(void)
 {
 	S_M1_Main_Q_t q_item;
 	BaseType_t ret;
@@ -533,12 +533,12 @@ static int nfc_read_gui_message(void)
 		{
 			// Notification is only sent to this task when there's any button activity,
 			// so it doesn't need to wait when reading the event from the queue
-			ret_val = nfc_read_kp_handler();
+			ret_val = m1_nfc_read_kp_handler();
 		} 
 		else if ( q_item.q_evt_type==Q_EVENT_NFC_READ_COMPLETE )
 		{
 			// Do other things for this task
-			record_stat = NFC_RECORD_ACTIVE;
+			m1_nfc_record_stat = NFC_RECORD_ACTIVE;
 			m1_buzzer_notification();
 			m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
 			m1_uiView_display_update(NFC_READ_DISPLAY_PARAM_READING_COMPLETE);
@@ -546,12 +546,12 @@ static int nfc_read_gui_message(void)
 	} // if (ret==pdTRUE)
 
 	return ret_val;
-} // static int nfc_read_gui_message(void)
+} // static int m1_nfc_read_gui_message(void)
 
 
 
 /*============================================================================*/
- /* @brief nfc_read_gui_init - Initialize and register NFC read view functions
+ /* @brief m1_nfc_read_gui_init - Initialize and register NFC read view functions
  * 
  * Registers the view functions (create, update, destroy, message) for
  * the NFC read view mode.
@@ -559,9 +559,9 @@ static int nfc_read_gui_message(void)
  * @retval None
  */
 /*============================================================================*/
-void nfc_read_gui_init(void)
+void m1_nfc_read_gui_init(void)
 {
-   m1_uiView_functions_register(VIEW_MODE_NFC_READ, nfc_read_gui_create, nfc_read_gui_update, nfc_read_gui_destroy, nfc_read_gui_message);
+   m1_uiView_functions_register(VIEW_MODE_NFC_READ, m1_nfc_read_gui_create, m1_nfc_read_gui_update, m1_nfc_read_gui_destroy, m1_nfc_read_gui_message);
 }
 
 /*============================================================================*/
@@ -645,7 +645,7 @@ static int nfc_read_more_kp_handler(void)
 						break;
 
 					case 5: // Delete
-						if (nfc_read_more_options_delete()==0)
+						if (m1_nfc_read_more_options_delete()==0)
 						{
 							return 0; // exit (파일 삭제됨)
 						}
@@ -708,7 +708,7 @@ static int nfc_read_more_kp_handler(void)
 
 
 /*============================================================================*/
- /* @brief nfc_read_more_gui_create - Create and initialize NFC submenu view
+ /* @brief m1_nfc_read_more_gui_create - Create and initialize NFC submenu view
  * 
  * Initializes the submenu view and sets the cursor index based on param.
  * If param is out of range, resets cursor to 0.
@@ -717,13 +717,13 @@ static int nfc_read_more_kp_handler(void)
  * @retval None
  */
 /*============================================================================*/
-static void nfc_read_more_gui_create(uint8_t param)
+static void m1_nfc_read_more_gui_create(uint8_t param)
 {
 	m1_uiView_display_update(param);
 }
 
 /*============================================================================*/
- /* @brief nfc_read_more_gui_destroy - Destroy NFC submenu view
+ /* @brief m1_nfc_read_more_gui_destroy - Destroy NFC submenu view
  * 
  * Cleanup function for submenu view (currently empty).
  * 
@@ -731,13 +731,13 @@ static void nfc_read_more_gui_create(uint8_t param)
  * @retval None
  */
 /*============================================================================*/
-static void nfc_read_more_gui_destroy(uint8_t param)
+static void m1_nfc_read_more_gui_destroy(uint8_t param)
 {
 	;
 }
 
 /*============================================================================*/
- /* @brief nfc_read_more_gui_update - Update NFC submenu view display
+ /* @brief m1_nfc_read_more_gui_update - Update NFC submenu view display
  * 
  * Updates the submenu display based on the card source (LIVE_CARD or LOAD_FILE).
  * Uses different menu arrays depending on the source kind and updates
@@ -747,7 +747,7 @@ static void nfc_read_more_gui_destroy(uint8_t param)
  * @retval None
  */
 /*============================================================================*/
-static void nfc_read_more_gui_update(uint8_t param)
+static void m1_nfc_read_more_gui_update(uint8_t param)
 {
 	nfc_run_ctx_t* c = nfc_ctx_get();
 	bool is_load_file = (c && c->file.source_kind==LOAD_FILE);
@@ -761,7 +761,7 @@ static void nfc_read_more_gui_update(uint8_t param)
 
 
 /*============================================================================*/
- /* @brief nfc_read_more_gui_message - Process messages for NFC submenu view
+ /* @brief m1_nfc_read_more_gui_message - Process messages for NFC submenu view
  * 
  * Handles messages from the main queue, primarily keypad events.
  * 
@@ -769,7 +769,7 @@ static void nfc_read_more_gui_update(uint8_t param)
  * @retval 1 Continue processing
  */	
 /*============================================================================*/
-static int nfc_read_more_gui_message(void)
+static int m1_nfc_read_more_gui_message(void)
 {
 	S_M1_Main_Q_t q_item;
 	BaseType_t ret;
@@ -794,7 +794,7 @@ static int nfc_read_more_gui_message(void)
 }
 
 /*============================================================================*/
- /* @brief nfc_read_more_gui_init - Initialize and register NFC submenu view functions
+ /* @brief m1_nfc_read_more_gui_init - Initialize and register NFC submenu view functions
  * 
  * Registers the view functions (create, update, destroy, message) for
  * the NFC submenu view mode.
@@ -802,9 +802,9 @@ static int nfc_read_more_gui_message(void)
  * @retval None
  */
 /*============================================================================*/
-void nfc_read_more_gui_init(void)
+void m1_nfc_read_more_gui_init(void)
 {
-   m1_uiView_functions_register(VIEW_MODE_NFC_READ_MORE, nfc_read_more_gui_create, nfc_read_more_gui_update, nfc_read_more_gui_destroy, nfc_read_more_gui_message);
+   m1_uiView_functions_register(VIEW_MODE_NFC_READ_MORE, m1_nfc_read_more_gui_create, m1_nfc_read_more_gui_update, m1_nfc_read_more_gui_destroy, m1_nfc_read_more_gui_message);
 }
 
 /*============================================================================*/
@@ -886,7 +886,7 @@ static void nfc_save_gui_update(uint8_t param)
 {
 	BaseType_t ret;
 
-	ret = nfc_read_more_options_save();
+	ret = m1_nfc_read_more_options_save();
 	if ( ret==3 )
 	{
 		m1_uiView_display_switch(VIEW_MODE_NFC_READ_MORE, X_MENU_UPDATE_REFRESH);
@@ -1614,7 +1614,7 @@ void m1_nfc_info_more_draw(void)
 
 /*============================================================================*/
 /**
- * @brief nfc_tools - NFC tools menu function (To Be Determined)
+ * @brief m1_nfc_tools - NFC tools menu function (To Be Determined)
  * 
  * Placeholder function for NFC tools menu. Currently displays
  * "Tools(TBD)" message and waits for BACK button to exit.
@@ -1622,7 +1622,7 @@ void m1_nfc_info_more_draw(void)
  * @retval None
  */
 /*============================================================================*/
-void nfc_tools(void)
+void m1_nfc_tools(void)
 {
 	S_M1_Buttons_Status this_button_status;
 	S_M1_Main_Q_t q_item;
@@ -1633,7 +1633,7 @@ void nfc_tools(void)
 	/*	Tools_Menu	*/
 
 	m1_gui_submenu_update(NULL, 0, 0, X_MENU_UPDATE_INIT);
-	nfc_uiview_gui_latest_param = 0xFF; // Initialize with an invalid parameter
+	m1_nfc_uiview_gui_latest_param = 0xFF; // Initialize with an invalid parameter
 	while (1) // Main loop of this task
 	{
 		ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
@@ -1654,13 +1654,13 @@ void nfc_tools(void)
 				else if(this_button_status.event[BUTTON_UP_KP_ID]==BUTTON_EVENT_CLICK )
 				{
 					// Do other things for this task, if needed
-					platformLog("nfc_tools[BUTTON_UP_KP_ID]\r\n");
+					platformLog("m1_nfc_tools[BUTTON_UP_KP_ID]\r\n");
 
 				}
 				else if(this_button_status.event[BUTTON_DOWN_KP_ID]==BUTTON_EVENT_CLICK )
 				{
 					// Do other things for this task, if needed
-					platformLog("nfc_tools[BUTTON_DOWN_KP_ID]\r\n");
+					platformLog("m1_nfc_tools[BUTTON_DOWN_KP_ID]\r\n");
 
 				}
 			} 
@@ -1674,7 +1674,7 @@ void nfc_tools(void)
 
 /*============================================================================*/
 /**
- * @brief nfc_saved - Load and display NFC card data from saved file
+ * @brief m1_nfc_saved - Load and display NFC card data from saved file
  * 
  * This function allows the user to browse and load a previously saved
  * NFC card file from SD card. It validates the file extension (.nfc),
@@ -1692,7 +1692,7 @@ void nfc_tools(void)
 /*============================================================================*/
 /*============================================================================*/
 /**
- * @brief nfc_saved - Browse and load NFC card data from saved file
+ * @brief m1_nfc_saved - Browse and load NFC card data from saved file
  * 
  * This function uses the uiView system to browse and load a previously saved
  * NFC card file from SD card. It follows the same pattern as RFID's saved
@@ -1701,16 +1701,16 @@ void nfc_tools(void)
  * @retval None
  */
 /*============================================================================*/
-void nfc_saved(void)
+void m1_nfc_saved(void)
 {
 	nfc_run_ctx_t ctx;
     nfc_run_ctx_init(&ctx);
 	
-	platformLog("nfc_saved()\r\n");
+	platformLog("m1_nfc_saved()\r\n");
 	m1_gui_submenu_update(NULL, 0, 0, X_MENU_UPDATE_INIT);
-	nfc_uiview_gui_latest_param = 0xFF; // Initialize with an invalid parameter
+	m1_nfc_uiview_gui_latest_param = 0xFF; // Initialize with an invalid parameter
 	// initial
-	m1_uiView_functions_init(VIEW_MODE_NFC_END, view_nfc_read_table);
+	m1_uiView_functions_init(VIEW_MODE_NFC_END, m1_view_nfc_read_table);
 	m1_uiView_display_switch(VIEW_MODE_NFC_SAVED_BROWSE, 0);
 
 	// loop
@@ -1723,7 +1723,7 @@ void nfc_saved(void)
 
 /*============================================================================*/
 /**
- * @brief nfc_read_more_options_save - Save NFC card data to SD card file
+ * @brief m1_nfc_read_more_options_save - Save NFC card data to SD card file
  * 
  * Saves the current NFC card context to a file on the SD card in
  * the NFC directory. The function:
@@ -1741,7 +1741,7 @@ void nfc_saved(void)
  * @retval 4 File creation failed
  */
 /*============================================================================*/
-static uint8_t nfc_read_more_options_save(void)
+static uint8_t m1_nfc_read_more_options_save(void)
 {
 	char filepath[128];
 	uint8_t error;
@@ -1989,7 +1989,7 @@ void nfc_edit_uid_gui_init(void)
 
 /*============================================================================*/
 /**
- * @brief nfc_read_more_options_delete - Delete loaded NFC card file
+ * @brief m1_nfc_read_more_options_delete - Delete loaded NFC card file
  * 
  * Shows confirmation dialog and deletes the loaded NFC card file.
  * 
@@ -1997,7 +1997,7 @@ void nfc_edit_uid_gui_init(void)
  * @retval 1 User cancelled or error
  */
 /*============================================================================*/
-static uint8_t nfc_read_more_options_delete(void)
+static uint8_t m1_nfc_read_more_options_delete(void)
 {
 	// Wait for user input
 	S_M1_Buttons_Status this_button_status;
@@ -2334,7 +2334,7 @@ static int nfc_saved_browse_kp_handler(void)
 
 /*============================================================================*/
 /**
- * @brief nfc_saved_browse_gui_create - Create and initialize NFC saved browse view
+ * @brief m1_nfc_saved_browse_gui_create - Create and initialize NFC saved browse view
  * 
  * Initializes the saved browse view and triggers an update.
  * 
@@ -2342,14 +2342,14 @@ static int nfc_saved_browse_kp_handler(void)
  * @retval None
  */
 /*============================================================================*/
-static void nfc_saved_browse_gui_create(uint8_t param)
+static void m1_nfc_saved_browse_gui_create(uint8_t param)
 {
 	m1_uiView_display_update(0);
 }
 
 /*============================================================================*/
 /**
- * @brief nfc_saved_browse_gui_destroy - Destroy NFC saved browse view
+ * @brief m1_nfc_saved_browse_gui_destroy - Destroy NFC saved browse view
  * 
  * Cleanup function for the saved browse view.
  * 
@@ -2357,14 +2357,14 @@ static void nfc_saved_browse_gui_create(uint8_t param)
  * @retval None
  */
 /*============================================================================*/
-static void nfc_saved_browse_gui_destroy(uint8_t param)
+static void m1_nfc_saved_browse_gui_destroy(uint8_t param)
 {
 
 }
 
 /*============================================================================*/
 /**
- * @brief nfc_saved_browse_gui_update - Update NFC saved browse view
+ * @brief m1_nfc_saved_browse_gui_update - Update NFC saved browse view
  * 
  * Handles file browsing and loading. When a file is selected:
  * - Validates file extension (.nfc)
@@ -2376,7 +2376,7 @@ static void nfc_saved_browse_gui_destroy(uint8_t param)
  * @retval None
  */
 /*============================================================================*/
-static void nfc_saved_browse_gui_update(uint8_t param)
+static void m1_nfc_saved_browse_gui_update(uint8_t param)
 {
 	f_info = storage_browse();
 	if ( f_info->file_is_selected )
@@ -2399,7 +2399,7 @@ static void nfc_saved_browse_gui_update(uint8_t param)
 
 /*============================================================================*/
 /**
- * @brief nfc_saved_browse_gui_message - Handle messages for NFC saved browse view
+ * @brief m1_nfc_saved_browse_gui_message - Handle messages for NFC saved browse view
  * 
  * Processes messages from the main queue:
  * - Q_EVENT_KEYPAD: Handles button events
@@ -2409,7 +2409,7 @@ static void nfc_saved_browse_gui_update(uint8_t param)
  * @retval 1 Continue processing
  */
 /*============================================================================*/
-static int nfc_saved_browse_gui_message(void)
+static int m1_nfc_saved_browse_gui_message(void)
 {
 	S_M1_Main_Q_t q_item;
 	BaseType_t ret;
@@ -2437,7 +2437,7 @@ static int nfc_saved_browse_gui_message(void)
 
 /*============================================================================*/
 /**
- * @brief nfc_saved_browse_gui_init - Initialize and register NFC saved browse view functions
+ * @brief m1_nfc_saved_browse_gui_init - Initialize and register NFC saved browse view functions
  * 
  * Registers the view functions (create, update, destroy, message) for
  * the NFC saved browse view mode.
@@ -2445,8 +2445,8 @@ static int nfc_saved_browse_gui_message(void)
  * @retval None
  */
 /*============================================================================*/
-void nfc_saved_browse_gui_init(void)
+void m1_nfc_saved_browse_gui_init(void)
 {
-   m1_uiView_functions_register(VIEW_MODE_NFC_SAVED_BROWSE, nfc_saved_browse_gui_create, nfc_saved_browse_gui_update, nfc_saved_browse_gui_destroy, nfc_saved_browse_gui_message);
+   m1_uiView_functions_register(VIEW_MODE_NFC_SAVED_BROWSE, m1_nfc_saved_browse_gui_create, m1_nfc_saved_browse_gui_update, m1_nfc_saved_browse_gui_destroy, m1_nfc_saved_browse_gui_message);
 }
 
