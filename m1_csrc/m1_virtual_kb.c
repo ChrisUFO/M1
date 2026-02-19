@@ -1090,6 +1090,9 @@ uint8_t m1_vkb_get_password(char *description, char *password_buffer, uint8_t ma
 	// Track position per mode so switching modes remembers your position
 	uint8_t mode_positions[] = {0, 0, 0};
 	
+	// Show password toggle (long press DOWN)
+	bool show_password = false;
+	
 	if (password_buffer == NULL || max_len == 0)
 		return 0;
 		
@@ -1128,9 +1131,20 @@ uint8_t m1_vkb_get_password(char *description, char *password_buffer, uint8_t ma
 			{
 				char display_buffer[17];
 				uint8_t display_len = password_len > 16 ? 16 : password_len;
-				for (uint8_t i = 0; i < display_len; i++) display_buffer[i] = '*';
+				if (show_password) {
+					// Show actual password characters
+					memcpy(display_buffer, password_buffer, display_len);
+				} else {
+					// Show asterisks
+					for (uint8_t i = 0; i < display_len; i++) display_buffer[i] = '*';
+				}
 				display_buffer[display_len] = '\0';
 				u8g2_DrawStr(&m1_u8g2, 6, 20, display_buffer);
+			}
+			
+			// Show password mode indicator (small icon)
+			if (show_password) {
+				u8g2_DrawStr(&m1_u8g2, 108, 20, "S");  // S = showing
 			}
 			
 			// Row 3: Character selector with prev/current/next horizontally aligned
@@ -1238,6 +1252,11 @@ uint8_t m1_vkb_get_password(char *description, char *password_buffer, uint8_t ma
 				char_index = mode_positions[current_mode];
 				if (char_index >= max_chars[current_mode])
 					char_index = max_chars[current_mode] - 1;
+			}
+			else if (this_button_status.event[BUTTON_DOWN_KP_ID] == BUTTON_EVENT_LCLICK)
+			{
+				// Long press DOWN: Toggle show password
+				show_password = !show_password;
 			}
 		}
 	}
