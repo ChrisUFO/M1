@@ -330,10 +330,14 @@ static void ir_ui_show_scanning(void) {
  * ---------------------------------------------------------------------- */
 
 static void ir_add_recent(const char *path) {
-  char lines[IR_MAX_RECENT][IR_UNIVERSAL_PATH_LEN_MAX];
+  char (*lines)[IR_UNIVERSAL_PATH_LEN_MAX];
   uint8_t count = 0;
   FIL f;
   FRESULT fr;
+
+  lines = pvPortMalloc(IR_MAX_RECENT * IR_UNIVERSAL_PATH_LEN_MAX);
+  if (!lines)
+    return;
 
   /* Ensure directory exists */
   f_mkdir("0:/System");
@@ -362,6 +366,8 @@ static void ir_add_recent(const char *path) {
     }
     f_close(&f);
   }
+
+  vPortFree(lines);
 }
 
 static uint8_t ir_list_from_file(const char *file_path,
@@ -407,7 +413,7 @@ static uint8_t ir_list_from_file(const char *file_path,
  * Search Logic (Recursive Scan with Hardening)
  * ---------------------------------------------------------------------- */
 
-static void ir_search_recursive(const char *path, const char *query,
+static void ir_search_recursive(const char *path, const char *lower_query,
                                 char names[][IR_NAME_BUF_LEN],
                                 char paths[][IR_UNIVERSAL_PATH_LEN_MAX],
                                 uint8_t *count, uint8_t max_entries,
@@ -432,18 +438,15 @@ static void ir_search_recursive(const char *path, const char *query,
 
     if (fi.fattrib & AM_DIR) {
       snprintf(full_path, sizeof(full_path), "%s/%s", path, fi.fname);
-      ir_search_recursive(full_path, query, names, paths, count, max_entries,
-                          depth + 1);
+      ir_search_recursive(full_path, lower_query, names, paths, count,
+                          max_entries, depth + 1);
     } else {
-      /* Case-insensitive substr search */
+      /* Case-insensitive substr search using pre-lowercased query */
       char lower_name[IR_NAME_BUF_LEN];
-      char lower_query[32];
       strncpy(lower_name, fi.fname, sizeof(lower_name));
+      lower_name[sizeof(lower_name) - 1] = '\0';
       for (int i = 0; lower_name[i]; i++)
         lower_name[i] = tolower((unsigned char)lower_name[i]);
-      strncpy(lower_query, query, sizeof(lower_query));
-      for (int i = 0; lower_query[i]; i++)
-        lower_query[i] = tolower((unsigned char)lower_query[i]);
 
       if (strstr(lower_name, lower_query)) {
         strncpy(names[*count], fi.fname, IR_NAME_BUF_LEN - 1);
@@ -709,8 +712,7 @@ static bool ir_browse_level(const char *base_path, const char *title,
     /* Add Previous Page virtual item */
     if (skip_count > 0) {
       /* Shift items down */
-      for (int j = count; j > 0; j--)
-        strcpy(names[j], names[j - 1]);
+      memmove(&names[1], &names[0], count * sizeof(names[0]));
       strcpy(names[0], "[Previous Page]");
       count++;
     }
@@ -961,33 +963,63 @@ static void ir_dashboard(void) {
     }
     if (btn.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK) {
       if (sel == 0) { /* Favorites */
-        char names[IR_MAX_FAVORITES][IR_NAME_BUF_LEN];
-        char paths[IR_MAX_FAVORITES][IR_UNIVERSAL_PATH_LEN_MAX];
-        uint8_t c = ir_list_from_file(IR_FAVORITES_FILE, names, paths,
-                                      IR_MAX_FAVORITES);
-        ir_show_fixed_list("Favorites", names, paths, c);
+        char (*names)[IR_NAME_BUF_LEN] =
+            pvPortMalloc(IR_MAX_FAVORITES * IR_NAME_BUF_LEN);
+        char (*paths)[IR_UNIVERSAL_PATH_LEN_MAX] =
+            pvPortMalloc(IR_MAX_FAVORITES * IR_UNIVERSAL_PATH_LEN_MAX);
+
+        if (names && paths) {
+          uint8_t c = ir_list_from_file(IR_FAVORITES_FILE, names, paths,
+                                        IR_MAX_FAVORITES);
+          ir_show_fixed_list("Favorites", names, paths, c);
+        }
+        if (names)
+          vPortFree(names);
+        if (paths)
+          vPortFree(paths);
       } else if (sel == 1) { /* Recent */
-        char names[IR_MAX_RECENT][IR_NAME_BUF_LEN];
-        char paths[IR_MAX_RECENT][IR_UNIVERSAL_PATH_LEN_MAX];
-        uint8_t c =
-            ir_list_from_file(IR_RECENT_FILE, names, paths, IR_MAX_RECENT);
-        ir_show_fixed_list("Recent", names, paths, c);
+        char (*names)[IR_NAME_BUF_LEN] =
+            pvPortMalloc(IR_MAX_RECENT * IR_NAME_BUF_LEN);
+        char (*paths)[IR_UNIVERSAL_PATH_LEN_MAX] =
+            pvPortMalloc(IR_MAX_RECENT * IR_UNIVERSAL_PATH_LEN_MAX);
+
+        if (names && paths) {
+          uint8_t c =
+              ir_list_from_file(IR_RECENT_FILE, names, paths, IR_MAX_RECENT);
+          ir_show_fixed_list("Recent", names, paths, c);
+        }
+        if (names)
+          vPortFree(names);
+        if (paths)
+          vPortFree(paths);
       } else if (sel == 2) { /* Search */
         char query[32] = "";
         if (m1_vkb_get_filename("Search IR", "", query) > 0) {
           ir_ui_show_scanning();
-          char names[32][IR_NAME_BUF_LEN];
-          char paths[32][IR_UNIVERSAL_PATH_LEN_MAX];
-          uint8_t c = 0;
-          /* Scan database root */
-          ir_search_recursive(IR_UNIVERSAL_SD_ROOT, query, names, paths, &c, 32,
-                              0);
-          if (c > 0) {
-            ir_show_fixed_list("Search Results", names, paths, c);
-          } else {
-            ir_ui_show_error("No matches found");
-            vTaskDelay(pdMS_TO_TICKS(1500));
+          /* Lowercase query once for efficiency */
+          for (int i = 0; query[i]; i++)
+            query[i] = tolower((unsigned char)query[i]);
+
+          char (*names)[IR_NAME_BUF_LEN] = pvPortMalloc(32 * IR_NAME_BUF_LEN);
+          char (*paths)[IR_UNIVERSAL_PATH_LEN_MAX] =
+              pvPortMalloc(32 * IR_UNIVERSAL_PATH_LEN_MAX);
+
+          if (names && paths) {
+            uint8_t c = 0;
+            /* Scan database root */
+            ir_search_recursive(IR_UNIVERSAL_SD_ROOT, query, names, paths, &c,
+                                32, 0);
+            if (c > 0) {
+              ir_show_fixed_list("Search Results", names, paths, c);
+            } else {
+              ir_ui_show_error("No matches found");
+              vTaskDelay(pdMS_TO_TICKS(1500));
+            }
           }
+          if (names)
+            vPortFree(names);
+          if (paths)
+            vPortFree(paths);
         }
       } else if (sel == 3) { /* Browse */
         ir_browse_level(IR_UNIVERSAL_SD_ROOT, "Database", 0);
