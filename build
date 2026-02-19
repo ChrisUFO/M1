@@ -68,8 +68,16 @@ mkdir -p "$DIST_DIR"
 echo "Cleaning old distribution files..."
 rm -f "$DIST_DIR"/*
 
-# Configure build (only if build directory doesn't exist)
-if [ ! -d "$BUILD_DIR" ]; then
+# Configure build (only if build directory doesn't exist or version changed)
+RECONFIGURE=false
+if [ ! -d "$BUILD_DIR" ] || [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
+    RECONFIGURE=true
+elif ! grep -q "CMAKE_PROJECT_NAME:STATIC=$PROJECT_NAME" "$BUILD_DIR/CMakeCache.txt"; then
+    echo "Version change detected (target: $PROJECT_NAME). Forcing reconfigure..."
+    RECONFIGURE=true
+fi
+
+if [ "$RECONFIGURE" = true ]; then
     echo "Configuring build..."
     cmake --preset gcc-14_2_build-release
 fi
