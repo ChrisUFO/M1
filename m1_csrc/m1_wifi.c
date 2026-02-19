@@ -532,9 +532,26 @@ void wifi_join_network(void)
             u8g2_DrawStr(&m1_u8g2, 2, y_offset, prn_msg);
             y_offset += M1_GUI_FONT_HEIGHT;
             
-            // RSSI
-            sprintf(prn_msg, "RSSI: %ddBm", list[selected_ap].rssi);
+            // RSSI with signal bars
+            int8_t rssi = list[selected_ap].rssi;
+            uint8_t bars = 0;
+            if (rssi > -50) bars = 4;
+            else if (rssi > -60) bars = 3;
+            else if (rssi > -70) bars = 2;
+            else if (rssi > -80) bars = 1;
+            
+            sprintf(prn_msg, "RSSI:");
             u8g2_DrawStr(&m1_u8g2, 2, y_offset, prn_msg);
+            
+            // Draw signal bars (x=50, y_offset-7)
+            for (uint8_t b = 0; b < 4; b++) {
+                uint8_t bar_height = 4 + (b * 3);
+                if (b < bars) {
+                    u8g2_DrawBox(&m1_u8g2, 50 + (b * 6), y_offset - bar_height, 4, bar_height);
+                } else {
+                    u8g2_DrawFrame(&m1_u8g2, 50 + (b * 6), y_offset - bar_height, 4, bar_height);
+                }
+            }
             
             u8g2_DrawStr(&m1_u8g2, 2, 60, "UP/DN:Scroll OK:Sel");
             m1_u8g2_nextpage();
@@ -810,7 +827,7 @@ void wifi_show_connection_status(void)
             u8g2_DrawStr(&m1_u8g2, 6, 60, "RSSI: -45dBm");
         }
         
-        u8g2_DrawStr(&m1_u8g2, 2, 62, "Back: Return");
+        u8g2_DrawStr(&m1_u8g2, 2, 62, "OK:Disconnect Back:Exit");
         m1_u8g2_nextpage();
         
         // Wait for button
@@ -819,10 +836,24 @@ void wifi_show_connection_status(void)
         {
             ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
             
-            if (this_button_status.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK ||
-                this_button_status.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK)
+            if (this_button_status.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK)
             {
                 exit_menu = true;
+            }
+            else if (this_button_status.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK)
+            {
+                // Disconnect
+                m1_u8g2_firstpage();
+                u8g2_DrawStr(&m1_u8g2, 6, 30, "Disconnecting...");
+                m1_u8g2_nextpage();
+                
+                // Send AT+CWQAP to disconnect
+                ctrl_cmd_t disc_req = CTRL_CMD_DEFAULT_REQ();
+                disc_req.cmd_timeout_sec = 5;
+                disc_req.msg_id = CTRL_REQ_DISCONNECT_AP;
+                // wifi_disconnect_ap(&disc_req); // TODO: Implement
+                
+                m1_hard_delay(1000);
             }
         }
     }
