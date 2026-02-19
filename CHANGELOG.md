@@ -11,11 +11,28 @@ and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 
 ### Added
 
+- **WiFi Configuration** (`m1_csrc/m1_wifi.c`):
+  - Full WiFi join flow: scan → select AP → enter password → connect
+  - Password entry with scrolling character selector (3 modes: abc/ABC/!@#)
+  - Position memory per mode for seamless case switching (m→M)
+  - Prev/next character indicators for visual navigation feedback
+  - Show password toggle (long press DOWN)
+  - Signal strength bars in AP list (visual indicator)
+  - Saved networks management (list, delete with confirmation)
+  - Connection status screen with disconnect button
+  - Support for connecting to open and secured networks (WPA/WPA2)
+  
 - **WiFi Credential Storage** (`m1_csrc/m1_wifi_cred.c/.h`):
-  - XOR encryption for saved WiFi passwords using device UID
+  - AES-256-CBC encryption for saved WiFi passwords (replaced XOR)
+  - Device-specific encryption key derived from STM32H5 UID
   - Support for up to 10 saved networks
-  - Auto-connect functionality for saved networks
+  - File format with magic number, version, and checksum validation
   - Credentials stored on SD card in `WIFI/networks.bin`
+  
+- **AES-256 Crypto Module** (`m1_csrc/m1_crypto.c/.h`):
+  - Hardware-accelerated encryption using STM32H5 CRYP peripheral
+  - AES-256-CBC with random IV generation
+  - PKCS7 padding support
 - **Enhanced CLI Commands** (8 new commands):
   - `version` - Show detailed firmware version with fork tag
   - `status` - System status and active bank
