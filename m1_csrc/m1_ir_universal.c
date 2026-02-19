@@ -47,6 +47,8 @@
 #define IR_FAVORITES_FILE "0:/System/ir_favorites.txt"
 #define IR_MAX_RECENT 10
 #define IR_MAX_FAVORITES 20
+#define IR_SEARCH_MAX_RESULTS 64
+#define IR_MAX_RECURSION_DEPTH 8
 
 /* -------------------------------------------------------------------------
  * Protocol name -> IRMP ID mapping table
@@ -370,6 +372,77 @@ static void ir_add_recent(const char *path) {
   vPortFree(lines);
 }
 
+static bool ir_is_favorite(const char *path) {
+  FIL f;
+  char line[IR_UNIVERSAL_PATH_LEN_MAX];
+  bool found = false;
+
+  if (f_open(&f, IR_FAVORITES_FILE, FA_READ) != FR_OK)
+    return false;
+
+  while (f_gets(line, sizeof(line), &f)) {
+    char *p = ir_trim(line);
+    if (p[0] != '\0' && strcmp(p, path) == 0) {
+      found = true;
+      break;
+    }
+  }
+  f_close(&f);
+  return found;
+}
+
+static void ir_toggle_favorite(const char *path) {
+  char (*lines)[IR_UNIVERSAL_PATH_LEN_MAX];
+  uint8_t count = 0;
+  bool already_fav = false;
+  FIL f;
+  FRESULT fr;
+
+  lines = pvPortMalloc(IR_MAX_FAVORITES * IR_UNIVERSAL_PATH_LEN_MAX);
+  if (!lines)
+    return;
+
+  /* Read current list */
+  fr = f_open(&f, IR_FAVORITES_FILE, FA_READ | FA_OPEN_ALWAYS);
+  if (fr == FR_OK) {
+    while (count < IR_MAX_FAVORITES &&
+           f_gets(lines[count], IR_UNIVERSAL_PATH_LEN_MAX, &f)) {
+      char *p = ir_trim(lines[count]);
+      if (p[0] != '\0') {
+        if (strcmp(p, path) == 0) {
+          already_fav = true;
+          /* skip adding to the list we will rewrite (removing it) */
+        } else {
+          strncpy(lines[count], p, IR_UNIVERSAL_PATH_LEN_MAX - 1);
+          lines[count][IR_UNIVERSAL_PATH_LEN_MAX - 1] = '\0';
+          count++;
+        }
+      }
+    }
+    f_close(&f);
+  }
+
+  /* Rewrite the file */
+  fr = f_open(&f, IR_FAVORITES_FILE, FA_WRITE | FA_CREATE_ALWAYS);
+  if (fr == FR_OK) {
+    if (!already_fav) {
+      /* Add to top */
+      f_printf(&f, "%s\n", path);
+    }
+    for (uint8_t i = 0;
+         i < count && i < (IR_MAX_FAVORITES - (already_fav ? 0 : 1)); i++) {
+      f_printf(&f, "%s\n", lines[i]);
+    }
+    f_close(&f);
+
+    /* Feedback */
+    ir_ui_show_error(already_fav ? "Removed Favorite" : "Added Favorite");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+
+  vPortFree(lines);
+}
+
 static uint8_t ir_list_from_file(const char *file_path,
                                  char names[][IR_NAME_BUF_LEN],
                                  char paths[][IR_UNIVERSAL_PATH_LEN_MAX],
@@ -423,7 +496,7 @@ static void ir_search_recursive(const char *path, const char *lower_query,
   char full_path[IR_UNIVERSAL_PATH_LEN_MAX];
 
   /* Hardening: recursion depth limit */
-  if (depth > 5)
+  if (depth > IR_MAX_RECURSION_DEPTH)
     return;
   if (*count >= max_entries)
     return;
@@ -575,7 +648,13 @@ static bool ir_run_command_ui(const char *file_path, const char *device_name) {
     ptrs[i] = dev->cmds[i].name;
 
   /* Initial draw */
-  ir_ui_draw_list(device_name, ptrs, dev->count, sel, row_offset);
+  char dtitle[64];
+  if (ir_is_favorite(file_path))
+    snprintf(dtitle, sizeof(dtitle), "* %s", device_name);
+  else
+    snprintf(dtitle, sizeof(dtitle), "  %s", device_name);
+
+  ir_ui_draw_list(dtitle, ptrs, dev->count, sel, row_offset);
 
   infrared_encode_sys_init();
 
@@ -608,6 +687,19 @@ static bool ir_run_command_ui(const char *file_path, const char *device_name) {
     /* Drive TX state machine while processing keys */
     if (tx_active)
       infrared_transmit(0);
+
+    /* RIGHT key toggles Favorite status */
+    if (btn.event[BUTTON_RIGHT_KP_ID] == BUTTON_EVENT_CLICK) {
+      ir_toggle_favorite(file_path);
+      /* Redraw with updated title */
+      char dtitle[64];
+      if (ir_is_favorite(file_path))
+        snprintf(dtitle, sizeof(dtitle), "* %s", device_name);
+      else
+        snprintf(dtitle, sizeof(dtitle), "  %s", device_name);
+      ir_ui_draw_list(dtitle, ptrs, dev->count, sel, row_offset);
+      continue;
+    }
 
     if (btn.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK) {
       if (tx_active) {
@@ -727,13 +819,13 @@ static bool ir_browse_level(const char *base_path, const char *title,
       ptrs[i] = names[i];
 
     /* Breadcrumb hint */
-    char btitle[32];
+    char btitle[64];
     if (level == 0)
-      snprintf(btitle, sizeof(btitle), "Root: %s", title);
+      snprintf(btitle, sizeof(btitle), "Root:%s", title);
     else if (level == 1)
-      snprintf(btitle, sizeof(btitle), "Cat: %s", title);
+      snprintf(btitle, sizeof(btitle), "Cat:%s", title);
     else
-      snprintf(btitle, sizeof(btitle), "Dev: %s", title);
+      snprintf(btitle, sizeof(btitle), "Dev:%s", title);
 
     ir_ui_draw_list(btitle, ptrs, count, sel, row_offset);
 
@@ -1000,15 +1092,16 @@ static void ir_dashboard(void) {
           for (int i = 0; query[i]; i++)
             query[i] = tolower((unsigned char)query[i]);
 
-          char (*names)[IR_NAME_BUF_LEN] = pvPortMalloc(32 * IR_NAME_BUF_LEN);
+          char (*names)[IR_NAME_BUF_LEN] =
+              pvPortMalloc(IR_SEARCH_MAX_RESULTS * IR_NAME_BUF_LEN);
           char (*paths)[IR_UNIVERSAL_PATH_LEN_MAX] =
-              pvPortMalloc(32 * IR_UNIVERSAL_PATH_LEN_MAX);
+              pvPortMalloc(IR_SEARCH_MAX_RESULTS * IR_UNIVERSAL_PATH_LEN_MAX);
 
           if (names && paths) {
             uint8_t c = 0;
             /* Scan database root */
             ir_search_recursive(IR_UNIVERSAL_SD_ROOT, query, names, paths, &c,
-                                32, 0);
+                                IR_SEARCH_MAX_RESULTS, 0);
             if (c > 0) {
               ir_show_fixed_list("Search Results", names, paths, c);
             } else {
