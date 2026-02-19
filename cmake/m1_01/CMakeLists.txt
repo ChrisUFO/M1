@@ -325,7 +325,8 @@ target_sources(m1_drivers PRIVATE ${ESP32_RESOURCES_C})
 target_compile_definitions(m1_drivers PRIVATE ${COMMON_DEFINITIONS})
 target_include_directories(m1_drivers PRIVATE ${COMMON_INCLUDES})
 # Relaxed warnings for drivers/third-party
-target_compile_options(m1_drivers PRIVATE -Wno-unused-parameter -Wno-type-limits -Wno-unused-variable -Wno-unused-function -Wno-overlength-strings -Wno-sign-compare -Wno-pointer-sign -Wno-overflow -Wno-free-labels -Wno-enum-int-mismatch -Wno-maybe-uninitialized -Wno-unused-but-set-variable)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../driver_warnings.cmake)
+target_compile_options(m1_drivers PRIVATE ${RELAXED_DRIVER_WARNINGS})
 
 # Target for Application Core
 add_library(m1_core STATIC

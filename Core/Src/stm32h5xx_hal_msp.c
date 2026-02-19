@@ -511,7 +511,7 @@ void HAL_SPI_MspDeInit(SPI_HandleTypeDef* hspi)
 */
 void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* htim_base)
 {
-#if 0 /* Unused: stub for future work. May need removal later. */
+#if 0 /* TODO: Enable TIM DMA support when hardware logic is finalized. */
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   DMA_NodeConfTypeDef NodeConfig;
 #endif
@@ -550,7 +550,7 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* htim_base)
 
 void HAL_TIM_MspPostInit(TIM_HandleTypeDef* htim)
 {
-#if 0 /* Unused: stub for future work. May need removal later. */
+#if 0 /* TODO: Enable GPIO initialization for TIM3 CH3 when needed. */
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 #endif
   if(htim->Instance==TIM3)
