@@ -72,8 +72,6 @@ and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 
 ### Changed
 
-### Changed
-
 - Firmware version bumped to `0.8.2`
 - CMakeLists.txt: Automatic version extraction from `m1_fw_update_bl.h`
 - Build script: Fixed false "successful" reporting on build failures
@@ -87,30 +85,6 @@ and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 - Fixed duplicate function definitions in WiFi modules
 
 ## [v0.8.1] - 2026-02-17
-
-### Added
-
-- USB DFU mode entry in **Settings -> Firmware update -> USB DFU mode** with explicit confirmation/cancel flow
-- `dfu` CLI command to reboot directly into STM32 ROM USB DFU mode
-- Startup operation flag `DEV_OP_STATUS_USB_DFU_REQUEST` for reliable DFU handoff across reset
-- DFU transition hardening:
-  - confirmation timeout path (no infinite wait)
-  - USB stack deinit status checks before ROM jump
-  - pre-reset user feedback screen when preparing DFU reboot
-- Architecture and user docs updated for DFU flow, troubleshooting, tested matrix, and limitations
-
-### Changed
-
-- Firmware version bumped to `0.8.1`
-- `ARCHITECTURE.md` rewritten to match actual repository structure and current firmware update pathways
-- CMake post-build pipeline now gracefully skips `.bin/.hex/CRC` generation when `arm-none-eabi-objcopy` is not found, instead of hard failing link completion
-
-### Validation Notes
-
-- Firmware compiles and links with CMake target for this branch (`MonstaTek_M1_v0802-ChrisUFO.elf`).
-- When `arm-none-eabi-objcopy` is unavailable, CMake emits a warning and skips `.bin/.hex/CRC` generation instead of failing the build.
-
-## [v0.8.0] - 2026-02-05
 
 ### Added
 
@@ -131,9 +105,18 @@ and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 - `m1_csrc/m1_infrared.c`: `infrared_universal_remotes()` now delegates to
   `ir_universal_run()` instead of being a no-op stub
 - `cmake/m1_01/CMakeLists.txt`: added `m1_ir_universal.c` to build
-- Firmware version bumped to build 1 (`FW_VERSION_BUILD 1`)
+- Firmware version bumped to `0.8.1`
+- `ARCHITECTURE.md` updated to reflect fork structure.
 
 ## [v0.8.0] - 2026-02-05
+
+### Added
+
+- Forked from [Monstatek/M1](https://github.com/Monstatek/M1) upstream v0.8.0
+- Initial ChrisUFO fork release
+- STM32H573VIT6 support (2MB Flash, 100LQFP)
+- Hardware revision 2.x support
+- Base firmware with NFC, RFID, Sub-GHz, Infrared, Battery monitoring
 
 ### Added
 
