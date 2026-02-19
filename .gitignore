@@ -45,6 +45,7 @@ logs/
 build_log.txt
 *log.txt
 build_log_*.txt
+review_*.json
 
 # System files
 .DS_Store
@@ -63,4 +64,3 @@ PLAN.md
 
 # AI Rules
 changelog.md
-
