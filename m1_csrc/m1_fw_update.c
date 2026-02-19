@@ -305,13 +305,18 @@ void firmware_update_get_image_file(void)
 	f_info = storage_browse();
 
 	fw_update_status = M1_FW_IMAGE_FILE_TYPE_ERROR; // reset
+	M1_LOG_I(M1_LOGDB_TAG, "FW Update: File selected=%d\r\n", f_info->file_is_selected);
 	if ( f_info->file_is_selected )
 	{
 		do
 		{
 			uret = strlen(f_info->file_name);
+			M1_LOG_I(M1_LOGDB_TAG, "Filename: '%s' (len=%d)\r\n", f_info->file_name, uret);
 			if ( !uret )
+			{
+				M1_LOG_E(M1_LOGDB_TAG, "Error: Empty filename\r\n");
 				break;
+			}
 			ext = 0;
 			while ( uret )
 			{
@@ -319,13 +324,31 @@ void firmware_update_get_image_file(void)
 				if ( f_info->file_name[--uret]=='.' ) // Find the dot
 					break;
 			} // while ( uret )
-			if ( !uret || (ext!=4) ) // ext==length of '.bin'
+			M1_LOG_I(M1_LOGDB_TAG, "Dot found at index %d, ext len=%d\r\n", uret, ext);
+			if ( !uret )
+			{
+				M1_LOG_E(M1_LOGDB_TAG, "Error: No dot in filename\r\n");
 				break;
+			}
+			if ( ext!=4 ) // ext==length of '.bin'
+			{
+				M1_LOG_E(M1_LOGDB_TAG, "Error: Extension len %d != 4\r\n", ext);
+				break;
+			}
+			M1_LOG_I(M1_LOGDB_TAG, "Extension: '%s'\r\n", &f_info->file_name[uret]);
 			if ( strcmp(&f_info->file_name[uret], ".bin" ))
+			{
+				M1_LOG_E(M1_LOGDB_TAG, "Error: Extension is not .bin\r\n");
 				break;
+			}
+			M1_LOG_I(M1_LOGDB_TAG, "File type OK\r\n");
 			fw_update_status = M1_FW_UPDATE_READY;
 		} while (0);
 	} // if ( f_info->file_is_selected )
+	else
+	{
+		M1_LOG_I(M1_LOGDB_TAG, "No file selected\r\n");
+	}
 
 	uret = M1_FW_UPDATE_NOT_READY;
 	do
@@ -343,16 +366,39 @@ void firmware_update_get_image_file(void)
     	m1_u8g2_nextpage(); // Update display RAM
 
         uret = m1_fb_dyn_strcat(pfullpath, 2, "",  f_info->dir_name, f_info->file_name);
+        M1_LOG_I(M1_LOGDB_TAG, "Full path: %s\r\n", pfullpath);
         uret = m1_fb_open_file(&hfile_fw, pfullpath);
+        if ( uret )
+        {
+            M1_LOG_E(M1_LOGDB_TAG, "Failed to open file: %d\r\n", uret);
+        }
+        else
+        {
+            M1_LOG_I(M1_LOGDB_TAG, "File opened successfully\r\n");
+        }
 		if ( !uret )
 		{
 			image_size = f_size(&hfile_fw);
+			M1_LOG_I(M1_LOGDB_TAG, "FW file size: %lu bytes\r\n", image_size);
 		    // Both the address and image size must be aligned to 4 bytes
-		    if ( (!image_size) || (image_size % 4 != 0) || (image_size > (FW_IMAGE_SIZE_MAX + FW_IMAGE_CRC_SIZE)) )
+		    if ( !image_size )
 		    {
+		    	M1_LOG_E(M1_LOGDB_TAG, "Error: File size is zero\r\n");
 		    	uret = M1_FW_IMAGE_SIZE_INVALID;
 		    	break;
-		    } // if ( (!image_size) || (image_size % 4 != 0) || (image_size > (FW_IMAGE_SIZE_MAX + FW_IMAGE_CRC_SIZE) )
+		    }
+		    if ( image_size % 4 != 0 )
+		    {
+		    	M1_LOG_E(M1_LOGDB_TAG, "Error: File size %lu not aligned to 4 bytes\r\n", image_size);
+		    	uret = M1_FW_IMAGE_SIZE_INVALID;
+		    	break;
+		    }
+		    if ( image_size > (FW_IMAGE_SIZE_MAX + FW_IMAGE_CRC_SIZE) )
+		    {
+		    	M1_LOG_E(M1_LOGDB_TAG, "Error: File size %lu exceeds max %lu\r\n", image_size, (uint32_t)(FW_IMAGE_SIZE_MAX + FW_IMAGE_CRC_SIZE));
+		    	uret = M1_FW_IMAGE_SIZE_INVALID;
+		    	break;
+		    }
 
 		    // Call the function to initialize this transaction.
 		    // Do not take the return value in this case. Input data can be anything.

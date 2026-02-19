@@ -18,7 +18,7 @@ The M1 firmware provides support for:
 - **Sub-GHz** (315–915 MHz)
 - **Infrared** (IR transmit/receive) — including **Universal Remote** (this fork)
 - **Battery** monitoring
-- **Display** (ST7586s ERC240160)
+- **Display** (JHD12864-G386BTW, 128x64 pixels, SPI)
 - **USB** (CDC, MSC)
 
 ## Hardware
@@ -79,6 +79,123 @@ python tools/append_crc32.py out/build/gcc-14_2_build-release/MonstaTek_M1_v0801
 | `MonstaTek_M1_v0801-ChrisUFO.bin` | STM32 firmware (includes CRC32) |
 | `MonstaTek_M1_v0801-ChrisUFO.hex` | STM32CubeProgrammer / JLink |
 | `MonstaTek_M1_v0801-ChrisUFO.elf` | Debug sessions |
+
+## Development & Debugging
+
+### Flashing Firmware via ST-Link (Recommended for Development)
+
+For rapid development and debugging, use an ST-Link programmer connected to the M1's GPIO header pins. This avoids repeatedly opening the case to disconnect the battery.
+
+#### ST-Link Connection
+
+Connect to the GPIO header (pins 1-18):
+
+| ST-Link | M1 GPIO Pin | Function |
+|---------|-------------|----------|
+| VCC (3.3V) | Pin 9 (+3.3v) | Power |
+| GND | Pin 8 or 18 (GND) | Ground |
+| SWDIO | Pin 11 (PA13) | Data |
+| SWCLK | Pin 10 (PA14) | Clock |
+
+#### Quick Development Workflow
+
+1. **Connect ST-Link** to GPIO pins
+2. **Connect USB** for power and serial console
+3. **Open serial terminal** (PuTTY/Tera Term) at **9600 baud** - keep open for logs
+4. **Build firmware:**
+   ```bash
+   ./build
+   ```
+5. **Flash with STM32CubeProgrammer:**
+   - Click **"Connect"**
+   - Click **"Open File"** → Select `M1_v*.bin`
+   - Set Address: `0x08000000`
+   - Click **"Program"**
+6. **Reset via ST-Link:**
+   - Click **"Reset"** button in STM32CubeProgrammer
+   - **OR** use CLI command `reboot` in serial terminal
+
+**Pro tip:** Keep the serial terminal open during testing to see debug messages in real-time.
+
+### Serial Console (USB CDC)
+
+The M1 exposes a USB serial console for debugging and control.
+
+**Connection Settings:**
+- **Port:** COM3 (or whatever port the M1 appears as)
+- **Baud Rate:** 9600
+- **Data Bits:** 8
+- **Stop Bits:** 1
+- **Parity:** None
+- **Flow Control:** None
+
+**Terminal Programs:**
+- **Windows:** PuTTY, Tera Term, or Arduino Serial Monitor
+- **Command Line:** `screen /dev/ttyACM0 9600` (Linux/Mac)
+
+### Serial Console Commands
+
+With USB connected and a terminal at **9600 baud**, type `help` for available commands:
+
+**System Commands:**
+- `version` - Show detailed firmware version (e.g., "0.8.2.0-ChrisUFO")
+- `status` - System status, active bank, and build info
+- `reboot` - Software reset (no need to disconnect battery!)
+- `memory` - Show RAM/Flash usage statistics
+- `log` - Display recent debug log messages
+
+**Hardware Status:**
+- `sdcard` - SD card mount status and capacity
+- `wifi` - ESP32 WiFi module status
+- `battery` - Battery level and charging status
+
+**Utility:**
+- `cls` - Clear the terminal screen
+- `mtest` - Multi-purpose test command
+- `help` - List all available commands
+
+**Example Session:**
+```
+cli> version
+M1 Firmware Version:
+  0.8.2.0-ChrisUFO
+
+cli> status
+System Status:
+  Firmware: v0.8.2.0
+  Active Bank: 1
+
+cli> reboot
+Rebooting...
+```
+
+### Troubleshooting with Serial Console
+
+The serial console is invaluable for debugging firmware updates and other issues:
+
+**Debugging Firmware Update Failures:**
+1. Keep the serial terminal open at 9600 baud
+2. Navigate to Settings → Firmware Update → Image file
+3. Select a .bin file
+4. Watch the debug output showing:
+   - Filename validation
+   - File size checks
+   - CRC validation
+   - Error messages if something fails
+
+**Common Debug Messages:**
+```
+FW Update: File selected=1
+Filename: 'M1_v0.8.2-ChrisUFO.bin' (len=22)
+Dot found at index 18, ext len=4
+Extension: '.bin'
+File type OK
+Full path: 0:/M1_v0.8.2-ChrisUFO.bin
+File opened successfully
+FW file size: 1047576 bytes
+```
+
+---
 
 ## Installing Firmware via SD Card
 
@@ -173,6 +290,42 @@ cp -r Flipper-IRDB/TV /path/to/sdcard/IR/
 cp -r Flipper-IRDB/AC /path/to/sdcard/IR/
 ```
 
+**⚠️ Important: Temporary Workaround for Large Categories**
+
+The M1 can currently display a maximum of **32 items per folder** due to memory 
+constraints. Categories with many manufacturers (e.g., TV with 100+) will show
+"IR Error: No Memory".
+
+**Current workaround** - Group manufacturers by starting letter until pagination
+is implemented (see [Issue #14](https://github.com/ChrisUFO/M1/issues/14)):
+
+```
+IR/
+  TV/
+    A/
+      Apple/
+    B/
+      Bose/
+    S/
+      Samsung/
+```
+
+**Quick setup script:**
+
+```bash
+cd Flipper-IRDB/TV
+mkdir -p {A..Z}
+for dir in */; do
+    first_char="${dir:0:1}"
+    if [[ $first_char =~ [A-Z] ]]; then
+        mv "$dir" "$first_char/"
+    fi
+done
+```
+
+> **Note:** This is a temporary workaround. [Issue #14](https://github.com/ChrisUFO/M1/issues/14) 
+> tracks the implementation of pagination which will remove this limitation.
+
 ### Supported IR protocols
 
 NEC, NECext, NEC42, NEC16, RC5, RC5X, RC6, RC6A, Samsung32, Samsung48,
@@ -201,9 +354,11 @@ status, and — for stubs — the estimated effort and pen-testing value of comp
 | Replay | ✅ | Browse SD card files, transmit saved signal |
 | Frequency Reader | ✅ | Scans spectrum, shows strongest frequency |
 | Regional Information | ✅ | Displays regional frequency band info |
-| Radio Settings | ⚠️ | `sub_ghz_radio_settings()` calls `m1_gui_let_update_fw()` — no UI to change modulation, bandwidth, or power |
+| ~~Radio Settings~~ | 🚫 | Function exists but **not in menu** — only 4 items in submenu |
 
-**Stub effort/value:** Radio Settings — *Low effort* (add a settings menu for modulation/BW/power), *High value* (custom modulation needed for some rolling-code attacks and raw captures).
+**Menu Structure:** Sub-GHz → {Record, Replay, Frequency Reader, Regional Information}
+
+**Missing feature:** Radio Settings — Function exists but is not included in the current menu. Adding it would enable custom modulation for rolling-code attacks. *Low effort, High value*.
 
 ---
 
@@ -247,9 +402,9 @@ status, and — for stubs — the estimated effort and pen-testing value of comp
 | Menu Item | Status | Notes |
 |-----------|--------|-------|
 | Scan AP | ✅ | ESP32-C6 scan — shows SSID, BSSID, RSSI, channel, auth type |
-| WiFi Config | ⚠️ | `wifi_config()` calls `m1_gui_let_update_fw()` — no UI to join a network or configure the ESP32 |
+| WiFi Config | ✅ | Join network, manual hidden SSID entry, encrypted saved credentials, status view, disconnect |
 
-**Stub effort/value:** WiFi Config — *Low–Medium effort* (add SSID/password entry, connect command over SPI-AT), *Medium value* (connecting to a network enables HTTP-based attacks and OTA; however the ESP32-C6 SPI-AT firmware already supports `AT+CWJAP`).
+**Implemented:** WiFi Config now supports AP scan selection, manual SSID entry, password entry with show/hide toggle, encrypted credential storage, saved-network management (delete + auto-connect toggle), and status/disconnect flow.
 
 ---
 
@@ -282,10 +437,15 @@ status, and — for stubs — the estimated effort and pen-testing value of comp
 
 | Menu Item | Status | Notes |
 |-----------|--------|-------|
-| About | ✅ | Shows firmware version and device info |
+| Storage | ✅ | SD card management: About, Explore, Mount, Unmount, Format |
+| Power | ✅ | Battery Info, Reboot, Power Off |
+| LCD & Notifications | 🚫 | Menu entry commented out — placeholder only |
+| System | 🚫 | Menu entry commented out — placeholder only |
 | Firmware Update | ✅ | Browse SD card for `.bin`, flash via bootloader |
-| LCD & Notifications | 🚫 | `settings_lcd_and_notifications()` exists but `menu_Settings_LCD_and_Notifications` is **commented out** of the Settings menu array in `m1_menu.c`; function body only shows "LCD..." placeholder text |
-| System | 🚫 | `settings_system()` exists but `menu_Settings_System` is **commented out** of the Settings menu array in `m1_menu.c`; function body only shows "SYSTEM..." placeholder text |
+| ESP32 Update | ✅ | ESP32-C6 WiFi/BT module firmware update via SD card |
+| About | ✅ | Shows firmware version and device info |
+
+**Menu Structure:** Settings → {Storage, Power, Firmware Update, ESP32 Update, About}
 
 **Disabled item effort/value:**
 - **LCD & Notifications** — *Low effort* (re-enable menu entry, implement brightness/contrast/notification LED controls), *Medium value* (quality-of-life; needed before shipping).

@@ -1061,3 +1061,208 @@ uint8_t m1_vkbs_get_data(char *description, char *data_buffer)
 	return len;
 }// uint8_t m1_vkbs_get_data(char *description, char *data_buffer)
 
+
+/*============================================================================*/
+/*
+ * This function displays a polished scrolling character selector for password entry
+ * Returns password length
+ */
+/*============================================================================*/
+uint8_t m1_vkb_get_password(char *description, char *password_buffer, uint8_t max_len)
+{
+	S_M1_Buttons_Status this_button_status;
+	S_M1_Main_Q_t q_item;
+	BaseType_t ret;
+	uint8_t exit_ok = 0;
+	uint8_t password_len = 0;
+	
+	// Character sets for different modes
+	const char* char_sets[] = {
+		"abcdefghijklmnopqrstuvwxyz0123456789",  // Mode 0: lowercase + numbers
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",  // Mode 1: uppercase + numbers
+		"!@#$%^&*()_+-=[]{}|;':\",./<>?"          // Mode 2: special characters
+	};
+
+	uint8_t current_mode = 0;
+	uint8_t char_index = 0;
+	uint8_t max_chars[] = {36, 36, 32};
+	
+	// Track position per mode so switching modes remembers your position
+	uint8_t mode_positions[] = {0, 0, 0};
+	
+	// Show password toggle (long press DOWN)
+	bool show_password = false;
+	
+	if (password_buffer == NULL || max_len == 0)
+		return 0;
+
+	if (max_len > 65)
+		max_len = 65;
+		
+	memset(password_buffer, 0, max_len);
+
+	while (!exit_ok)
+	{
+		m1_u8g2_firstpage();
+		do
+		{
+			// Clear screen - 128x64 display
+			u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
+			u8g2_DrawBox(&m1_u8g2, 0, 0, 128, 64);
+			u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+			
+			// Row 1: Title (y=8)
+			u8g2_SetFont(&m1_u8g2, u8g2_font_5x7_tr);
+			if (description && description[0])
+			{
+				u8g2_DrawStr(&m1_u8g2, 2, 8, description);
+			}
+			else
+			{
+				u8g2_DrawStr(&m1_u8g2, 2, 8, "Password");
+			}
+			
+			// Row 2: Password field box (y=12 to 24)
+			u8g2_DrawFrame(&m1_u8g2, 2, 10, 124, 14);
+			
+			// Password display inside box
+			if (password_len == 0)
+			{
+				u8g2_DrawStr(&m1_u8g2, 6, 20, "(empty)");
+			}
+			else
+			{
+				char display_buffer[17];
+				uint8_t display_len = password_len > 16 ? 16 : password_len;
+				if (show_password) {
+					// Show actual password characters
+					memcpy(display_buffer, password_buffer, display_len);
+				} else {
+					// Show asterisks
+					for (uint8_t i = 0; i < display_len; i++) display_buffer[i] = '*';
+				}
+				display_buffer[display_len] = '\0';
+				u8g2_DrawStr(&m1_u8g2, 6, 20, display_buffer);
+			}
+			
+			// Show password mode indicator (small icon)
+			if (show_password) {
+				u8g2_DrawStr(&m1_u8g2, 108, 20, "S");  // S = showing
+			}
+			
+			// Row 3: Character selector with prev/current/next horizontally aligned
+			// Calculate prev/next indices with wrapping
+			uint8_t prev_index = (char_index == 0) ? (max_chars[current_mode] - 1) : (char_index - 1);
+			uint8_t next_index = (char_index + 1) % max_chars[current_mode];
+			
+			// Current character (large and highlighted) - centered
+			char current_char[2] = {char_sets[current_mode][char_index], '\0'};
+			u8g2_SetFont(&m1_u8g2, u8g2_font_10x20_tr);
+			u8g2_DrawBox(&m1_u8g2, 52, 28, 24, 22);  // Inverted box at y=28-50
+			u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
+			u8g2_DrawStr(&m1_u8g2, 58, 46, current_char);  // Text inside box
+			u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+			
+			// Small prev/next characters beside the current char (same baseline y=46)
+			u8g2_SetFont(&m1_u8g2, u8g2_font_5x7_tr);
+			char prev_char[2] = {char_sets[current_mode][prev_index], '\0'};
+			u8g2_DrawStr(&m1_u8g2, 34, 46, prev_char);
+			char next_char[2] = {char_sets[current_mode][next_index], '\0'};
+			u8g2_DrawStr(&m1_u8g2, 90, 46, next_char);
+			
+			// Row 4: Instructions (y=56 and y=62) - below current char box with gap
+			u8g2_DrawStr(&m1_u8g2, 2, 56, "<>:Char Up/Dn:Mode");
+			if (password_len > 0)
+			{
+				u8g2_DrawStr(&m1_u8g2, 2, 62, "OK:Add  Back:Done");
+			}
+			else
+			{
+				u8g2_DrawStr(&m1_u8g2, 2, 62, "OK:Add  LongOK:Del");
+			}
+			
+			// Password length in corner
+			char len_str[4];
+			sprintf(len_str, "%d", password_len);
+			u8g2_DrawStr(&m1_u8g2, 115, 8, len_str);
+			
+		} while (m1_u8g2_nextpage());
+
+		// Wait for button
+		ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
+		if (ret == pdTRUE && q_item.q_evt_type == Q_EVENT_KEYPAD)
+		{
+			ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+			
+			if (this_button_status.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK)
+			{
+				// Add character
+				if (password_len < max_len - 1)
+				{
+					password_buffer[password_len++] = char_sets[current_mode][char_index];
+					password_buffer[password_len] = '\0';
+				}
+			}
+			else if (this_button_status.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_LCLICK)
+			{
+				// Long press - backspace
+				if (password_len > 0)
+				{
+					password_len--;
+					password_buffer[password_len] = '\0';
+				}
+			}
+			else if (this_button_status.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK)
+			{
+				exit_ok = 1;
+			}
+			else if (this_button_status.event[BUTTON_LEFT_KP_ID] == BUTTON_EVENT_CLICK)
+			{
+				if (char_index > 0)
+					char_index--;
+				else
+					char_index = max_chars[current_mode] - 1;
+			}
+			else if (this_button_status.event[BUTTON_RIGHT_KP_ID] == BUTTON_EVENT_CLICK)
+			{
+				char_index++;
+				if (char_index >= max_chars[current_mode])
+					char_index = 0;
+			}
+			else if (this_button_status.event[BUTTON_UP_KP_ID] == BUTTON_EVENT_CLICK)
+			{
+				// Save current position before switching
+				mode_positions[current_mode] = char_index;
+				// Circular mode switching
+				if (current_mode == 0)
+					current_mode = 2;
+				else
+					current_mode--;
+				// Restore position for new mode (auto-match: 'm'→'M', '5'→'5')
+				// If new mode has fewer chars, cap at max-1
+				char_index = mode_positions[current_mode];
+				if (char_index >= max_chars[current_mode])
+					char_index = max_chars[current_mode] - 1;
+			}
+			else if (this_button_status.event[BUTTON_DOWN_KP_ID] == BUTTON_EVENT_CLICK)
+			{
+				// Save current position before switching
+				mode_positions[current_mode] = char_index;
+				// Circular mode switching
+				current_mode = (current_mode + 1) % 3;
+				// Restore position for new mode (auto-match: 'm'→'M', '5'→'5')
+				// If new mode has fewer chars, cap at max-1
+				char_index = mode_positions[current_mode];
+				if (char_index >= max_chars[current_mode])
+					char_index = max_chars[current_mode] - 1;
+			}
+			else if (this_button_status.event[BUTTON_DOWN_KP_ID] == BUTTON_EVENT_LCLICK)
+			{
+				// Long press DOWN: Toggle show password
+				show_password = !show_password;
+			}
+		}
+	}
+	
+	return password_len;
+}// uint8_t m1_vkb_get_password(char *description, char *password_buffer, uint8_t max_len)

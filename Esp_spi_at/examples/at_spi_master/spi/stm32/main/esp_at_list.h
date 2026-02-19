@@ -31,6 +31,15 @@
 #define ESP32C6_AT_REQ_LIST_AP			"AT+CWLAP"
 #define ESP32C6_AT_RES_LIST_AP_KEY		"+CWLAP:"
 
+// Syntax: AT+CWJAP=<ssid>,<pwd>[,<bssid>][,<pci_en>][,<reconn_interval>][,<listen_interval>][,<scan_mode>][,<jap_timeout>]
+#define ESP32C6_AT_REQ_CONNECT_AP		"AT+CWJAP="
+#define ESP32C6_AT_RES_CONNECT_AP_KEY	"+CWJAP:"
+
+#define ESP32C6_AT_REQ_GET_AP_CONFIG	"AT+CWJAP?"
+#define ESP32C6_AT_REQ_GET_IP_STATUS	"AT+CIPSTA?"
+#define ESP32C6_AT_RES_IP_STATUS_KEY	"+CIPSTA:ip:"
+#define ESP32C6_AT_REQ_DISCONNECT_AP	"AT+CWQAP"
+
 #define ESP32C6_AT_REQ_CRLF				"\r\n"
 
 #define ESP32C6_AT_RES_OK				"OK"

@@ -20,8 +20,18 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release")
 endif()
 
-# Set the project name
-set(CMAKE_PROJECT_NAME MonstaTek_M1_v0801-ChrisUFO)
+# Extract version from m1_fw_update_bl.h
+file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/m1_csrc/m1_fw_update_bl.h VERSION_LINE_MAJOR REGEX "^#define FW_VERSION_MAJOR")
+file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/m1_csrc/m1_fw_update_bl.h VERSION_LINE_MINOR REGEX "^#define FW_VERSION_MINOR")
+file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/m1_csrc/m1_fw_update_bl.h VERSION_LINE_BUILD REGEX "^#define FW_VERSION_BUILD")
+
+string(REGEX MATCH "[0-9]+" FW_VERSION_MAJOR ${VERSION_LINE_MAJOR})
+string(REGEX MATCH "[0-9]+" FW_VERSION_MINOR ${VERSION_LINE_MINOR})
+string(REGEX MATCH "[0-9]+" FW_VERSION_BUILD ${VERSION_LINE_BUILD})
+
+# Set the project name with extracted version (format: v0.8.2)
+set(CMAKE_PROJECT_NAME M1_v${FW_VERSION_MAJOR}.${FW_VERSION_MINOR}.${FW_VERSION_BUILD}-ChrisUFO)
+message(STATUS "Building ${CMAKE_PROJECT_NAME}")
 
 # Include toolchain file
 include("cmake/gcc-arm-none-eabi.cmake")

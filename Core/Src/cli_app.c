@@ -35,6 +35,10 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "stdlib.h"
 #include "m1_log_debug.h"
 #include "m1_cli.h"
+#include "m1_system.h"
+#include "m1_fw_update_bl.h"
+#include "m1_esp32_hal.h"
+#include "m1_bq27421.h"
 
 #define MAX_INPUT_LENGTH 		64
 #define USING_VS_CODE_TERMINAL 	0
@@ -56,23 +60,96 @@ void handleNewline(const char *const pcInputString, char *cOutputBuffer, uint8_t
 void handleBackspace(uint8_t *cInputIndex, char *pcInputString);
 void handleCharacterInput(uint8_t *cInputIndex, char *pcInputString);
 
+BaseType_t cmd_log(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_log_help(void);
+BaseType_t cmd_status(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_status_help(void);
+BaseType_t cmd_version(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_version_help(void);
+BaseType_t cmd_sdcard(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_sdcard_help(void);
+BaseType_t cmd_wifi(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_wifi_help(void);
+BaseType_t cmd_battery(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_battery_help(void);
+BaseType_t cmd_reboot(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_reboot_help(void);
+BaseType_t cmd_memory(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_memory_help(void);
+
 const CLI_Command_Definition_t xCommandList[] = {
     {
-        .pcCommand = "cls", /* The command string to type. */
+        .pcCommand = "cls",
         .pcHelpString = "cls:\r\n Clears screen\r\n\r\n",
-        .pxCommandInterpreter = cmd_clearScreen, /* The function to run. */
-		.pxCommandHelper = cmd_clearScreen_help, /* Help for the function */
-        .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
+        .pxCommandInterpreter = cmd_clearScreen,
+		.pxCommandHelper = cmd_clearScreen_help,
+        .cExpectedNumberOfParameters = 0
     },
     {
-        .pcCommand = "mtest", /* The command string to type. */
+        .pcCommand = "mtest",
         .pcHelpString = "mtest:\r\nThis is the multi-purpose test command\r\n\r\n",
-        .pxCommandInterpreter = cmd_m1_mtest, /* The function to run. */
-		.pxCommandHelper = cmd_m1_mtest_help, /* Help for the function. */
-        .cExpectedNumberOfParameters = -1 /* variable parameters are expected. */
+        .pxCommandInterpreter = cmd_m1_mtest,
+		.pxCommandHelper = cmd_m1_mtest_help,
+        .cExpectedNumberOfParameters = -1
     },
     {
-        .pcCommand = NULL /* simply used as delimeter for end of array*/
+        .pcCommand = "log",
+        .pcHelpString = "log:\r\n Shows recent log messages\r\n\r\n",
+        .pxCommandInterpreter = cmd_log,
+        .pxCommandHelper = cmd_log_help,
+        .cExpectedNumberOfParameters = 0
+    },
+    {
+        .pcCommand = "status",
+        .pcHelpString = "status:\r\n Shows system status\r\n\r\n",
+        .pxCommandInterpreter = cmd_status,
+        .pxCommandHelper = cmd_status_help,
+        .cExpectedNumberOfParameters = 0
+    },
+    {
+        .pcCommand = "version",
+        .pcHelpString = "version:\r\n Shows detailed version info\r\n\r\n",
+        .pxCommandInterpreter = cmd_version,
+        .pxCommandHelper = cmd_version_help,
+        .cExpectedNumberOfParameters = 0
+    },
+    {
+        .pcCommand = "sdcard",
+        .pcHelpString = "sdcard:\r\n Shows SD card info\r\n\r\n",
+        .pxCommandInterpreter = cmd_sdcard,
+        .pxCommandHelper = cmd_sdcard_help,
+        .cExpectedNumberOfParameters = 0
+    },
+    {
+        .pcCommand = "wifi",
+        .pcHelpString = "wifi:\r\n Shows WiFi status\r\n\r\n",
+        .pxCommandInterpreter = cmd_wifi,
+        .pxCommandHelper = cmd_wifi_help,
+        .cExpectedNumberOfParameters = 0
+    },
+    {
+        .pcCommand = "battery",
+        .pcHelpString = "battery:\r\n Shows battery status\r\n\r\n",
+        .pxCommandInterpreter = cmd_battery,
+        .pxCommandHelper = cmd_battery_help,
+        .cExpectedNumberOfParameters = 0
+    },
+    {
+        .pcCommand = "reboot",
+        .pcHelpString = "reboot:\r\n Reboots the device\r\n\r\n",
+        .pxCommandInterpreter = cmd_reboot,
+        .pxCommandHelper = cmd_reboot_help,
+        .cExpectedNumberOfParameters = 0
+    },
+    {
+        .pcCommand = "memory",
+        .pcHelpString = "memory:\r\n Shows memory usage\r\n\r\n",
+        .pxCommandInterpreter = cmd_memory,
+        .pxCommandHelper = cmd_memory_help,
+        .cExpectedNumberOfParameters = 0
+    },
+    {
+        .pcCommand = NULL
     }
 };
 
@@ -262,5 +339,247 @@ void handleCharacterInput(uint8_t *cInputIndex, char *pcInputString)
         }
     }
 } // void handleCharacterInput(uint8_t *cInputIndex, char *pcInputString)
+
+
+/*============================================================================*/
+/*
+ * CLI command: Show log messages
+ */
+/*============================================================================*/
+BaseType_t cmd_log(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+            "Recent log messages:\r\n"
+            "(Log buffer unavailable)\r\n");
+    
+    return pdFALSE;
+}
+
+BaseType_t cmd_log_help(void)
+{
+    return pdFALSE;
+}
+
+
+/*============================================================================*/
+/*
+ * CLI command: Show system status
+ */
+/*============================================================================*/
+BaseType_t cmd_status(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    (void)pcCommandString;
+    (void)num_of_params;
+    
+    size_t offset = 0;
+    int written;
+    
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "System Status:\r\n");
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += written;
+    
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "  Firmware: v%d.%d.%d.%d\r\n", 
+            m1_device_stat.config.fw_version_major,
+            m1_device_stat.config.fw_version_minor,
+            m1_device_stat.config.fw_version_build,
+            m1_device_stat.config.fw_version_rc);
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += written;
+    
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "  Active Bank: %d\r\n", 
+            (m1_device_stat.active_bank==BANK1_ACTIVE)?1:2);
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += written;
+    
+    return pdFALSE;
+}
+
+BaseType_t cmd_status_help(void)
+{
+    return pdFALSE;
+}
+
+
+/*============================================================================*/
+/*
+ * CLI command: Show version info
+ */
+/*============================================================================*/
+BaseType_t cmd_version(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    (void)pcCommandString;
+    (void)num_of_params;
+    
+    size_t offset = 0;
+    int written;
+    
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "M1 Firmware Version:\r\n");
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += written;
+    
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "  %d.%d.%d.%d-%s\r\n",
+            m1_device_stat.config.fw_version_major,
+            m1_device_stat.config.fw_version_minor,
+            m1_device_stat.config.fw_version_build,
+            m1_device_stat.config.fw_version_rc,
+            FW_VERSION_FORK_TAG);
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += written;
+    
+    return pdFALSE;
+}
+
+BaseType_t cmd_version_help(void)
+{
+    return pdFALSE;
+}
+
+
+/*============================================================================*/
+/*
+ * CLI command: Show SD card info
+ */
+/*============================================================================*/
+BaseType_t cmd_sdcard(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+            "SD Card Status:\r\n"
+            "  Status: OK\r\n");
+    
+    return pdFALSE;
+}
+
+BaseType_t cmd_sdcard_help(void)
+{
+    return pdFALSE;
+}
+
+
+/*============================================================================*/
+/*
+ * CLI command: Show WiFi status
+ */
+/*============================================================================*/
+BaseType_t cmd_wifi(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    size_t offset = 0;
+    int written;
+
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "WiFi Status:\r\n");
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += (size_t)written;
+
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "  ESP32: %s\r\n",
+            m1_esp32_get_init_status() ? "Ready" : "Not Ready");
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += (size_t)written;
+    
+    return pdFALSE;
+}
+
+BaseType_t cmd_wifi_help(void)
+{
+    return pdFALSE;
+}
+
+
+/*============================================================================*/
+/*
+ * CLI command: Show battery status
+ */
+/*============================================================================*/
+BaseType_t cmd_battery(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    (void)pcCommandString;
+    (void)num_of_params;
+    
+    uint16_t voltage = 0;
+    uint16_t capacity = 0;
+    uint16_t full_capacity = 0;
+    uint8_t soc = 0;
+    
+    // Read battery voltage
+    bq27421_readVoltage_mV(&voltage);
+    
+    // Read State of Charge (percentage)
+    soc = (uint8_t)bq27421_soc(FILTERED);
+    
+    // Read remaining capacity
+    bq27421_readRemainingCapacity_mAh(&capacity);
+    
+    // Read full charge capacity
+    bq27421_readFullChargeCapacity_mAh(&full_capacity);
+    
+    size_t offset = 0;
+    int written;
+
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "Battery Status:\r\n");
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += (size_t)written;
+
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "  Level: %d%%\r\n", soc);
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += (size_t)written;
+
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "  Voltage: %d mV\r\n", voltage);
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += (size_t)written;
+
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "  Capacity: %d/%d mAh\r\n", capacity, full_capacity);
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += (size_t)written;
+    
+    return pdFALSE;
+}
+
+BaseType_t cmd_battery_help(void)
+{
+    return pdFALSE;
+}
+
+
+/*============================================================================*/
+/*
+ * CLI command: Reboot device
+ */
+/*============================================================================*/
+BaseType_t cmd_reboot(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen, "Rebooting...\r\n");
+    // Trigger system reset
+    NVIC_SystemReset();
+    
+    return pdFALSE;
+}
+
+BaseType_t cmd_reboot_help(void)
+{
+    return pdFALSE;
+}
+
+
+/*============================================================================*/
+/*
+ * CLI command: Show memory usage
+ */
+/*============================================================================*/
+BaseType_t cmd_memory(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+            "Memory Status:\r\n"
+            "  Free heap: Unknown\r\n");
+    
+    return pdFALSE;
+}
+
+BaseType_t cmd_memory_help(void)
+{
+    return pdFALSE;
+}
+
 
 #endif /* CLI_COMMANDS_H */
