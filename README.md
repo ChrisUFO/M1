@@ -76,9 +76,9 @@ python tools/append_crc32.py out/build/gcc-14_2_build-release/MonstaTek_M1_v0802
 
 | File | Use |
 |------|-----|
-| `MonstaTek_M1_v0802-ChrisUFO.bin` | STM32 firmware (includes CRC32) |
-| `MonstaTek_M1_v0802-ChrisUFO.hex` | STM32CubeProgrammer / JLink |
-| `MonstaTek_M1_v0802-ChrisUFO.elf` | Debug sessions |
+| `MonstaTek_M1_v0804-ChrisUFO.bin` | STM32 firmware (includes CRC32) |
+| `MonstaTek_M1_v0804-ChrisUFO.hex` | STM32CubeProgrammer / JLink |
+| `MonstaTek_M1_v0804-ChrisUFO.elf` | Debug sessions |
 
 ## Development & Debugging
 
@@ -283,9 +283,17 @@ stored on the SD card.
 
 Navigate to **Infrared → Universal Remote** on the device.
 
-- Use **Up/Down** to scroll through categories, brands, devices, and commands
-- Press **OK** to transmit the selected IR command
-- Press **Back** to go up a level
+The feature starts with a **Dashboard** offering:
+- **Favorites**: Quick access to pinned remotes.
+- **Recent**: Last 10 used remotes.
+- **Search**: Find remotes by name using the virtual keyboard.
+- **Browse Database**: Traditional folder-based navigation.
+
+**Navigation:**
+- Use **Up/Down** to scroll through menus and lists.
+- Press **OK** to select or transmit.
+- Press **Back** to go up a level.
+- Use **Left/Right** for fast scrolling in long lists.
 
 ### IR database SD card setup
 
@@ -333,41 +341,7 @@ cp -r Flipper-IRDB/TV /path/to/sdcard/IR/
 cp -r Flipper-IRDB/AC /path/to/sdcard/IR/
 ```
 
-**⚠️ Important: Temporary Workaround for Large Categories**
-
-The M1 can currently display a maximum of **32 items per folder** due to memory 
-constraints. Categories with many manufacturers (e.g., TV with 100+) will show
-"IR Error: No Memory".
-
-**Current workaround** - Group manufacturers by starting letter until pagination
-is implemented (see [Issue #14](https://github.com/ChrisUFO/M1/issues/14)):
-
-```
-IR/
-  TV/
-    A/
-      Apple/
-    B/
-      Bose/
-    S/
-      Samsung/
-```
-
-**Quick setup script:**
-
-```bash
-cd Flipper-IRDB/TV
-mkdir -p {A..Z}
-for dir in */; do
-    first_char="${dir:0:1}"
-    if [[ $first_char =~ [A-Z] ]]; then
-        mv "$dir" "$first_char/"
-    fi
-done
-```
-
-> **Note:** This is a temporary workaround. [Issue #14](https://github.com/ChrisUFO/M1/issues/14) 
-> tracks the implementation of pagination which will remove this limitation.
+**The M1 supports virtually unlimited items per folder using **Pagination**. You can browse large categories (like the massive TV database) without issues.
 
 ### Supported IR protocols
 
