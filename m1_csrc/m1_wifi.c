@@ -278,7 +278,7 @@ static uint16_t wifi_ap_list_print(ctrl_cmd_t *app_resp, bool up_dir) {
   if (list[i].ssid[0] == 0x00) // Hidden SSID?
     strcpy(prn_msg, "*hidden*");
   else
-    snprintf(prn_msg, M1_LCD_DISPLAY_WIDTH / M1_GUI_FONT_WIDTH + 1, "%s",
+    snprintf(prn_msg, sizeof(prn_msg), "%s",
              list[i].ssid);
   u8g2_DrawStr(&m1_u8g2, 2, y_offset, prn_msg);
   y_offset += M1_GUI_FONT_HEIGHT;

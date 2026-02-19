@@ -591,10 +591,14 @@ static uint8_t ir_list_dir(const char *path, char names[][IR_NAME_BUF_LEN],
       if (len < 4)
         continue;
 
-      /* Check for .ir extension (case-insensitive) using strcasestr or manual
-       * logic if not available */
+      /* Check for .ir extension (case-insensitive) manual logic */
       const char *ext = strrchr(fi.fname, '.');
-      if (!ext || strcasecmp(ext, ".ir") != 0) {
+      if (!ext || strlen(ext) != 3) { // Should be exactly ".ir"
+        continue;
+      }
+      // Manual case-insensitive comparison for ".ir"
+      if (!((ext[1] == 'i' || ext[1] == 'I') &&
+            (ext[2] == 'r' || ext[2] == 'R'))) {
         continue;
       }
     }
@@ -727,7 +731,7 @@ static bool ir_run_command_ui(const char *file_path, const char *device_name) {
         if (sel < row_offset)
           row_offset = sel;
       }
-      ir_ui_draw_list(device_name, ptrs, dev->count, sel, row_offset);
+      ir_ui_draw_list(dtitle, ptrs, dev->count, sel, row_offset);
       continue;
     }
 
@@ -737,7 +741,7 @@ static bool ir_run_command_ui(const char *file_path, const char *device_name) {
         if (sel >= row_offset + IR_DISP_ROWS)
           row_offset = sel - IR_DISP_ROWS + 1;
       }
-      ir_ui_draw_list(device_name, ptrs, dev->count, sel, row_offset);
+      ir_ui_draw_list(dtitle, ptrs, dev->count, sel, row_offset);
       continue;
     }
 
@@ -867,7 +871,7 @@ static bool ir_browse_level(const char *base_path, const char *title,
           if (sel < row_offset)
             row_offset = sel;
         }
-        ir_ui_draw_list(title, ptrs, count, sel, row_offset);
+        ir_ui_draw_list(btitle, ptrs, count, sel, row_offset);
         continue;
       }
 
@@ -877,7 +881,7 @@ static bool ir_browse_level(const char *base_path, const char *title,
           if (sel >= row_offset + IR_DISP_ROWS)
             row_offset = sel - IR_DISP_ROWS + 1;
         }
-        ir_ui_draw_list(title, ptrs, count, sel, row_offset);
+        ir_ui_draw_list(btitle, ptrs, count, sel, row_offset);
         continue;
       }
 
