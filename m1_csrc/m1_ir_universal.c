@@ -341,8 +341,7 @@ static void ir_add_recent(const char *path) {
   if (!lines)
     return;
 
-  /* Ensure directory exists */
-  f_mkdir("0:/System");
+  /* Ensure directory exists - removed redundant f_mkdir("0:/System") */
 
   /* Read current list */
   fr = f_open(&f, IR_RECENT_FILE, FA_READ | FA_OPEN_ALWAYS);
@@ -506,6 +505,9 @@ static void ir_search_recursive(const char *path, const char *lower_query,
 
   while (f_readdir(&dir, &fi) == FR_OK && fi.fname[0] != '\0' &&
          *count < max_entries) {
+    /* Skip . and .. entries and hidden/system files */
+    if (fi.fname[0] == '.')
+      continue;
     if (fi.fattrib & (AM_HID | AM_SYS))
       continue;
 
@@ -559,10 +561,9 @@ static uint8_t ir_list_dir(const char *path, char names[][IR_NAME_BUF_LEN],
 
   while (1) {
     fr = f_readdir(&dir, &fi);
-    if (fr != FR_OK || fi.fname[0] == '\0')
-      break;
-
-    /* Skip hidden/system entries */
+    /* Skip . and .. entries and hidden/system entries */
+    if (fi.fname[0] == '.')
+      continue;
     if (fi.fattrib & (AM_HID | AM_SYS))
       continue;
 
@@ -575,17 +576,10 @@ static uint8_t ir_list_dir(const char *path, char names[][IR_NAME_BUF_LEN],
       if (len < 4)
         continue;
 
-      /* Check for .ir extension (case-insensitive) */
-      char c1 = fi.fname[len - 2];
-      char c2 = fi.fname[len - 1];
-
-      /* Convert to lowercase for comparison */
-      if (c1 >= 'A' && c1 <= 'Z')
-        c1 += 'a' - 'A';
-      if (c2 >= 'A' && c2 <= 'Z')
-        c2 += 'a' - 'A';
-
-      if (fi.fname[len - 3] != '.' || c1 != 'i' || c2 != 'r') {
+      /* Check for .ir extension (case-insensitive) using strcasestr or manual
+       * logic if not available */
+      const char *ext = strrchr(fi.fname, '.');
+      if (!ext || strcasecmp(ext, ".ir") != 0) {
         continue;
       }
     }
