@@ -1,21 +1,30 @@
 /* See COPYING.txt for license details. */
 
 /*
-*
-* m1_cli.h
-*
-* CLI commands for device testing
-*
-* M1 Project
-*
-*/
+ *
+ * m1_cli.h
+ *
+ * CLI commands for device testing
+ *
+ * M1 Project
+ *
+ */
 #ifndef M1_CLI_H_
 #define M1_CLI_H_
 
-#define MAX_INPUT_LENGTH 		64
+#include "FreeRTOS.h"
+#include "FreeRTOS_CLI.h"
+#include "cmsis_os2.h"
+#include <stddef.h>
+#include <stdint.h>
 
-BaseType_t cmd_m1_mtest(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
-BaseType_t cmd_dfu(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+
+#define MAX_INPUT_LENGTH 64
+
+BaseType_t cmd_m1_mtest(char *pcWriteBuffer, size_t xWriteBufferLen,
+                        const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_dfu(char *pcWriteBuffer, size_t xWriteBufferLen,
+                   const char *pcCommandString, uint8_t num_of_params);
 BaseType_t cmd_dfu_help(void);
 
 extern BaseType_t cmd_m1_mtest_help(void);
