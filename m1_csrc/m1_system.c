@@ -544,7 +544,11 @@ void startup_device_init(void)
     m1_device_stat.sub_func = NULL;
 
     // Read configuration data from device flash
-    memcpy((uint8_t *)&m1_device_stat.config, (uint8_t *)FW_CONFiG_ADDRESS, sizeof(S_M1_FW_CONFIG_t));
+    volatile uint8_t *src = (volatile uint8_t *)FW_CONFiG_ADDRESS;
+    uint8_t *dst = (uint8_t *)&m1_device_stat.config;
+    for (size_t i = 0; i < sizeof(S_M1_FW_CONFIG_t); i++) {
+        dst[i] = src[i];
+    }
 
 	//SBF: System standby flag
 	//This bit is set by hardware and cleared only by a POR or by setting the CSSF bit.

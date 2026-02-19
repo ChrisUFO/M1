@@ -757,7 +757,7 @@ void setting_esp32_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
 		    					if ( !i ) // First boot message
 		    					{
 		    						// Read part of the info message
-		    						strncpy(prn_name, (char *)(pboot_info + msg_id), msg_len - msg_id);
+		    						snprintf(prn_name, sizeof(prn_name), "%.*s", (int)(msg_len - msg_id), (char *)(pboot_info + msg_id));
 		    						m1_info_box_display_draw(INFO_BOX_ROW_2, prn_name);
 		    						i++; // Move to next boot message
 		    					} // if ( !i )
@@ -765,7 +765,7 @@ void setting_esp32_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
 		    					{
 		    						// Read full info message
 		    						msg_len = (msg_len <= GUI_DISP_LINE_LEN_MAX)?msg_len:GUI_DISP_LINE_LEN_MAX;
-		    						strncpy(prn_name, (char *)pboot_info, msg_len);
+		    						snprintf(prn_name, sizeof(prn_name), "%.*s", (int)msg_len, (char *)pboot_info);
 		    						m1_info_box_display_draw(INFO_BOX_ROW_3, prn_name);
 		    						break; // Having read enough info messages, let break
 		    					} // else

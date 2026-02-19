@@ -729,15 +729,20 @@ S_M1_file_info *m1_fb_display(S_M1_Buttons_Status *button_status)
    							}
    							else
    							{
-   								ext_len = strlen(&file_info.fname[len - 1]);
-   								if ( ext_len > 4 ) // the dot (.) + extension
-   									ext_len = 4;
+   								const char *dot = strrchr(file_info.fname, '.');
+                                if (dot) {
+                                    ext_len = strlen(dot);
+                                    if (ext_len > 4) ext_len = 4;
+                                } else {
+                                    ext_len = 0;
+                                }
+
    								if ( len > disp_max_column )
    								{
    	   								strncpy(name, file_info.fname, disp_max_column - 2 - ext_len);
    	   								name[disp_max_column - 2 - ext_len] = 0;
    	   								strcat(name, "..");
-   	   								strcat(name, &file_info.fname[len - 1]);
+   	   								strcat(name, dot ? (dot + strlen(dot) - ext_len) : "");
    								}
    								else
    								{
