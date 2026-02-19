@@ -5,33 +5,32 @@
 #include "stm32h5xx_hal.h"
 #include "ff.h"
 #include "m1_wifi_cred.h"
-
-#define KEY_SIZE 16
+#include "m1_crypto.h"
 
 static wifi_cred_db_t cred_db;
 static bool cred_db_loaded = false;
 
 void wifi_cred_get_key(uint8_t* key, uint8_t len)
 {
-    const uint32_t* uid = (uint32_t*)UID_BASE;
-    for (uint8_t i = 0; i < len; i++) {
-        key[i] = ((uid[0] >> (i * 2)) ^ (uid[1] >> (i * 2 + 1)) ^ (uid[2] >> (i * 2 + 2))) & 0xFF;
-        key[i] ^= 0x4D ^ 0x49 ^ 0x32 ^ 0x35;
-    }
+    m1_crypto_derive_key(key, len);
 }
 
 void wifi_cred_encrypt(const uint8_t* input, uint8_t* output, uint8_t len)
 {
-    uint8_t key[KEY_SIZE];
-    wifi_cred_get_key(key, KEY_SIZE);
-    for (uint8_t i = 0; i < len; i++) {
-        output[i] = input[i] ^ key[i % KEY_SIZE];
-    }
+    uint8_t encrypted[80];  // Max password + IV
+    uint8_t encrypted_len = 0;
+    
+    m1_crypto_encrypt(input, encrypted, len, &encrypted_len);
+    memcpy(output, encrypted, (encrypted_len < 64) ? encrypted_len : 64);
 }
 
 void wifi_cred_decrypt(const uint8_t* input, uint8_t* output, uint8_t len)
 {
-    wifi_cred_encrypt(input, output, len);
+    uint8_t decrypted[80];
+    uint8_t decrypted_len = 0;
+    
+    m1_crypto_decrypt(input, decrypted, len, &decrypted_len);
+    memcpy(output, decrypted, (decrypted_len < 64) ? decrypted_len : 64);
 }
 
 static bool cred_db_load(void)
@@ -62,6 +61,19 @@ static bool cred_db_load(void)
     uint8_t count = header.count;
     if (count > WIFI_MAX_SAVED_NETWORKS) count = WIFI_MAX_SAVED_NETWORKS;
     
+    // Validate checksum (simple sum for now)
+    uint32_t calc_checksum = header.magic + header.version + header.count;
+    for (i = 0; i < count; i++) {
+        for (uint8_t j = 0; j < WIFI_MAX_SSID_LEN; j++) {
+            calc_checksum += cred_db.networks[i].ssid[j];
+        }
+    }
+    if (calc_checksum != header.checksum) {
+        f_close(&file);
+        cred_db.num_networks = 0;
+        return true;  // File corrupted, start fresh
+    }
+    
     for (i = 0; i < count; i++) {
         res = f_read(&file, &cred_db.networks[i], sizeof(wifi_credential_t), &bytes_read);
         if (res != FR_OK || bytes_read != sizeof(wifi_credential_t)) break;
@@ -88,6 +100,14 @@ static bool cred_db_save(void)
     header.version = WIFI_CRED_VERSION;
     header.count = cred_db.num_networks;
     header.reserved = 0;
+    
+    // Calculate checksum
+    header.checksum = header.magic + header.version + header.count;
+    for (uint8_t i = 0; i < cred_db.num_networks; i++) {
+        for (uint8_t j = 0; j < WIFI_MAX_SSID_LEN; j++) {
+            header.checksum += cred_db.networks[i].ssid[j];
+        }
+    }
     
     res = f_write(&file, &header, sizeof(header), &bytes_written);
     if (res != FR_OK || bytes_written != sizeof(header)) {

@@ -42,6 +42,7 @@ typedef struct {
     uint32_t magic;
     uint16_t version;
     uint16_t count;
+    uint32_t checksum;  // CRC32 of header + credentials
     uint32_t reserved;
 } wifi_cred_header_t;
 
