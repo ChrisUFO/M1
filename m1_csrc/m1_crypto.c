@@ -59,6 +59,9 @@ static const uint8_t Rcon[11] = {
 static void SubBytes(uint8_t* state);
 static void ShiftRows(uint8_t* state);
 static void MixColumns(uint8_t* state);
+static void InvSubBytes(uint8_t* state);
+static void InvShiftRows(uint8_t* state);
+static void InvMixColumns(uint8_t* state);
 static void AddRoundKey(uint8_t* state, const uint8_t* roundKey);
 static void KeyExpansion(const uint8_t* key, uint8_t* expandedKey);
 static void XorBlock(uint8_t* out, const uint8_t* a, const uint8_t* b);
@@ -121,20 +124,53 @@ void m1_crypto_derive_key(uint8_t* key, uint8_t len)
 
 /*============================================================================*/
 /**
- * @brief Generate random IV using RNG peripheral or simple counter
+ * @brief Generate random IV using hardware RNG peripheral
  * @param iv: Output buffer (16 bytes)
- */
-/*============================================================================*/
+ * 
+ * NOTE: This implementation uses a fallback until hardware RNG is enabled.
+ * See GitHub Issue #16 for tracking the proper implementation.
+ * 
+ * The fallback combines:
+ * - HAL_GetTick() for time-based entropy
+ * - Device UID for per-device uniqueness
+ * - A counter for additional variation
+ *============================================================================*/
 void m1_crypto_generate_iv(uint8_t* iv)
 {
-	// For now, use a simple counter-based IV
-	// In production, should use HAL_RNG_GetRandomNumber()
-	static uint32_t iv_counter = 0;
+	// TODO: Replace with hardware RNG once HAL_RNG_MODULE_ENABLED is enabled
+	// See GitHub Issue #16: https://github.com/ChrisUFO/M1/issues/16
 	
-	for (uint8_t i = 0; i < M1_CRYPTO_IV_SIZE; i++) {
-		iv[i] = (iv_counter >> (i * 2)) & 0xFF;
-		iv[i] ^= crypto_key[i % M1_CRYPTO_KEY_SIZE];
-	}
+	// Fallback implementation using multiple entropy sources
+	static uint32_t iv_counter = 0;
+	uint32_t tick = HAL_GetTick();
+	uint32_t uid0 = HAL_GetUIDw0();
+	uint32_t uid1 = HAL_GetUIDw1();
+	uint32_t uid2 = HAL_GetUIDw2();
+	
+	// Combine entropy sources
+	// Bytes 0-3: Counter mixed with tick
+	iv[0] = (uint8_t)((iv_counter ^ tick) & 0xFF);
+	iv[1] = (uint8_t)((iv_counter >> 8) ^ (tick >> 8) ^ uid0);
+	iv[2] = (uint8_t)((iv_counter >> 16) ^ (tick >> 16) ^ uid1);
+	iv[3] = (uint8_t)((iv_counter >> 24) ^ (tick >> 24) ^ uid2);
+	
+	// Bytes 4-7: UID0 mixed with counter and tick
+	iv[4] = (uint8_t)(uid0 ^ iv_counter);
+	iv[5] = (uint8_t)((uid0 >> 8) ^ (tick >> 4));
+	iv[6] = (uint8_t)((uid0 >> 16) ^ (tick >> 12));
+	iv[7] = (uint8_t)((uid0 >> 24) ^ (tick >> 20));
+	
+	// Bytes 8-11: UID1 mixed with counter and tick
+	iv[8] = (uint8_t)(uid1 ^ (tick >> 8));
+	iv[9] = (uint8_t)((uid1 >> 8) ^ iv_counter);
+	iv[10] = (uint8_t)((uid1 >> 16) ^ (tick >> 16));
+	iv[11] = (uint8_t)((uid1 >> 24) ^ (tick >> 24));
+	
+	// Bytes 12-15: UID2 mixed with counter and tick
+	iv[12] = (uint8_t)(uid2 ^ (tick >> 4));
+	iv[13] = (uint8_t)((uid2 >> 8) ^ (tick >> 12));
+	iv[14] = (uint8_t)((uid2 >> 16) ^ iv_counter);
+	iv[15] = (uint8_t)((uid2 >> 24) ^ (tick >> 20));
 	
 	iv_counter++;
 }
@@ -258,16 +294,21 @@ bool m1_crypto_decrypt(const uint8_t* input, uint8_t* output, uint8_t input_len,
 		memcpy(curr_cipher, state, M1_CRYPTO_BLOCK_SIZE);
 		
 		// AES decrypt (reverse operations)
+		// Initial round - just AddRoundKey
 		AddRoundKey(state, expandedKey + 14 * 16);
 		
-		for (uint8_t round = 13; round >= 1; round--) {
-			// Inverse operations would go here (simplified)
-			// For now, use a placeholder - full AES implementation needed
-			ShiftRows(state);
-			SubBytes(state);
+		// Main rounds (13 down to 1)
+		for (int round = 13; round >= 1; round--) {
+			InvShiftRows(state);
+			InvSubBytes(state);
 			AddRoundKey(state, expandedKey + round * 16);
-			MixColumns(state);
+			InvMixColumns(state);
 		}
+		
+		// Final round (no InvMixColumns)
+		InvShiftRows(state);
+		InvSubBytes(state);
+		AddRoundKey(state, expandedKey);
 		
 		// XOR with previous ciphertext (CBC mode)
 		XorBlock(output + block * 16, state, prev_cipher);
@@ -354,6 +395,20 @@ static void ShiftRows(uint8_t* state)
 
 
 
+// Galois multiplication in GF(2^8)
+static uint8_t gmul(uint8_t a, uint8_t b)
+{
+	uint8_t p = 0;
+	while (b) {
+		if (b & 1) p ^= a;
+		uint8_t hi = a & 0x80;
+		a <<= 1;
+		if (hi) a ^= 0x1B;  // Reduce by AES polynomial
+		b >>= 1;
+	}
+	return p;
+}
+
 /*============================================================================*/
 /**
  * @brief AES MixColumns transformation
@@ -361,11 +416,106 @@ static void ShiftRows(uint8_t* state)
 /*============================================================================*/
 static void MixColumns(uint8_t* state)
 {
-	// Simplified - full Galois multiplication needed
-	// This is a placeholder
+	for (uint8_t c = 0; c < 4; c++) {
+		uint8_t a0 = state[c * 4 + 0];
+		uint8_t a1 = state[c * 4 + 1];
+		uint8_t a2 = state[c * 4 + 2];
+		uint8_t a3 = state[c * 4 + 3];
+		
+		state[c * 4 + 0] = gmul(a0, 2) ^ gmul(a1, 3) ^ a2 ^ a3;
+		state[c * 4 + 1] = a0 ^ gmul(a1, 2) ^ gmul(a2, 3) ^ a3;
+		state[c * 4 + 2] = a0 ^ a1 ^ gmul(a2, 2) ^ gmul(a3, 3);
+		state[c * 4 + 3] = gmul(a0, 3) ^ a1 ^ a2 ^ gmul(a3, 2);
+	}
 }
 
+// Inverse S-box for decryption
+static const uint8_t inv_sbox[256] = {
+    0x52, 0x09, 0x6a, 0xd5, 0x30, 0x36, 0xa5, 0x38, 0xbf, 0x40, 0xa3, 0x9e, 0x81, 0xf3, 0xd7, 0xfb,
+    0x7c, 0xe3, 0x39, 0x82, 0x9b, 0x2f, 0xff, 0x87, 0x34, 0x8e, 0x43, 0x44, 0xc4, 0xde, 0xe9, 0xcb,
+    0x54, 0x7b, 0x94, 0x32, 0xa6, 0xc2, 0x23, 0x3d, 0xee, 0x4c, 0x95, 0x0b, 0x42, 0xfa, 0xc3, 0x4e,
+    0x08, 0x2e, 0xa1, 0x66, 0x28, 0xd9, 0x24, 0xb2, 0x76, 0x5b, 0xa2, 0x49, 0x6d, 0x8b, 0xd1, 0x25,
+    0x72, 0xf8, 0xf6, 0x64, 0x86, 0x68, 0x98, 0x16, 0xd4, 0xa4, 0x5c, 0xcc, 0x5d, 0x65, 0xb6, 0x92,
+    0x6c, 0x70, 0x48, 0x50, 0xfd, 0xed, 0xb9, 0xda, 0x5e, 0x15, 0x46, 0x57, 0xa7, 0x8d, 0x9d, 0x84,
+    0x90, 0xd8, 0xab, 0x00, 0x8c, 0xbc, 0xd3, 0x0a, 0xf7, 0xe4, 0x58, 0x05, 0xb8, 0xb3, 0x45, 0x06,
+    0xd0, 0x2c, 0x1e, 0x8f, 0xca, 0x3f, 0x0f, 0x02, 0xc1, 0xaf, 0xbd, 0x03, 0x01, 0x13, 0x8a, 0x6b,
+    0x3a, 0x91, 0x11, 0x41, 0x4f, 0x67, 0xdc, 0xea, 0x97, 0xf2, 0xcf, 0xce, 0xf0, 0xb4, 0xe6, 0x73,
+    0x96, 0xac, 0x74, 0x22, 0xe7, 0xad, 0x35, 0x85, 0xe2, 0xf9, 0x37, 0xe8, 0x1c, 0x75, 0xdf, 0x6e,
+    0x47, 0xf1, 0x1a, 0x71, 0x1d, 0x29, 0xc5, 0x89, 0x6f, 0xb7, 0x62, 0x0e, 0xaa, 0x18, 0xbe, 0x1b,
+    0xfc, 0x56, 0x3e, 0x4b, 0xc6, 0xd2, 0x79, 0x20, 0x9a, 0xdb, 0xc0, 0xfe, 0x78, 0xcd, 0x5a, 0xf4,
+    0x1f, 0xdd, 0xa8, 0x33, 0x88, 0x07, 0xc7, 0x31, 0xb1, 0x12, 0x10, 0x59, 0x27, 0x80, 0xec, 0x5f,
+    0x60, 0x51, 0x7f, 0xa9, 0x19, 0xb5, 0x4a, 0x0d, 0x2d, 0xe5, 0x7a, 0x9f, 0x93, 0xc9, 0x9c, 0xef,
+    0xa0, 0xe0, 0x3b, 0x4d, 0xae, 0x2a, 0xf5, 0xb0, 0xc8, 0xeb, 0xbb, 0x3c, 0x83, 0x53, 0x99, 0x61,
+    0x17, 0x2b, 0x04, 0x7e, 0xba, 0x77, 0xd6, 0x26, 0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d
+};
 
+/*============================================================================*/
+/**
+ * @brief AES InvSubBytes transformation (inverse of SubBytes)
+ */
+/*============================================================================*/
+static void InvSubBytes(uint8_t* state)
+{
+	for (uint8_t i = 0; i < 16; i++) {
+		state[i] = inv_sbox[state[i]];
+	}
+}
+
+/*============================================================================*/
+/**
+ * @brief AES InvShiftRows transformation (inverse of ShiftRows)
+ */
+/*============================================================================*/
+static void InvShiftRows(uint8_t* state)
+{
+	uint8_t temp[16];
+	
+	// Row 0: no shift
+	temp[0] = state[0];
+	temp[4] = state[4];
+	temp[8] = state[8];
+	temp[12] = state[12];
+	
+	// Row 1: shift right by 1 (inverse of left by 1)
+	temp[1] = state[13];
+	temp[5] = state[1];
+	temp[9] = state[5];
+	temp[13] = state[9];
+	
+	// Row 2: shift right by 2 (inverse of left by 2)
+	temp[2] = state[10];
+	temp[6] = state[14];
+	temp[10] = state[2];
+	temp[14] = state[6];
+	
+	// Row 3: shift right by 3 (inverse of left by 3)
+	temp[3] = state[7];
+	temp[7] = state[11];
+	temp[11] = state[15];
+	temp[15] = state[3];
+	
+	memcpy(state, temp, 16);
+}
+
+/*============================================================================*/
+/**
+ * @brief AES InvMixColumns transformation (inverse of MixColumns)
+ */
+/*============================================================================*/
+static void InvMixColumns(uint8_t* state)
+{
+	for (uint8_t c = 0; c < 4; c++) {
+		uint8_t a0 = state[c * 4 + 0];
+		uint8_t a1 = state[c * 4 + 1];
+		uint8_t a2 = state[c * 4 + 2];
+		uint8_t a3 = state[c * 4 + 3];
+		
+		state[c * 4 + 0] = gmul(a0, 0x0e) ^ gmul(a1, 0x0b) ^ gmul(a2, 0x0d) ^ gmul(a3, 0x09);
+		state[c * 4 + 1] = gmul(a0, 0x09) ^ gmul(a1, 0x0e) ^ gmul(a2, 0x0b) ^ gmul(a3, 0x0d);
+		state[c * 4 + 2] = gmul(a0, 0x0d) ^ gmul(a1, 0x09) ^ gmul(a2, 0x0e) ^ gmul(a3, 0x0b);
+		state[c * 4 + 3] = gmul(a0, 0x0b) ^ gmul(a1, 0x0d) ^ gmul(a2, 0x09) ^ gmul(a3, 0x0e);
+	}
+}
 
 /*============================================================================*/
 /**

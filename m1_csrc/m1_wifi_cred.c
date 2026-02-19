@@ -15,22 +15,30 @@ void wifi_cred_get_key(uint8_t* key, uint8_t len)
     m1_crypto_derive_key(key, len);
 }
 
-void wifi_cred_encrypt(const uint8_t* input, uint8_t* output, uint8_t len)
+void wifi_cred_encrypt(const uint8_t* input, uint8_t* output, uint8_t len, uint8_t* encrypted_len)
 {
-    uint8_t encrypted[80];  // Max password + IV
-    uint8_t encrypted_len = 0;
+    uint8_t encrypted[WIFI_MAX_PASSWORD_LEN + 32];  // Max password + IV + padding
+    uint8_t out_len = 0;
     
-    m1_crypto_encrypt(input, encrypted, len, &encrypted_len);
-    memcpy(output, encrypted, (encrypted_len < 64) ? encrypted_len : 64);
+    if (m1_crypto_encrypt(input, encrypted, len, &out_len)) {
+        *encrypted_len = out_len;
+        memcpy(output, encrypted, out_len);
+    } else {
+        *encrypted_len = 0;
+    }
 }
 
-void wifi_cred_decrypt(const uint8_t* input, uint8_t* output, uint8_t len)
+void wifi_cred_decrypt(const uint8_t* input, uint8_t* output, uint8_t encrypted_len)
 {
-    uint8_t decrypted[80];
-    uint8_t decrypted_len = 0;
+    uint8_t decrypted[WIFI_MAX_PASSWORD_LEN + 32];
+    uint8_t out_len = 0;
     
-    m1_crypto_decrypt(input, decrypted, len, &decrypted_len);
-    memcpy(output, decrypted, (decrypted_len < 64) ? decrypted_len : 64);
+    if (m1_crypto_decrypt(input, decrypted, encrypted_len, &out_len)) {
+        memcpy(output, decrypted, out_len);
+        output[out_len] = '\0';  // Null terminate
+    } else {
+        output[0] = '\0';
+    }
 }
 
 static bool cred_db_load(void)
@@ -139,13 +147,14 @@ bool wifi_cred_save(const char* ssid, const char* password, int auth_mode)
     if (!ssid || !password) return false;
     if (!cred_db_loaded) cred_db_load();
     
+    m1_crypto_init();  // Ensure crypto is initialized
+    
     for (uint8_t i = 0; i < cred_db.num_networks; i++) {
         if (strcmp(cred_db.networks[i].ssid, ssid) == 0) {
             wifi_credential_t* cred = &cred_db.networks[i];
             uint8_t password_len = strlen(password);
             if (password_len > WIFI_MAX_PASSWORD_LEN) password_len = WIFI_MAX_PASSWORD_LEN;
-            cred->password_len = password_len;
-            wifi_cred_encrypt((const uint8_t*)password, cred->encrypted_password, password_len);
+            wifi_cred_encrypt((const uint8_t*)password, cred->encrypted_password, password_len, &cred->encrypted_len);
             cred->auth_mode = auth_mode;
             cred->last_connected = HAL_GetTick();
             return cred_db_save();
@@ -160,8 +169,7 @@ bool wifi_cred_save(const char* ssid, const char* password, int auth_mode)
     
     uint8_t password_len = strlen(password);
     if (password_len > WIFI_MAX_PASSWORD_LEN) password_len = WIFI_MAX_PASSWORD_LEN;
-    cred->password_len = password_len;
-    wifi_cred_encrypt((const uint8_t*)password, cred->encrypted_password, password_len);
+    wifi_cred_encrypt((const uint8_t*)password, cred->encrypted_password, password_len, &cred->encrypted_len);
     
     cred->auth_mode = auth_mode;
     cred->flags = 0x01;

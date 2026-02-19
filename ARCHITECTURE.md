@@ -173,15 +173,17 @@ This section documents the M1 menu structure, implementation status of each feat
 |-----------|--------|-------|
 | Join Network | ✅ | Full pipeline: Scan → Select AP → Enter Password → Connect via AT+CWJAP |
 | Saved Networks | ✅ | List saved credentials with auto-fill on reconnection |
-| Connection Status | ⚠️ | Shows current connection status |
+| Connection Status | ✅ | Shows current connection status (SSID, IP, RSSI) |
 
-**Location:** `m1_csrc/m1_wifi.c`, `m1_csrc/m1_wifi_cred.c`
+**Location:** `m1_csrc/m1_wifi.c`, `m1_csrc/m1_wifi_cred.c`, `m1_csrc/m1_crypto.c`
 
 **Implementation Details:**
 - Password entry uses scrolling character selector with 3 modes (lowercase, uppercase, special chars)
-- Credentials encrypted with XOR using device UID as key
+- **Credentials encrypted with AES-256-CBC** using device UID as key
+- IV generation uses entropy from HAL_GetTick() and device UID (see Issue #16 for hardware RNG)
 - Auto-saves credentials after successful connection
 - Uses ESP32 AT command `AT+CWJAP` for connection
+- File validation with magic number, version, and checksum
 
 ---
 

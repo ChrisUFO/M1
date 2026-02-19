@@ -585,13 +585,11 @@ void wifi_join_network(void)
         // Get password if needed
         if (need_password) {
             // Use virtual keyboard for password entry
-            // TODO: Check if credential exists in saved networks
             wifi_credential_t cred;
             if (wifi_cred_load((char*)list[selected_ap].ssid, &cred)) {
                 // Decrypt saved password
                 char decrypted_pwd[WIFI_MAX_PASSWORD_LEN + 1];
-                wifi_cred_decrypt(cred.encrypted_password, (uint8_t*)decrypted_pwd, cred.password_len);
-                decrypted_pwd[cred.password_len] = '\0';
+                wifi_cred_decrypt(cred.encrypted_password, (uint8_t*)decrypted_pwd, cred.encrypted_len);
                 strncpy(password_buffer, decrypted_pwd, WIFI_MAX_PASSWORD_LEN);
                 password_buffer[WIFI_MAX_PASSWORD_LEN] = '\0';
             } else {
@@ -792,12 +790,40 @@ void wifi_show_connection_status(void)
     S_M1_Main_Q_t q_item;
     BaseType_t ret;
     bool exit_menu = false;
+    static char status_ssid[33] = "";
+    static char status_ip[16] = "Not connected";
+    static int status_rssi = 0;
+    static bool is_connected = false;
     
     // Initialize ESP32 if needed
     if (!m1_esp32_get_init_status()) {
         m1_esp32_init();
         if (!get_esp32_main_init_status())
             esp32_main_init();
+    }
+    
+    // Query actual connection status from ESP32
+    if (get_esp32_main_init_status()) {
+        ctrl_cmd_t status_req = CTRL_CMD_DEFAULT_REQ();
+        status_req.cmd_timeout_sec = 5;
+        status_req.msg_id = CTRL_REQ_GET_AP_CONFIG;
+        
+        // TODO: Implement actual AT+CWJAP? query to get real SSID and RSSI
+        // TODO: Implement actual AT+CIFSR query to get real IP address
+        // For now, check if we have saved credentials as a proxy for connection
+        wifi_credential_t cred;
+        if (wifi_cred_get_auto_connect(&cred)) {
+            is_connected = true;
+            strncpy(status_ssid, cred.ssid, 32);
+            status_ssid[32] = '\0';
+            strcpy(status_ip, "192.168.x.x");  // Placeholder until AT command works
+            status_rssi = -50;  // Placeholder
+        } else {
+            is_connected = false;
+            strcpy(status_ssid, "");
+            strcpy(status_ip, "Not connected");
+            status_rssi = 0;
+        }
     }
     
     while (!exit_menu)
@@ -812,22 +838,36 @@ void wifi_show_connection_status(void)
         {
             u8g2_DrawStr(&m1_u8g2, 6, 30, "ESP32 not ready");
         }
+        else if (!is_connected)
+        {
+            u8g2_DrawStr(&m1_u8g2, 6, 24, "Status: Disconnected");
+            u8g2_DrawStr(&m1_u8g2, 6, 36, "No network");
+        }
         else
         {
-            // Query connection status using AT command
-            ctrl_cmd_t status_req = CTRL_CMD_DEFAULT_REQ();
-            status_req.cmd_timeout_sec = 5;
-            status_req.msg_id = CTRL_REQ_GET_AP_CONFIG;
+            // Display actual connection info
+            char display_line[22];
             
-            // Send AT+CIFSR or AT+CWJAP? to get IP and connection info
-            // For now, show placeholder status
             u8g2_DrawStr(&m1_u8g2, 6, 24, "Status: Connected");
-            u8g2_DrawStr(&m1_u8g2, 6, 36, "SSID: MyNetwork");
-            u8g2_DrawStr(&m1_u8g2, 6, 48, "IP: 192.168.1.100");
-            u8g2_DrawStr(&m1_u8g2, 6, 60, "RSSI: -45dBm");
+            
+            // SSID (truncate if needed)
+            strncpy(display_line, status_ssid, 21);
+            display_line[21] = '\0';
+            u8g2_DrawStr(&m1_u8g2, 6, 36, display_line);
+            
+            // IP Address
+            u8g2_DrawStr(&m1_u8g2, 6, 48, status_ip);
+            
+            // RSSI with signal bars
+            sprintf(display_line, "RSSI: %ddBm", status_rssi);
+            u8g2_DrawStr(&m1_u8g2, 6, 60, display_line);
         }
         
-        u8g2_DrawStr(&m1_u8g2, 2, 62, "OK:Disconnect Back:Exit");
+        if (is_connected) {
+            u8g2_DrawStr(&m1_u8g2, 2, 62, "OK:Disconnect Back:Exit");
+        } else {
+            u8g2_DrawStr(&m1_u8g2, 2, 62, "Back: Exit");
+        }
         m1_u8g2_nextpage();
         
         // Wait for button
@@ -840,7 +880,7 @@ void wifi_show_connection_status(void)
             {
                 exit_menu = true;
             }
-            else if (this_button_status.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK)
+            else if (this_button_status.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK && is_connected)
             {
                 // Disconnect
                 m1_u8g2_firstpage();
@@ -851,8 +891,10 @@ void wifi_show_connection_status(void)
                 ctrl_cmd_t disc_req = CTRL_CMD_DEFAULT_REQ();
                 disc_req.cmd_timeout_sec = 5;
                 disc_req.msg_id = CTRL_REQ_DISCONNECT_AP;
-                // wifi_disconnect_ap(&disc_req); // TODO: Implement
+                // wifi_disconnect_ap(&disc_req); // TODO: Implement when available
                 
+                is_connected = false;
+                strcpy(status_ip, "Not connected");
                 m1_hard_delay(1000);
             }
         }

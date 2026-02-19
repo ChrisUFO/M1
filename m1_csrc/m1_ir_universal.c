@@ -497,6 +497,10 @@ static bool ir_run_command_ui(const char *file_path, const char *device_name)
  * level 0 = Category, level 1 = Brand, level 2 = Device (.ir file)
  * base_path is the directory to list.
  * Returns true to go back up, false on fatal error.
+ * 
+ * NOTE: This function uses recursion (max depth = 3 levels).
+ * Task stack must be sufficient for 3 nested calls.
+ * Current implementation is safe for the 3-level IR database structure.
  * ---------------------------------------------------------------------- */
 
 static bool ir_browse_level(const char *base_path,

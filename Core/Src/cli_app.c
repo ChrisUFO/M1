@@ -373,17 +373,24 @@ BaseType_t cmd_log_help(void)
 BaseType_t cmd_status(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
 {
     (void)pcCommandString;
-    (void)xWriteBufferLen;
     (void)num_of_params;
     
-    sprintf(pcWriteBuffer, "System Status:\r\n");
-    sprintf(pcWriteBuffer + strlen(pcWriteBuffer), "  Firmware: v%d.%d.%d.%d\r\n", 
+    size_t offset = 0;
+    int written;
+    
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "System Status:\r\n");
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += written;
+    
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "  Firmware: v%d.%d.%d.%d\r\n", 
             m1_device_stat.config.fw_version_major,
             m1_device_stat.config.fw_version_minor,
             m1_device_stat.config.fw_version_build,
             m1_device_stat.config.fw_version_rc);
-    sprintf(pcWriteBuffer + strlen(pcWriteBuffer), "  Active Bank: %d\r\n", 
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += written;
+    
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "  Active Bank: %d\r\n", 
             (m1_device_stat.active_bank==BANK1_ACTIVE)?1:2);
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += written;
     
     return pdFALSE;
 }
@@ -402,16 +409,21 @@ BaseType_t cmd_status_help(void)
 BaseType_t cmd_version(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
 {
     (void)pcCommandString;
-    (void)xWriteBufferLen;
     (void)num_of_params;
     
-    sprintf(pcWriteBuffer, "M1 Firmware Version:\r\n");
-    sprintf(pcWriteBuffer + strlen(pcWriteBuffer), "  %d.%d.%d.%d-%s\r\n",
+    size_t offset = 0;
+    int written;
+    
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "M1 Firmware Version:\r\n");
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += written;
+    
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "  %d.%d.%d.%d-%s\r\n",
             m1_device_stat.config.fw_version_major,
             m1_device_stat.config.fw_version_minor,
             m1_device_stat.config.fw_version_build,
             m1_device_stat.config.fw_version_rc,
             FW_VERSION_FORK_TAG);
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += written;
     
     return pdFALSE;
 }

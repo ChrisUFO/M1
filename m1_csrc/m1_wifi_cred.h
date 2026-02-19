@@ -31,8 +31,8 @@
 
 typedef struct {
     char ssid[WIFI_MAX_SSID_LEN + 1];
-    uint8_t encrypted_password[WIFI_MAX_PASSWORD_LEN];
-    uint8_t password_len;
+    uint8_t encrypted_password[WIFI_MAX_PASSWORD_LEN + 32];  // +16 for IV, +16 for padding
+    uint8_t encrypted_len;      // Length of encrypted data (including IV)
     int auth_mode;
     uint8_t flags;              // bit 0: auto-connect
     uint32_t last_connected;    // timestamp
@@ -74,9 +74,9 @@ bool wifi_cred_get_auto_connect(wifi_credential_t* cred);
 // Set auto-connect flag for a network
 bool wifi_cred_set_auto_connect(const char* ssid, bool auto_connect);
 
-// Encrypt/decrypt password (XOR with device ID)
-void wifi_cred_encrypt(const uint8_t* input, uint8_t* output, uint8_t len);
-void wifi_cred_decrypt(const uint8_t* input, uint8_t* output, uint8_t len);
+// Encrypt/decrypt password using AES-256-CBC
+void wifi_cred_encrypt(const uint8_t* input, uint8_t* output, uint8_t len, uint8_t* encrypted_len);
+void wifi_cred_decrypt(const uint8_t* input, uint8_t* output, uint8_t encrypted_len);
 
 // Get device-specific encryption key
 void wifi_cred_get_key(uint8_t* key, uint8_t len);
