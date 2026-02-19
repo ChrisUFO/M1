@@ -2553,9 +2553,7 @@ static uint8_t sub_ghz_rx_raw_save(bool header_init, bool last_data) {
             subghz_modulation_text[subghz_scan_config.modulation]);
     strcat((char *)pfillbuffer, prn_buffer);
     m1_sdm_fill_buffer(pfillbuffer, strlen((char *)pfillbuffer));
-    if (prn_buffer != NULL)
-      free(prn_buffer);
-    return 0;
+    goto cleanup;
   } // if ( header_init )
 
   sprintf((char *)pfillbuffer, "%s", SUB_GHZ_DATAFILE_DATA_KEYWORD);
@@ -2589,6 +2587,7 @@ static uint8_t sub_ghz_rx_raw_save(bool header_init, bool last_data) {
 
   m1_sdm_fill_buffer(pfillbuffer, strlen((char *)pfillbuffer));
 
+cleanup:
   if (prn_buffer != NULL)
     free(prn_buffer);
   return 0;

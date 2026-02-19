@@ -104,6 +104,7 @@ BaseType_t cmd_m1_mtest(char *pconsole, size_t xWriteBufferLen, const char *pcCo
 	uint8_t i, n_params;
 	char *input_params[INPUT_PARAMS_MAX];
 	BaseType_t input_params_len[INPUT_PARAMS_MAX];
+	char pcCommandStringCopy[64]; // MAX_INPUT_LENGTH from cli_app.c
 
 	if ( num_of_params==0 ) // Help command?
 	{
@@ -120,6 +121,10 @@ BaseType_t cmd_m1_mtest(char *pconsole, size_t xWriteBufferLen, const char *pcCo
 
 	n_params = (num_of_params <= INPUT_PARAMS_MAX)?num_of_params:INPUT_PARAMS_MAX;
 
+    // Copy command string to a mutable buffer for parameter null-termination
+    strncpy(pcCommandStringCopy, pcCommandString, sizeof(pcCommandStringCopy) - 1);
+    pcCommandStringCopy[sizeof(pcCommandStringCopy) - 1] = '\0';
+
 	for (i=0; i<n_params; i++)
 	{
 	    /* Obtain the name of the source file, and the length of its name, from
@@ -127,7 +132,7 @@ BaseType_t cmd_m1_mtest(char *pconsole, size_t xWriteBufferLen, const char *pcCo
 		input_params[i] = (char *)FreeRTOS_CLIGetParameter
 	                        (
 	                          /* The command string itself. */
-	                          pcCommandString,
+	                          pcCommandStringCopy,
 	                          /* Return the i parameter, starting from 1. */
 	                          i + 1,
 	                          /* Store the parameter string length. */
