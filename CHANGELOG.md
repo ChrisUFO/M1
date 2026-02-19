@@ -7,7 +7,21 @@ All notable changes to the M1 project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 
-## [v0.8.2-ChrisUFO] - 2026-02-18
+## [v0.8.3] - 2026-02-19
+
+### Added
+
+- **USB DFU Mode** (`m1_csrc/m1_dfu.c`):
+  - Reboot directly into STM32 ROM USB DFU mode via Settings or CLI.
+  - Confirmation flow for safety.
+  - Architecture documentation updated for DFU flow.
+
+### Fixed
+
+- Buffer overflow build errors in `m1_sub_ghz.c` and `m1_sdcard_man.h`.
+- STM32H573 bootloader address corrected to `0x0BF90000`.
+
+## [v0.8.2] - 2026-02-18
 
 ### Added
 
@@ -58,7 +72,9 @@ and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 
 ### Changed
 
-- Firmware version bumped to build 2 (`FW_VERSION_BUILD 2`)
+### Changed
+
+- Firmware version bumped to `0.8.2`
 - CMakeLists.txt: Automatic version extraction from `m1_fw_update_bl.h`
 - Build script: Fixed false "successful" reporting on build failures
 - Version display: Now shows full version "Version 0.8.2" on splash screen
@@ -70,9 +86,7 @@ and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 - Build script now correctly reports build failures
 - Fixed duplicate function definitions in WiFi modules
 
-## [v0.8.1-ChrisUFO] - 2026-02-17
-
-## [1.0.2-ChrisUFO] - 2026-02-18
+## [v0.8.1] - 2026-02-17
 
 ### Added
 
@@ -87,7 +101,7 @@ and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 
 ### Changed
 
-- Firmware version build bumped to `0.8.2` (`FW_VERSION_BUILD 2`)
+- Firmware version bumped to `0.8.1`
 - `ARCHITECTURE.md` rewritten to match actual repository structure and current firmware update pathways
 - CMake post-build pipeline now gracefully skips `.bin/.hex/CRC` generation when `arm-none-eabi-objcopy` is not found, instead of hard failing link completion
 
@@ -96,7 +110,7 @@ and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 - Firmware compiles and links with CMake target for this branch (`MonstaTek_M1_v0802-ChrisUFO.elf`).
 - When `arm-none-eabi-objcopy` is unavailable, CMake emits a warning and skips `.bin/.hex/CRC` generation instead of failing the build.
 
-## [1.0.1-ChrisUFO] - 2026-02-17
+## [v0.8.0] - 2026-02-05
 
 ### Added
 
