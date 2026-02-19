@@ -390,6 +390,7 @@ void bytes_to_u32_array(BitOrder order, const uint8_t in_data[], uint32_t out_da
 //lfrfid_evt_t sample_data[120];
 void lfrfid_rxThread(void *param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	uint8_t  batch_buf[LFR_TRIGGER_BYTES]; // 10개 분량
 	memset(batch_buf,0,sizeof(batch_buf));
 
@@ -437,6 +438,7 @@ void lfrfid_rxThread(void *param)
 /*============================================================================*/
 void lfrfidThread(void *param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	S_M1_Main_Q_t q_item;
 	BaseType_t ret;
 

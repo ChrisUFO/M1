@@ -230,6 +230,7 @@ static uint16_t bl_flash_if_deinit(void)
   * @retval 0 if operation is successeful, MAL_FAIL else.
   */
 /*============================================================================*/
+#if 0 /* Unused: stub for future work. May need removal later. */
 static uint16_t bl_flash_if_erase(uint32_t add)
 {
 	//uint32_t startsector = 0;
@@ -266,6 +267,7 @@ static uint16_t bl_flash_if_erase(uint32_t add)
 
 	return 0;
 } // static uint16_t bl_flash_if_erase(uint32_t add)
+#endif
 
 
 
@@ -346,6 +348,7 @@ static uint32_t bl_get_sector(uint32_t address)
   * @retval The protection status
   */
 /*============================================================================*/
+#if 0 /* Unused: stub for future work. May need removal later. */
 static uint8_t bl_get_protection_status(void)
 {
     FLASH_OBProgramInitTypeDef OBStruct = {0};
@@ -367,6 +370,7 @@ static uint8_t bl_get_protection_status(void)
 
     return protection;
 } // static uint8_t bl_get_protection_status(void)
+#endif
 
 
 
@@ -377,8 +381,10 @@ static uint8_t bl_get_protection_status(void)
   * @retval BL_CODE_OK if success
   */
 /*============================================================================*/
+#if 0 /* Unused: stub for future work. May need removal later. */
 static uint8_t bl_set_protection_status(uint32_t protection)
 {
+    (void)protection; /* Unused: stub for future work. May need removal later. */
     FLASH_OBProgramInitTypeDef OBStruct = {0};
     HAL_StatusTypeDef status            = HAL_ERROR;
 
@@ -406,6 +412,7 @@ static uint8_t bl_set_protection_status(uint32_t protection)
 
     return (status == HAL_OK) ? BL_CODE_OK : BL_CODE_OBP_ERROR;
 } // static uint8_t bl_set_protection_status(uint32_t protection)
+#endif
 
 
 

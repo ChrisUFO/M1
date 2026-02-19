@@ -164,6 +164,7 @@ static S_M1_file_browser_ext m1_fb_get_file_type(char *filename)
 *
 */
 /******************************************************************************/
+#if 0 /* Unused: stub for future work. May need removal later. */
 static void m1_fb_setframe(uint16_t x, uint16_t y, uint16_t x_width, uint16_t y_height)
 {
 	pfb_hdl->x = x;
@@ -173,6 +174,7 @@ static void m1_fb_setframe(uint16_t x, uint16_t y, uint16_t x_width, uint16_t y_
 
 	fb_gui_check = FALSE; // Reset each time the gui is updated
 } // static void m1_fb_setframe(uint16_t x, uint16_t y, uint16_t x_width, uint16_t y_height)
+#endif
 
 
 
@@ -820,7 +822,10 @@ FRESULT m1_fb_listing(const char *dir_name)
 	char name[FF_MAX_LFN + 1];
 	FRESULT res;
 	DIR directory;
-	FILINFO file_info, this_file;
+	FILINFO file_info;
+#if 0 /* Unused: stub for future work. May need removal later. */
+    FILINFO this_file;
+#endif
 	uint16_t num_of_files;
 	uint16_t count, len;
 	bool flag;

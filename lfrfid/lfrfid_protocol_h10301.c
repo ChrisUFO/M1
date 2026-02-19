@@ -922,6 +922,7 @@ overflow:
 /*============================================================================*/
 void protocol_h10301_decoder_begin(void* proto)
 {
+    (void)proto; /* Unused: stub for future work. May need removal later. */
 	h10301_decoder_init(&g_h10301_dec);
 
     fsk_symbol_state_init(&sym_st);
@@ -952,6 +953,7 @@ bool protocol_h10301_decoder_execute(void* proto, uint16_t size)
 /*============================================================================*/
 bool protocol_h10301_encoder_begin(void* proto)
 {
+    (void)proto; /* Unused: stub for future work. May need removal later. */
     uint8_t output_raw[12];
 
     uint8_t uid[3] = { 0, };
@@ -979,6 +981,7 @@ bool protocol_h10301_encoder_begin(void* proto)
 /*============================================================================*/
 void protocol_h10301encoder_send(void* proto)
 {
+    (void)proto; /* Unused: stub for future work. May need removal later. */
 	lfrfid_encoded_data.index = 0;
 	//lfrfid_emul_length = 128;	// modify
 	lfrfid_emul_hw_init();
@@ -1002,6 +1005,7 @@ void protocol_h10301encoder_send(void* proto)
 /*============================================================================*/
 void protocol_h10301_render_data(void* protocol, char* result)
 {
+    (void)protocol; /* Unused: stub for future work. May need removal later. */
 	uint8_t* data = protocol_h10301_get_data(NULL);
 
     sprintf(
@@ -1024,6 +1028,7 @@ void protocol_h10301_render_data(void* protocol, char* result)
 /*============================================================================*/
 uint8_t* protocol_h10301_get_data(void* proto)
 {
+    (void)proto; /* Unused: stub for future work. May need removal later. */
     return lfrfid_tag_info.uid;
 }
 
@@ -1074,6 +1079,6 @@ void protocol_h10301_write_begin(void* protocol, void *data)
 /*============================================================================*/
 void protocol_h10301_write_send(void* proto)
 {
-
+    (void)proto; /* Unused: stub for future work. May need removal later. */
 	t5577_execute_write(lfrfid_program, 0);
 }

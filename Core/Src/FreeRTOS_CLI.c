@@ -344,6 +344,7 @@ static BaseType_t prvHelpCommand( char * pcWriteBuffer,
     BaseType_t xReturn;
 
     ( void ) pcCommandString;
+    ( void ) num_of_params; /* Unused: stub for future work. May need removal later. */
 
     if( pxCommand == NULL )
     {

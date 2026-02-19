@@ -316,7 +316,10 @@ void firmware_update_get_image_file(void)
 	uint8_t uret, ext, fret;
     uint8_t fw_payload[FW_IMAGE_CHUNK_SIZE];
     size_t count, sum;
-    uint32_t crc32ret, image_size, fwver_old;
+    uint32_t crc32ret, image_size;
+#if 0 /* Unused: stub for future work. May need removal later. */
+    uint32_t fwver_old;
+#endif
     S_M1_FW_CONFIG_t fwconfig;
 
 	f_info = storage_browse();
@@ -694,7 +697,10 @@ void firmware_update_enter_usb_dfu(void)
 /*============================================================================*/
 void firmware_update_JumpTo_BL(void)
 {
-	uint32_t Jump_Address, Bl_Signature;
+	uint32_t Jump_Address;
+#if 0 /* Unused: stub for future work. May need removal later. */
+    uint32_t Bl_Signature;
+#endif
 	pFunction Jump_To_Bl;
 	uint8_t i;
 

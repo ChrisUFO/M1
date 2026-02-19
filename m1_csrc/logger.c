@@ -90,6 +90,7 @@ uint8_t logUsartTx(uint8_t *data, uint16_t dataLen);
   */
 void logUsartInit(UART_HandleTypeDef *husart)
 {
+  (void)husart; /* Unused: stub for future work. May need removal later. */
   //husart->Instance = USART2;
   //husart->Init.BaudRate = 115200;
   //husart->Init.WordLength = UART_WORDLENGTH_8B;
@@ -118,6 +119,8 @@ void logUsartInit(UART_HandleTypeDef *husart)
   */
 uint8_t logUsartTx(uint8_t *data, uint16_t dataLen)
 {
+    (void)data; /* Unused: stub for future work. May need removal later. */
+    (void)dataLen; /* Unused: stub for future work. May need removal later. */
 	return 0;
 //  if(pLogUsart == 0)
 //    return ERR_INVALID_HANDLE;

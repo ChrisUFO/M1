@@ -60,6 +60,7 @@ void vPortSetupTimerInterrupt( void );
 /*============================================================================*/
 void PreSleepProcessing(uint32_t ulExpectedIdleTime)
 {
+    (void)ulExpectedIdleTime; /* Unused: stub for future work. May need removal later. */
 /* place for user code */
 	HAL_SuspendTick();
 	//tick_1 = SYSTICK_CURRENT_VALUE_REG;
@@ -85,6 +86,7 @@ void PreSleepProcessing(uint32_t ulExpectedIdleTime)
 /*============================================================================*/
 void PostSleepProcessing(uint32_t ulExpectedIdleTime)
 {
+    (void)ulExpectedIdleTime; /* Unused: stub for future work. May need removal later. */
 /* place for user code */
 //	HAL_LPTIM_TimeOut_Stop_IT(&hlptim1);
 	//tick_2 = SYSTICK_CURRENT_VALUE_REG;

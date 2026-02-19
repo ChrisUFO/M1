@@ -547,6 +547,7 @@ static void subghz_record_gui_create(uint8_t param) {
  */
 /*============================================================================*/
 static void subghz_record_gui_destroy(uint8_t param) {
+  (void)param; /* Unused: stub for future work. May need removal later. */
   m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF,
                     LED_FASTBLINK_ONTIME_OFF); // Turn off
 } // static void subghz_record_gui_destroy(uint8_t param)
@@ -1007,7 +1008,7 @@ static void subghz_replay_browse_gui_create(uint8_t param) {
  */
 /*============================================================================*/
 static void subghz_replay_browse_gui_destroy(uint8_t param) {
-
+  (void)param; /* Unused: stub for future work. May need removal later. */
 } // static void subghz_replay_browse_gui_destroy(uint8_t param)
 
 /*============================================================================*/
@@ -1018,6 +1019,7 @@ static void subghz_replay_browse_gui_destroy(uint8_t param) {
  */
 /*============================================================================*/
 static void subghz_replay_browse_gui_update(uint8_t param) {
+  (void)param; /* Unused: stub for future work. May need removal later. */
   while (true) {
     f_info = storage_browse();
     if (!f_info->file_is_selected) // User exits?
@@ -1126,7 +1128,7 @@ static void subghz_replay_play_gui_create(uint8_t param) {
  */
 /*============================================================================*/
 static void subghz_replay_play_gui_destroy(uint8_t param) {
-
+  (void)param; /* Unused: stub for future work. May need removal later. */
 } // static void subghz_replay_play_gui_destroy(uint8_t param)
 
 /*============================================================================*/
@@ -2765,6 +2767,7 @@ static uint8_t sub_ghz_fcc_ism_band_check(uint8_t band, uint8_t channel) {
  * @retval None
  */
 /*============================================================================*/
+#if 0 /* Unused: stub for future work. May need removal later. */
 static void sub_ghz_buffer_rotate(S_M1_RingBuffer *prb_handle) {
   uint16_t first, middle, last, next;
   uint16_t swap_val;
@@ -2802,6 +2805,7 @@ static void sub_ghz_buffer_rotate(S_M1_RingBuffer *prb_handle) {
   } // while ( next != first )
 
 } // static void sub_ghz_buffer_rotate(S_M1_RingBuffer *prb_handle)
+#endif
 
 /*============================================================================*/
 /**
@@ -2810,6 +2814,7 @@ static void sub_ghz_buffer_rotate(S_M1_RingBuffer *prb_handle) {
  * @retval None
  */
 /*============================================================================*/
+#if 0 /* Unused: stub for future work. May need removal later. */
 void sub_ghz_display(SubGHz_Dec_Info_t decoded_data) {
   char hexString[64];
   uint32_t value;
@@ -2837,3 +2842,4 @@ void sub_ghz_display(SubGHz_Dec_Info_t decoded_data) {
   subghz_decenc_ctl.subghz_reset_data();
 
 } // void sub_ghz_display(SubGHz_Dec_Info_t decoded_data)
+#endif

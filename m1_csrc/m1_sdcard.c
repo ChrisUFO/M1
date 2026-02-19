@@ -79,9 +79,11 @@ uint8_t 			sdcard_status_changed = 0;
 
 static FATFS 		*sd_pfatfs; 		// Pointer to File system object for user logical drive
 static FRESULT 		sd_fres;  			// Return code for user
+#if 0 /* Unused: stub for future work. May need removal later. */
 static FILINFO 		sd_fno;	  			// Information structure
 static FIL 			sd_file;			// File object for user
 static DIR 			sd_dir;				// Directory object for user
+#endif
 static uint32_t		sd_free_clusters;  	// Free Clusters
 static uint32_t		sd_free_sectors;	// Free Sectors
 static uint32_t		sd_total_sectors;  	// Total Sectors
@@ -798,6 +800,7 @@ static uint8_t m1_sdcard_getcardstate(void)
 /******************************************************************************/
 static DSTATUS m1_sdcard_checkstatus(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	sd_stat = STA_NOINIT;
 
 	if(m1_sdcard_getcardstate()==SD_TRANSFER_OK)
@@ -971,6 +974,7 @@ DSTATUS m1_sdcard_status(uint8_t param)
 /******************************************************************************/
 DRESULT m1_sdcard_read(uint8_t param, uint8_t *buff, DWORD sector, UINT count)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	DRESULT res = RES_ERROR;
 	uint32_t timer;
 	uint16_t event;
@@ -1017,6 +1021,7 @@ DRESULT m1_sdcard_read(uint8_t param, uint8_t *buff, DWORD sector, UINT count)
 /******************************************************************************/
 DRESULT m1_sdcard_write(uint8_t param, const uint8_t *buff, DWORD sector, UINT count)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	DRESULT res = RES_ERROR;
 	uint32_t timer;
 	uint16_t event;
@@ -1061,6 +1066,7 @@ DRESULT m1_sdcard_write(uint8_t param, const uint8_t *buff, DWORD sector, UINT c
 /******************************************************************************/
 DRESULT m1_sdcard_ioctl(uint8_t param, uint8_t cmd, void *buff)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	HAL_SD_CardInfoTypeDef cardinfo;
 	DRESULT res = RES_ERROR;
 
@@ -1130,6 +1136,7 @@ static void m1_sdcard_error_handler(void)
 /*============================================================================*/
 void sdcard_detection_task(void *param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	BaseType_t ret;
 	S_M1_SdCard_Q_t q_item;
 	S_M1_SDCard_Access_Status stat;

@@ -98,6 +98,7 @@ void m1_wdt_init(void)
 /******************************************************************************/
 static void m1_wdt_handler_task(void *param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	static uint32_t run_time = 0;
 
 	M1_LOG_I(M1_LOGDB_TAG, "WDT task started\r\n");

@@ -74,6 +74,7 @@ void NMI_Handler(void)
 {
   /* USER CODE BEGIN NonMaskableInt_IRQn 0 */
     uint32_t eccdr_value = FLASH->ECCDR; // Read ECCDR to clear the NMI
+    (void)eccdr_value; /* Unused: required read to clear hardware flag. May need removal later if logic changes. */
     // if (/* ECCDR indicates uninitialized memory access */)
     if (1) {
         // Clear the specific ECCD flag

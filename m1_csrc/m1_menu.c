@@ -454,6 +454,7 @@ static void menu_main_init(void) {
  */
 /*============================================================================*/
 void menu_main_handler_task(void *param) {
+  (void)param; /* Unused: stub for future work. May need removal later. */
   uint8_t key, sel_item, n_items;
   uint8_t menu_update_stat;
   S_M1_Buttons_Status this_button_status;
@@ -715,6 +716,7 @@ void menu_main_handler_task(void *param) {
  */
 /*============================================================================*/
 void subfunc_handler_task(void *param) {
+  (void)param; /* Unused: stub for future work. May need removal later. */
   while (1) {
     // Waiting for notification from menu_main_handler_task,
     // or from button_event_handler_task

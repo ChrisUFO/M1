@@ -123,6 +123,7 @@ static uint8_t m1_sdm_check_low_sdcard(void)
 static void m1_sdm_main_task(void *argument)
 {
 	BaseType_t ret;
+    (void)ret; /* Unused: stub for future work. May need removal later. */
 	S_M1_SdCardManager_Q_t evt;
 
 	(void)argument;
@@ -795,6 +796,7 @@ uint8_t m1_sdm_fill_buffer(uint8_t *src, uint16_t srcSize)
 /*============================================================================*/
 static void m1_sdm_startup_check(TimerHandle_t xTimer)
 {
+    (void)xTimer; /* Unused: stub for future work. May need removal later. */
 	m1_sdm_task_stop();
 } // static void m1_sdm_startup_check(TimerHandle_t xTimer)
 
@@ -809,6 +811,7 @@ static void m1_sdm_startup_check(TimerHandle_t xTimer)
 /*============================================================================*/
 static void m1_sdm_memory_timer_callback(TimerHandle_t xTimer)
 {
+    (void)xTimer; /* Unused: stub for future work. May need removal later. */
 	S_M1_SdCardManager_Q_t q_item;
 
 	q_item.cmd_opt = M1_SDM_CHECK_SDCARD_USAGE;

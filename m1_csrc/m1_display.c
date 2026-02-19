@@ -644,6 +644,7 @@ uint8_t m1_message_box(u8g2_t *u8g2, const char *title1, const char *title2, con
 /*============================================================================*/
 void m1_draw_bottom_bar(u8g2_t *u8g2, const uint8_t *lbitmap, const char *ltext, const char *rtext, const uint8_t *rbitmap)
 {
+    (void)u8g2; /* Unused: stub for future work. May need removal later. */
 	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
 	u8g2_DrawBox(&m1_u8g2, 0, 52, 128, 12); // Draw an inverted bar at the bottom to display options
 

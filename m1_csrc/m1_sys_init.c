@@ -150,6 +150,7 @@ void m1_system_GPIO_init(void)
 /******************************************************************************/
 void m1_system_init_task(void *param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	while (1)
 	{
 #if ( osCMSIS < 0x20000 )

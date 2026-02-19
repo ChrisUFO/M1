@@ -98,8 +98,8 @@ BaseType_t cmd_m1_mtest(char *pconsole, size_t xWriteBufferLen, const char *pcCo
 	/* Remove compile time warnings about unused parameters, and check the
 	write buffer is not NULL.  NOTE - for simplicity, this example assumes the
 	write buffer length is adequate, so does not check for buffer overflows. */
-	//(void)pcCommandString; // contains the command string
-    //(void)xWriteBufferLen; // contains the length of the write buffer
+	(void)pcCommandString; /* Unused: stub for future work. May need removal later. */
+    (void)xWriteBufferLen; /* Unused: stub for future work. May need removal later. */
 	int32_t cmd_type, temp32;
 	uint8_t i, n_params;
 	char *input_params[INPUT_PARAMS_MAX];
@@ -661,7 +661,9 @@ void cmd_m1_mtest_infrared(char *pconsole, char *input_params[], uint8_t n_param
 	uint8_t force_quit, ret;
 	S_M1_Main_Q_t q_item;
 	IRMP_DATA irmp_data;
+#if 0 /* Unused: stub for future work. May need removal later. */
 	GPIO_InitTypeDef gpio_init_struct;
+#endif
 
 	switch (cmd_type)
 	{
@@ -759,8 +761,10 @@ void ShowRegister(uint8_t reg, uint8_t value)
 /*============================================================================*/
 void cmd_m1_mtest_power(char *pconsole, char *input_params[], uint8_t n_params, uint8_t cmd_type)
 {
+    (void)pconsole; /* Unused: stub for future work. May need removal later. */
 	uint8_t 		reg = 0xff;
 	int				res = -1;
+    (void)res; /* Unused: stub for future work. May need removal later. */
 	if (n_params >=3)
 		reg = (uint8_t)atoi(input_params[2]);
 	switch (cmd_type)
@@ -976,7 +980,9 @@ void cmd_m1_mtest_subghz(char *pconsole, char *input_params[], uint8_t n_params,
 /*============================================================================*/
 void cmd_m1_mtest_esp32(char *pconsole, char *input_params[], uint8_t n_params, uint8_t cmd_type)
 {
+#if 0 /* Unused: stub for future work. May need removal later. */
 	uint32_t input1_val;
+#endif
 	ctrl_cmd_t app_req = CTRL_CMD_DEFAULT_REQ();
 
 	switch (cmd_type)
@@ -1078,8 +1084,10 @@ void cmd_m1_mtest_esp32(char *pconsole, char *input_params[], uint8_t n_params, 
 void cmd_m1_mtest_gpio(char *pconsole, char *input_params[], uint8_t n_params, uint8_t cmd_type)
 {
 	uint32_t input1_val;
+#if 0 /* Unused: stub for future work. May need removal later. */
 	int16_t rssi;
 	uint8_t mode_type;
+#endif
 
 	switch (cmd_type)
 	{
@@ -1121,9 +1129,12 @@ void cmd_m1_mtest_gpio(char *pconsole, char *input_params[], uint8_t n_params, u
 /*============================================================================*/
 void cmd_m1_mtest_nfc(char *pconsole, char *input_params[], uint8_t n_params, uint8_t cmd_type)
 {
+    (void)pconsole; /* Unused: stub for future work. May need removal later. */
+#if 0 /* Unused: stub for future work. May need removal later. */
 	uint32_t input1_val;
 	int16_t rssi;
 	uint8_t mode_type;
+#endif
 
 	M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: NFC - CLI TEST input_params[%s] cmd_type[%d] n_params[%d]\r\n", *input_params, cmd_type, n_params);
 

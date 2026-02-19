@@ -640,7 +640,9 @@ void setting_esp32_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
 {
 	uint8_t i, n_items;
 	uint8_t menu_text_y;
+#if 0 /* Unused: stub for future work. May need removal later. */
 	bool trunc;
+#endif
 	uint8_t prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
 	uint16_t msg_len, msg_id;
 	uint8_t *pboot_info;

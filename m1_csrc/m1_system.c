@@ -84,6 +84,7 @@ void startup_info_screen_display(const char *scr_text);
 /*============================================================================*/
 void system_periodic_task(void *param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
     uint32_t temp, current_tick;
     uint8_t this_button_level, i;
     uint8_t event_change;
@@ -343,6 +344,7 @@ static void send_button_evt_to_queue(void)
 /*============================================================================*/
 void idle_handler_task(void *param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	uint32_t task_val;
 	while(1)
 	{

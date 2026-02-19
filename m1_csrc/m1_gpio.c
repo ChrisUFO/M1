@@ -165,7 +165,9 @@ void menu_gpio_exit(void)
 /******************************************************************************/
 void gpio_manual_control(void)
 {
+#if 0 /* Unused: stub for future work. May need removal later. */
 	GPIO_InitTypeDef GPIO_InitStruct = {0};
+#endif
 	uint8_t prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
 
     m1_ext_gpio_stat[m1_ext_gpio_id] ^= 1; // Toggle
@@ -190,7 +192,9 @@ void gpio_manual_control(void)
 /*============================================================================*/
 void gpio_3_3v_on_gpio(void)
 {
+#if 0 /* Unused: stub for future work. May need removal later. */
 	GPIO_InitTypeDef GPIO_InitStruct = {0};
+#endif
 	uint8_t prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
 
     m1_ext_gpio_stat[0] ^= 1; // Toggle
@@ -221,7 +225,9 @@ void gpio_3_3v_on_gpio(void)
 /*============================================================================*/
 void gpio_5v_on_gpio(void)
 {
+#if 0 /* Unused: stub for future work. May need removal later. */
 	GPIO_InitTypeDef GPIO_InitStruct = {0};
+#endif
 	uint8_t prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
 
     m1_ext_gpio_stat[1] ^= 1; // Toggle
@@ -339,7 +345,9 @@ void gpio_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
 	uint8_t i, n_items;
 	uint8_t menu_text_y;
 	uint8_t prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
+#if 0 /* Unused: stub for future work. May need removal later. */
 	uint16_t msg_len, msg_id;
+#endif
 
 	n_items = phmenu->num_submenu_items;
 	menu_text_y = THIS_LCD_MENU_TEXT_FIRST_ROW_Y;

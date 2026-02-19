@@ -424,6 +424,7 @@ static void lfrfid_read_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_read_destroy(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
 }
 
@@ -613,7 +614,7 @@ static void lfrfid_read_submenu_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_read_submenu_destroy(uint8_t param)
 {
-
+    (void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 /*============================================================================*/
@@ -716,7 +717,7 @@ static void lfrfid_read_save_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_read_save_destroy(uint8_t param)
 {
-
+    (void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 /*============================================================================*/
@@ -728,6 +729,7 @@ static void lfrfid_read_save_destroy(uint8_t param)
 /*============================================================================*/
 static void lfrfid_read_save_update(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	char data_buffer[64];
 	BaseType_t ret;
 	const uint8_t *pBitmap;
@@ -847,6 +849,7 @@ static void lfrfid_read_emulate_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_read_emulate_destroy(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
 }
 
@@ -859,6 +862,7 @@ static void lfrfid_read_emulate_destroy(uint8_t param)
 /*============================================================================*/
 static void lfrfid_read_emulate_update(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	char szString[24];
 	const char* protocol = protocol_get_name(lfrfid_tag_info.protocol);
 	strcpy(szString, protocol);
@@ -987,6 +991,7 @@ static void lfrfid_read_write_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_read_write_destroy(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
 }
 
@@ -1170,6 +1175,7 @@ static int lfrfid_saved_browse_kp_handler(void)
 /*============================================================================*/
 static void lfrfid_saved_browse_create(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	m1_uiView_display_update(0);
 }
 
@@ -1182,7 +1188,7 @@ static void lfrfid_saved_browse_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_browse_destroy(uint8_t param)
 {
-
+    (void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 /*============================================================================*/
@@ -1365,7 +1371,7 @@ static void lfrfid_saved_submenu_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_submenu_destroy(uint8_t param)
 {
-
+    (void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 /*============================================================================*/
@@ -1472,6 +1478,7 @@ static void lfrfid_saved_emulate_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_emulate_destroy(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
 }
 
@@ -1484,6 +1491,7 @@ static void lfrfid_saved_emulate_destroy(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_emulate_update(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	char szString[32];
 	const char* protocol = protocol_get_name(lfrfid_tag_info.protocol);
 	strcpy(szString, protocol);
@@ -1599,6 +1607,7 @@ static void lfrfid_saved_write_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_write_destroy(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
 }
 
@@ -1754,7 +1763,7 @@ static void lfrfid_saved_edit_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_edit_destroy(uint8_t param)
 {
-
+    (void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 /*============================================================================*/
@@ -1766,6 +1775,7 @@ static void lfrfid_saved_edit_destroy(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_edit_update(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	char data_buffer[64];
 	uint8_t data_size;
 	uint8_t val;
@@ -1889,7 +1899,7 @@ static void lfrfid_saved_rename_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_rename_destroy(uint8_t param)
 {
-
+    (void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 /*============================================================================*/
@@ -1901,6 +1911,7 @@ static void lfrfid_saved_rename_destroy(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_rename_update(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	char new_file[64];
 	char old_file[64];
 	BaseType_t ret;
@@ -2040,7 +2051,7 @@ static void lfrfid_saved_delete_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_delete_destroy(uint8_t param)
 {
-
+    (void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 /*============================================================================*/
@@ -2187,7 +2198,7 @@ static void lfrfid_saved_info_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_info_destroy(uint8_t param)
 {
-
+    (void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 /*============================================================================*/
@@ -2199,6 +2210,7 @@ static void lfrfid_saved_info_destroy(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_info_update(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	char *hex;
 	char *fc;
 	char *card_num;
@@ -2361,7 +2373,7 @@ static void lfrfid_addm_submenu_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_addm_submenu_destroy(uint8_t param)
 {
-
+    (void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 /*============================================================================*/
@@ -2470,7 +2482,7 @@ static void lfrfid_addm_edit_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_addm_edit_destroy(uint8_t param)
 {
-
+    (void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 /*============================================================================*/
@@ -2602,7 +2614,7 @@ static void lfrfid_addm_save_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_addm_save_destroy(uint8_t param)
 {
-
+    (void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 /*============================================================================*/
@@ -2614,6 +2626,7 @@ static void lfrfid_addm_save_destroy(uint8_t param)
 /*============================================================================*/
 static void lfrfid_addm_save_update(uint8_t param)
 {
+    (void)param; /* Unused: stub for future work. May need removal later. */
 	char data_buffer[64];
 	BaseType_t ret;
 	const uint8_t *pBitmap;

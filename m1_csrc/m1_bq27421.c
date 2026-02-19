@@ -1499,6 +1499,7 @@ uint8_t bq27421_checkExtendedData(uint8_t offset)
 }
 
 
+#if 0 /* Unused: stub for future work. May need removal later. */
 /*============================================================================*/
 /**
   * @brief
@@ -1520,6 +1521,7 @@ uint8_t bq27421_readExtendedData(uint8_t classID, uint8_t offset)
 
 	bq27421_computeBlockChecksum(); // Compute checksum going in
 	uint8_t oldCsum = bq27421_blockDataChecksum();
+    (void)oldCsum; /* Unused: stub for future work. May need removal later. */
 	/*for (int i=0; i<32; i++)
 		Serial.print(String(readBlockData(i)) + " ");*/
 	retData = bq27421_readBlockData(offset % 32); // Read from offset (limit to 0-31)
@@ -1528,6 +1530,7 @@ uint8_t bq27421_readExtendedData(uint8_t classID, uint8_t offset)
 
 	return retData;
 }
+#endif
 
 
 #if 0

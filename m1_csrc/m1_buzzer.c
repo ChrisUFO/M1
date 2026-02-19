@@ -149,6 +149,7 @@ void buzzer_sys_init(uint16_t frequency)
 /*============================================================================*/
 void buzzer_sys_deinit(TimerHandle_t xTimer)
 {
+    (void)xTimer; /* Unused: stub for future work. May need removal later. */
 	GPIO_InitTypeDef gpio_init_struct;
 
 	HAL_TIM_PWM_Stop(&Timerhdl_Buzzer, BUZZER_TIMER_TX_CHANNEL);
