@@ -451,9 +451,9 @@ void wifi_join_network(void)
     BaseType_t ret;
     ctrl_cmd_t app_req = CTRL_CMD_DEFAULT_REQ();
     uint16_t list_count = 0;
-    static wifi_ap_scan_list_t *w_scan_p = NULL;
-    static wifi_scanlist_t *list = NULL;
-    static uint16_t selected_ap = 0;
+    wifi_ap_scan_list_t *w_scan_p = NULL;
+    wifi_scanlist_t *list = NULL;
+    uint16_t selected_ap = 0;
     bool selecting = false;
     bool connecting = false;
     char password_buffer[WIFI_MAX_PASSWORD_LEN + 1] = {0};
@@ -665,6 +665,7 @@ void wifi_show_saved_networks(void)
     wifi_credential_t networks[WIFI_MAX_SAVED_NETWORKS];
     uint8_t num_networks;
     uint8_t selected = 0;
+    uint8_t row_offset = 0;
     bool exit_menu = false;
     
     // Get list of saved networks
@@ -692,8 +693,12 @@ void wifi_show_saved_networks(void)
             {
                 uint8_t y_pos = 24 + (i * 14);
                 
+                uint8_t idx = row_offset + i;
+                if (idx >= num_networks)
+                    break;
+
                 // Highlight selected
-                if (i == selected)
+                if (idx == selected)
                 {
                     u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
                     u8g2_DrawBox(&m1_u8g2, 0, y_pos - 7, 128, 11);
@@ -702,17 +707,17 @@ void wifi_show_saved_networks(void)
                 
                 // Truncate SSID if too long
                 char display_ssid[22];
-                strncpy(display_ssid, networks[i].ssid, 21);
+                strncpy(display_ssid, networks[idx].ssid, 21);
                 display_ssid[21] = '\0';
                 u8g2_DrawStr(&m1_u8g2, 4, y_pos, display_ssid);
                 
                 // Show auto-connect indicator
-                if (networks[i].flags & 0x01)
+                if (networks[idx].flags & 0x01)
                 {
                     u8g2_DrawStr(&m1_u8g2, 110, y_pos, "*");
                 }
-                
-                if (i == selected)
+
+                if (idx == selected)
                 {
                     u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
                 }
@@ -740,11 +745,17 @@ void wifi_show_saved_networks(void)
                 {
                     if (selected > 0) selected--;
                     else selected = num_networks - 1;
+                    if (selected < row_offset) {
+                        row_offset = selected;
+                    }
                 }
                 else if (this_button_status.event[BUTTON_DOWN_KP_ID] == BUTTON_EVENT_CLICK)
                 {
                     selected++;
                     if (selected >= num_networks) selected = 0;
+                    if (selected >= row_offset + 3) {
+                        row_offset = selected - 2;
+                    }
                 }
                 else if (this_button_status.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK)
                 {
@@ -768,6 +779,7 @@ void wifi_show_saved_networks(void)
                                 wifi_cred_delete(networks[selected].ssid);
                                 num_networks = wifi_cred_list(networks, WIFI_MAX_SAVED_NETWORKS);
                                 if (selected >= num_networks) selected = 0;
+                                if (row_offset > selected) row_offset = selected;
                                 waiting = false;
                             }
                             else if (this_button_status.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK)
@@ -808,16 +820,15 @@ void wifi_show_connection_status(void)
         status_req.cmd_timeout_sec = 5;
         status_req.msg_id = CTRL_REQ_GET_AP_CONFIG;
         
-        // TODO: Implement actual AT+CWJAP? query to get real SSID and RSSI
-        // TODO: Implement actual AT+CIFSR query to get real IP address
-        // For now, check if we have saved credentials as a proxy for connection
+        // Current SPI-AT glue in this tree does not expose AP status queries yet.
+        // Show conservative state based on available local information.
         wifi_credential_t cred;
         if (wifi_cred_get_auto_connect(&cred)) {
             is_connected = true;
             strncpy(status_ssid, cred.ssid, 32);
             status_ssid[32] = '\0';
-            strcpy(status_ip, "192.168.x.x");  // Placeholder until AT command works
-            status_rssi = -50;  // Placeholder
+            strcpy(status_ip, "IP: unknown");
+            status_rssi = 0;
         } else {
             is_connected = false;
             strcpy(status_ssid, "");
@@ -858,8 +869,12 @@ void wifi_show_connection_status(void)
             // IP Address
             u8g2_DrawStr(&m1_u8g2, 6, 48, status_ip);
             
-            // RSSI with signal bars
-            sprintf(display_line, "RSSI: %ddBm", status_rssi);
+            // RSSI unknown until status AT command is implemented in SPI-AT glue
+            if (status_rssi == 0) {
+                strcpy(display_line, "RSSI: unknown");
+            } else {
+                sprintf(display_line, "RSSI: %ddBm", status_rssi);
+            }
             u8g2_DrawStr(&m1_u8g2, 6, 60, display_line);
         }
         

@@ -10,6 +10,38 @@
 static wifi_cred_db_t cred_db;
 static bool cred_db_loaded = false;
 
+static uint32_t cred_crc32(const uint8_t *data, uint32_t len)
+{
+    uint32_t crc = 0xFFFFFFFFu;
+    for (uint32_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (uint8_t b = 0; b < 8; b++) {
+            uint32_t mask = -(crc & 1u);
+            crc = (crc >> 1) ^ (0xEDB88320u & mask);
+        }
+    }
+    return ~crc;
+}
+
+static uint32_t cred_db_checksum(uint16_t count)
+{
+    uint32_t crc = 0xFFFFFFFFu;
+    uint8_t meta[8];
+
+    memcpy(&meta[0], &((uint32_t){WIFI_CRED_MAGIC}), sizeof(uint32_t));
+    memcpy(&meta[4], &((uint16_t){WIFI_CRED_VERSION}), sizeof(uint16_t));
+    memcpy(&meta[6], &count, sizeof(uint16_t));
+
+    uint32_t meta_crc = cred_crc32(meta, sizeof(meta));
+    crc ^= meta_crc;
+
+    uint32_t data_len = (uint32_t)count * (uint32_t)sizeof(wifi_credential_t);
+    uint32_t data_crc = cred_crc32((const uint8_t *)cred_db.networks, data_len);
+    crc ^= data_crc;
+
+    return crc;
+}
+
 void wifi_cred_get_key(uint8_t* key, uint8_t len)
 {
     m1_crypto_derive_key(key, len);
@@ -69,22 +101,18 @@ static bool cred_db_load(void)
     uint8_t count = header.count;
     if (count > WIFI_MAX_SAVED_NETWORKS) count = WIFI_MAX_SAVED_NETWORKS;
     
-    // Validate checksum (simple sum for now)
-    uint32_t calc_checksum = header.magic + header.version + header.count;
-    for (i = 0; i < count; i++) {
-        for (uint8_t j = 0; j < WIFI_MAX_SSID_LEN; j++) {
-            calc_checksum += cred_db.networks[i].ssid[j];
-        }
-    }
-    if (calc_checksum != header.checksum) {
-        f_close(&file);
-        cred_db.num_networks = 0;
-        return true;  // File corrupted, start fresh
-    }
-    
     for (i = 0; i < count; i++) {
         res = f_read(&file, &cred_db.networks[i], sizeof(wifi_credential_t), &bytes_read);
         if (res != FR_OK || bytes_read != sizeof(wifi_credential_t)) break;
+    }
+
+    // Validate checksum over all credential content that was read
+    uint32_t calc_checksum = cred_db_checksum(i);
+    if (calc_checksum != header.checksum) {
+        f_close(&file);
+        cred_db.num_networks = 0;
+        memset(cred_db.networks, 0, sizeof(cred_db.networks));
+        return true;  // Corrupted file, start fresh
     }
     
     cred_db.num_networks = i;
@@ -109,13 +137,8 @@ static bool cred_db_save(void)
     header.count = cred_db.num_networks;
     header.reserved = 0;
     
-    // Calculate checksum
-    header.checksum = header.magic + header.version + header.count;
-    for (uint8_t i = 0; i < cred_db.num_networks; i++) {
-        for (uint8_t j = 0; j < WIFI_MAX_SSID_LEN; j++) {
-            header.checksum += cred_db.networks[i].ssid[j];
-        }
-    }
+    // CRC32 checksum over metadata + full credential records
+    header.checksum = cred_db_checksum(cred_db.num_networks);
     
     res = f_write(&file, &header, sizeof(header), &bytes_written);
     if (res != FR_OK || bytes_written != sizeof(header)) {

@@ -466,12 +466,17 @@ BaseType_t cmd_sdcard_help(void)
 BaseType_t cmd_wifi(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
 {
     (void)pcCommandString;
-    (void)xWriteBufferLen;
     (void)num_of_params;
-    
-    sprintf(pcWriteBuffer, "WiFi Status:\r\n");
-    sprintf(pcWriteBuffer + strlen(pcWriteBuffer), "  ESP32: %s\r\n", 
+
+    size_t offset = 0;
+    int written;
+
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "WiFi Status:\r\n");
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += (size_t)written;
+
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "  ESP32: %s\r\n",
             m1_esp32_get_init_status() ? "Ready" : "Not Ready");
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += (size_t)written;
     
     return pdFALSE;
 }
@@ -490,7 +495,6 @@ BaseType_t cmd_wifi_help(void)
 BaseType_t cmd_battery(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
 {
     (void)pcCommandString;
-    (void)xWriteBufferLen;
     (void)num_of_params;
     
     uint16_t voltage = 0;
@@ -510,10 +514,20 @@ BaseType_t cmd_battery(char *pcWriteBuffer, size_t xWriteBufferLen, const char *
     // Read full charge capacity
     bq27421_readFullChargeCapacity_mAh(&full_capacity);
     
-    sprintf(pcWriteBuffer, "Battery Status:\r\n");
-    sprintf(pcWriteBuffer + strlen(pcWriteBuffer), "  Level: %d%%\r\n", soc);
-    sprintf(pcWriteBuffer + strlen(pcWriteBuffer), "  Voltage: %d mV\r\n", voltage);
-    sprintf(pcWriteBuffer + strlen(pcWriteBuffer), "  Capacity: %d/%d mAh\r\n", capacity, full_capacity);
+    size_t offset = 0;
+    int written;
+
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "Battery Status:\r\n");
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += (size_t)written;
+
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "  Level: %d%%\r\n", soc);
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += (size_t)written;
+
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "  Voltage: %d mV\r\n", voltage);
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += (size_t)written;
+
+    written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset, "  Capacity: %d/%d mAh\r\n", capacity, full_capacity);
+    if (written > 0 && (size_t)written < xWriteBufferLen - offset) offset += (size_t)written;
     
     return pdFALSE;
 }

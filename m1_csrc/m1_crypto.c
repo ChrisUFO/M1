@@ -4,7 +4,7 @@
 *
 * m1_crypto.c
 *
-* Hardware AES encryption using STM32H5 CRYP peripheral
+* Software AES-256-CBC implementation for WiFi credential protection
 *
 * M1 Project
 *
@@ -135,44 +135,37 @@ void m1_crypto_derive_key(uint8_t* key, uint8_t len)
  * - Device UID for per-device uniqueness
  * - A counter for additional variation
  *============================================================================*/
-void m1_crypto_generate_iv(uint8_t* iv)
+bool m1_crypto_generate_iv(uint8_t* iv)
 {
-	// TODO: Replace with hardware RNG once HAL_RNG_MODULE_ENABLED is enabled
-	// See GitHub Issue #16: https://github.com/ChrisUFO/M1/issues/16
-	
-	// Fallback implementation using multiple entropy sources
-	static uint32_t iv_counter = 0;
-	uint32_t tick = HAL_GetTick();
-	uint32_t uid0 = HAL_GetUIDw0();
-	uint32_t uid1 = HAL_GetUIDw1();
-	uint32_t uid2 = HAL_GetUIDw2();
-	
-	// Combine entropy sources
-	// Bytes 0-3: Counter mixed with tick
-	iv[0] = (uint8_t)((iv_counter ^ tick) & 0xFF);
-	iv[1] = (uint8_t)((iv_counter >> 8) ^ (tick >> 8) ^ uid0);
-	iv[2] = (uint8_t)((iv_counter >> 16) ^ (tick >> 16) ^ uid1);
-	iv[3] = (uint8_t)((iv_counter >> 24) ^ (tick >> 24) ^ uid2);
-	
-	// Bytes 4-7: UID0 mixed with counter and tick
-	iv[4] = (uint8_t)(uid0 ^ iv_counter);
-	iv[5] = (uint8_t)((uid0 >> 8) ^ (tick >> 4));
-	iv[6] = (uint8_t)((uid0 >> 16) ^ (tick >> 12));
-	iv[7] = (uint8_t)((uid0 >> 24) ^ (tick >> 20));
-	
-	// Bytes 8-11: UID1 mixed with counter and tick
-	iv[8] = (uint8_t)(uid1 ^ (tick >> 8));
-	iv[9] = (uint8_t)((uid1 >> 8) ^ iv_counter);
-	iv[10] = (uint8_t)((uid1 >> 16) ^ (tick >> 16));
-	iv[11] = (uint8_t)((uid1 >> 24) ^ (tick >> 24));
-	
-	// Bytes 12-15: UID2 mixed with counter and tick
-	iv[12] = (uint8_t)(uid2 ^ (tick >> 4));
-	iv[13] = (uint8_t)((uid2 >> 8) ^ (tick >> 12));
-	iv[14] = (uint8_t)((uid2 >> 16) ^ iv_counter);
-	iv[15] = (uint8_t)((uid2 >> 24) ^ (tick >> 20));
-	
-	iv_counter++;
+    // Best-effort PRNG when hardware RNG is unavailable in this build.
+    // Seed with runtime state + UID so IVs are unique and hard to predict
+    // without device/runtime knowledge.
+    static uint64_t s0 = 0;
+    static uint64_t s1 = 0;
+    static uint32_t init = 0;
+
+    if (!init) {
+        uint64_t uid_mix = ((uint64_t)HAL_GetUIDw0() << 32) ^ HAL_GetUIDw1() ^ ((uint64_t)HAL_GetUIDw2() << 13);
+        uint64_t t = ((uint64_t)HAL_GetTick() << 32) ^ (uintptr_t)&init;
+        s0 = uid_mix ^ 0x9E3779B97F4A7C15ULL;
+        s1 = t ^ 0xBF58476D1CE4E5B9ULL;
+        init = 1;
+    }
+
+    for (uint8_t i = 0; i < M1_CRYPTO_IV_SIZE; i += 8) {
+        // xorshift128+
+        uint64_t x = s0;
+        uint64_t y = s1;
+        s0 = y;
+        x ^= x << 23;
+        s1 = x ^ y ^ (x >> 17) ^ (y >> 26);
+        uint64_t r = s1 + y;
+        for (uint8_t j = 0; j < 8 && (i + j) < M1_CRYPTO_IV_SIZE; j++) {
+            iv[i + j] = (uint8_t)(r >> (j * 8));
+        }
+    }
+
+    return true;
 }
 
 
@@ -193,8 +186,10 @@ bool m1_crypto_encrypt(const uint8_t* input, uint8_t* output, uint8_t input_len,
 		m1_crypto_init();
 	}
 	
-	uint8_t iv[M1_CRYPTO_IV_SIZE];
-	m1_crypto_generate_iv(iv);
+    uint8_t iv[M1_CRYPTO_IV_SIZE];
+    if (!m1_crypto_generate_iv(iv)) {
+        return false;
+    }
 	
 	// Prepend IV to output
 	memcpy(output, iv, M1_CRYPTO_IV_SIZE);
@@ -316,13 +311,22 @@ bool m1_crypto_decrypt(const uint8_t* input, uint8_t* output, uint8_t input_len,
 		memcpy(prev_cipher, curr_cipher, M1_CRYPTO_BLOCK_SIZE);
 	}
 	
-	// Remove PKCS7 padding
-	uint8_t pad_len = output[cipher_len - 1];
-	if (pad_len > 0 && pad_len <= 16) {
-		*output_len = cipher_len - pad_len;
-	} else {
-		*output_len = cipher_len;
-	}
+    // Remove PKCS7 padding in constant-time style.
+    uint8_t pad_len = output[cipher_len - 1];
+    uint8_t bad = (pad_len == 0) | (pad_len > 16);
+    uint8_t check = 0;
+
+    for (uint8_t i = 0; i < 16; i++) {
+        uint8_t mask = (uint8_t)((i < pad_len) ? 0xFF : 0x00);
+        uint8_t b = output[cipher_len - 1 - i];
+        check |= (b ^ pad_len) & mask;
+    }
+
+    if (bad || check != 0) {
+        return false;
+    }
+
+    *output_len = cipher_len - pad_len;
 	
 	return true;
 }

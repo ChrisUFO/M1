@@ -33,7 +33,7 @@
  * Internal constants
  * ---------------------------------------------------------------------- */
 
-#define IR_LIST_MAX_ENTRIES     32   /* max dirs/files shown per level     */
+#define IR_LIST_MAX_ENTRIES     32   /* max dirs/files shown per level; limited for RAM headroom (see issue #14) */
 #define IR_NAME_BUF_LEN         (FF_MAX_LFN + 1)
 #define IR_LINE_BUF_LEN         128  /* max line length in a .ir file      */
 #define IR_DISP_ROWS            6    /* visible rows on 128x64 with 5x8 font */
