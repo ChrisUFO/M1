@@ -38,8 +38,13 @@ if ! command -v arm-none-eabi-gcc &> /dev/null; then
     fi
 fi
 
+# Extract version from header file
+FW_MAJOR=$(grep "FW_VERSION_MAJOR" m1_csrc/m1_fw_update_bl.h | grep -o '[0-9]\+' | head -1)
+FW_MINOR=$(grep "FW_VERSION_MINOR" m1_csrc/m1_fw_update_bl.h | grep -o '[0-9]\+' | head -1)
+FW_BUILD=$(grep "FW_VERSION_BUILD" m1_csrc/m1_fw_update_bl.h | grep -o '[0-9]\+' | head -1)
+
 # Configuration
-PROJECT_NAME="MonstaTek_M1_v0801-ChrisUFO"
+PROJECT_NAME="M1_v${FW_MAJOR}.${FW_MINOR}.${FW_BUILD}-ChrisUFO"
 BUILD_DIR="out/build/gcc-14_2_build-release"
 DIST_DIR="distribution"
 
@@ -73,9 +78,12 @@ fi
 echo ""
 echo "Building firmware..."
 echo "----------------------------------------"
-cmake --build "$BUILD_DIR" --target "$PROJECT_NAME" || true
+if ! cmake --build "$BUILD_DIR" --target "$PROJECT_NAME"; then
+    echo "ERROR: Build failed"
+    exit 1
+fi
 
-# Check if binary was created (cmake may fail on post-build tools but build succeeds)
+# Check if binary was created
 if [ ! -f "$BUILD_DIR/$PROJECT_NAME.bin" ]; then
     echo "ERROR: Build failed - .bin file not found"
     exit 1

@@ -27,20 +27,13 @@
 
 /* ######################################### Data Types ############################################# */
 
-typedef enum {
-    WIFI_AUTH_OPEN = 0,
-    WIFI_AUTH_WEP,
-    WIFI_AUTH_WPA,
-    WIFI_AUTH_WPA2,
-    WIFI_AUTH_WPA3,
-    WIFI_AUTH_UNKNOWN
-} wifi_auth_mode_t;
+// Use wifi_auth_mode_e from ctrl_api.h
 
 typedef struct {
     char ssid[WIFI_MAX_SSID_LEN + 1];
     uint8_t encrypted_password[WIFI_MAX_PASSWORD_LEN];
     uint8_t password_len;
-    wifi_auth_mode_t auth_mode;
+    int auth_mode;
     uint8_t flags;              // bit 0: auto-connect
     uint32_t last_connected;    // timestamp
 } wifi_credential_t;
@@ -63,7 +56,7 @@ typedef struct {
 void wifi_cred_init(void);
 
 // Save credential to SD card
-bool wifi_cred_save(const char* ssid, const char* password, wifi_auth_mode_t auth_mode);
+bool wifi_cred_save(const char* ssid, const char* password, int auth_mode);
 
 // Load credential by SSID
 bool wifi_cred_load(const char* ssid, wifi_credential_t* cred);

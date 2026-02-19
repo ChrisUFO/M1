@@ -18,7 +18,7 @@ The M1 firmware provides support for:
 - **Sub-GHz** (315–915 MHz)
 - **Infrared** (IR transmit/receive) — including **Universal Remote** (this fork)
 - **Battery** monitoring
-- **Display** (ST7586s ERC240160)
+- **Display** (JHD12864-G386BTW, 128x64 pixels, SPI)
 - **USB** (CDC, MSC)
 
 ## Hardware

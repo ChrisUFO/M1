@@ -76,6 +76,32 @@ This tag appears in:
 
 ---
 
+## Hardware Specifications
+
+### Display
+
+The M1 uses a **JHD12864-G386BTW** monochrome LCD module:
+
+| Specification | Value |
+|--------------|-------|
+| Resolution | **128 x 64 pixels** |
+| Interface | SPI (hspi1) |
+| Controller | ST7586S |
+| Pins | MOSI (PA7), MISO (PA6), CLK (PA5), CS (PA3) |
+
+**Display Coordinates:**
+- Origin (0, 0) is at the **top-left** corner
+- X ranges: 0 to 127 (128 pixels wide)
+- Y ranges: 0 to 63 (64 pixels tall)
+
+**Important:** When implementing UI screens, ensure all elements fit within these bounds. For example, a text element at y=100 would be off-screen since the display only has 64 vertical pixels.
+
+**Key Defines:**
+- `M1_LCD_DISPLAY_WIDTH` = 128 (in `m1_lcd.h`)
+- `M1_LCD_DISPLAY_HEIGHT` = 64 (in `m1_lcd.h`)
+
+---
+
 ## Menu Structure & Feature Status
 
 This section documents the M1 menu structure, implementation status of each feature, and development priorities.
@@ -145,10 +171,17 @@ This section documents the M1 menu structure, implementation status of each feat
 
 | Menu Item | Status | Notes |
 |-----------|--------|-------|
-| Scan AP | ✅ | ESP32-C6 scan — shows SSID, BSSID, RSSI, channel, auth type |
-| WiFi Config | ⚠️ | `wifi_config()` — stub implementation, credential storage exists |
+| Join Network | ✅ | Full pipeline: Scan → Select AP → Enter Password → Connect via AT+CWJAP |
+| Saved Networks | ✅ | List saved credentials with auto-fill on reconnection |
+| Connection Status | ⚠️ | Shows current connection status |
 
-**Location:** `m1_csrc/m1_wifi.c`
+**Location:** `m1_csrc/m1_wifi.c`, `m1_csrc/m1_wifi_cred.c`
+
+**Implementation Details:**
+- Password entry uses scrolling character selector with 3 modes (lowercase, uppercase, special chars)
+- Credentials encrypted with XOR using device UID as key
+- Auto-saves credentials after successful connection
+- Uses ESP32 AT command `AT+CWJAP` for connection
 
 ---
 

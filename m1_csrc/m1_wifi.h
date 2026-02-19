@@ -21,4 +21,10 @@ void menu_wifi_init(void);
 void wifi_scan_ap(void);
 void wifi_config(void);
 
+// WiFi credential functions (stubs for now)
+void wifi_cred_init(void);
+void wifi_join_network(void);
+void wifi_show_saved_networks(void);
+void wifi_show_connection_status(void);
+
 #endif /* M1_WIFI_H_ */

@@ -114,7 +114,7 @@ void wifi_cred_init(void)
     cred_db_load();
 }
 
-bool wifi_cred_save(const char* ssid, const char* password, wifi_auth_mode_t auth_mode)
+bool wifi_cred_save(const char* ssid, const char* password, int auth_mode)
 {
     if (!ssid || !password) return false;
     if (!cred_db_loaded) cred_db_load();

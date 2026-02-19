@@ -652,6 +652,83 @@ uint8_t wifi_ap_scan_list(ctrl_cmd_t *app_req)
 
 
 
+uint8_t wifi_connect_ap(ctrl_cmd_t *app_req)
+{
+	char *rx_buf = NULL;
+	char *resp_buf = NULL;
+	int rx_buf_len = 0;
+	uint32_t rx_uid;
+	uint8_t ret;
+	uint32_t tick_t0, tick_pass;
+	char connect_cmd[128];
+	
+	tick_t0 = HAL_GetTick();
+	esp_queue_reset(ctrl_msg_Q);
+	
+	// Build connect command: AT+CWJAP="ssid","pwd"
+	const char* ssid = (const char*)app_req->u.wifi_ap_config.ssid;
+	const char* pwd = (const char*)app_req->u.wifi_ap_config.pwd;
+	
+	if (pwd && strlen(pwd) > 0) {
+		snprintf(connect_cmd, sizeof(connect_cmd), "AT+CWJAP=\"%s\",\"%s\"\r\n", ssid, pwd);
+	} else {
+		snprintf(connect_cmd, sizeof(connect_cmd), "AT+CWJAP=\"%s\"\r\n", ssid);
+	}
+	
+	app_req->at_cmd = strdup(connect_cmd);
+	app_req->cmd_resp = strdup(ESP32C6_AT_RES_OK);
+	app_req->cmd_len = strlen(app_req->at_cmd);
+	
+	ret = spi_AT_app_send_command(app_req);
+	if (ret == SUCCESS) {
+		ret = ERROR;
+		while (true) {
+			tick_pass = HAL_GetTick() - tick_t0;
+			tick_pass /= MILLISEC_TO_SEC;
+			if (tick_pass) {
+				tick_t0 += MILLISEC_TO_SEC;
+				if (app_req->cmd_timeout_sec > tick_pass) {
+					app_req->cmd_timeout_sec -= tick_pass;
+				} else {
+					break; // Timeout
+				}
+			}
+			esp_free_mem(&resp_buf);
+			rx_buf = spi_AT_app_get_response(&rx_buf_len, &rx_uid, app_req->cmd_timeout_sec);
+			resp_buf = rx_buf;
+			rx_buf = m1_resp_string_strip(rx_buf, CR_LF);
+			if (!rx_buf)
+				continue;
+			if (rx_uid != current_uid)
+				continue;
+			if (strcmp(rx_buf, app_req->cmd_resp) == 0) {
+				ret = SUCCESS;
+				break;
+			}
+			// Check for error response
+			if (strstr(rx_buf, "ERROR") || strstr(rx_buf, "FAIL")) {
+				ret = ERROR;
+				break;
+			}
+		}
+	}
+	
+	esp_free_mem(&resp_buf);
+	esp_free_mem(&app_req->at_cmd);
+	esp_free_mem(&app_req->cmd_resp);
+	
+	if (ret == SUCCESS) {
+		app_req->msg_type = CTRL_RESP;
+		app_req->resp_event_status = SUCCESS;
+	} else {
+		M1_LOG_E(TAG, "WiFi connect failed\r\n");
+	}
+	
+	return ret;
+} // uint8_t wifi_connect_ap(ctrl_cmd_t *app_req)
+
+
+
 uint8_t ble_scan_list(ctrl_cmd_t *app_req)
 {
 	char *rx_buf = NULL;
