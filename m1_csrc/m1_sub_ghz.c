@@ -390,14 +390,21 @@ void menu_sub_ghz_exit(void) {
 
 void subghz_rx_dma_restart_from_isr(void) {
   uint32_t bndt;
+  uint32_t timeout = 10000U;
 
   if (hdma_subghz_rx.Instance == NULL) {
     return;
   }
 
   __HAL_DMA_DISABLE(&hdma_subghz_rx);
-  while ((hdma_subghz_rx.Instance->CCR & DMA_CCR_EN) != 0U) {
+  while (((hdma_subghz_rx.Instance->CCR & DMA_CCR_EN) != 0U) &&
+         (timeout > 0U)) {
+    timeout--;
+  }
+  if (timeout == 0U) {
+    subghz_rx_queue_drop_count++;
     ;
+    return;
   }
 
   bndt = (uint32_t)(SUBGHZ_RX_DMA_BUFFER_SAMPLES * sizeof(uint32_t));
@@ -796,6 +803,10 @@ static void subghz_rx_dma_process_blocks(void) {
 
       if (pulse_width > 0xFFFFU) {
         pulse_width = 0xFFFFU;
+      }
+      if (ringbuffer_get_empty_slots(&subghz_rx_rawdata_rb) == 0U) {
+        subghz_rx_queue_drop_count++;
+        continue;
       }
       pulse16 = (uint16_t)pulse_width;
       m1_ringbuffer_insert(&subghz_rx_rawdata_rb, (uint8_t *)&pulse16);

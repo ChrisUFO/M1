@@ -65,6 +65,7 @@ static FILINFO ir_search_fis[IR_MAX_RECURSION_DEPTH + 1];
 static char ir_search_full_paths[IR_MAX_RECURSION_DEPTH + 1]
                                 [IR_UNIVERSAL_PATH_LEN_MAX];
 static char ir_search_lower_names[IR_MAX_RECURSION_DEPTH + 1][IR_NAME_BUF_LEN];
+static bool ir_search_io_error = false;
 
 #define IR_UI_FEEDBACK_MS_SHORT 800
 #define IR_UI_FEEDBACK_MS_DEFAULT 1500
@@ -124,12 +125,26 @@ static char *ir_trim(char *s) {
 }
 
 static bool ir_workspace_lock(void) {
+  SemaphoreHandle_t created = NULL;
+
   if (ir_universal_mutex == NULL) {
+    created = xSemaphoreCreateMutex();
+    if (created == NULL) {
+      return false;
+    }
+
     taskENTER_CRITICAL();
     if (ir_universal_mutex == NULL) {
-      ir_universal_mutex = xSemaphoreCreateMutex();
+      __DSB();
+      __ISB();
+      ir_universal_mutex = created;
+      created = NULL;
     }
     taskEXIT_CRITICAL();
+
+    if (created != NULL) {
+      vSemaphoreDelete(created);
+    }
   }
   if (ir_universal_mutex == NULL) {
     return false;
@@ -544,10 +559,21 @@ static void ir_search_recursive(const char *path, const char *lower_query,
   lower_name = ir_search_lower_names[depth];
 
   if (f_opendir(dir, path) != FR_OK)
+  {
+    ir_search_io_error = true;
     return;
+  }
 
-  while (f_readdir(dir, fi) == FR_OK && fi->fname[0] != '\0' &&
-         *count < max_entries) {
+  while (*count < max_entries) {
+    FRESULT fr = f_readdir(dir, fi);
+    if (fr != FR_OK) {
+      ir_search_io_error = true;
+      break;
+    }
+    if (fi->fname[0] == '\0') {
+      break;
+    }
+
     /* Skip . and .. entries and hidden/system files */
     if (fi->fname[0] == '.')
       continue;
@@ -1100,11 +1126,15 @@ static void ir_dashboard(void) {
             query[i] = tolower((unsigned char)query[i]);
 
           uint8_t c = 0;
+          ir_search_io_error = false;
           ir_search_recursive(IR_UNIVERSAL_SD_ROOT, query, ir_search_names,
                               ir_search_paths, &c, IR_SEARCH_MAX_RESULTS, 0);
           if (c > 0) {
             ir_show_fixed_list("Search Results", ir_search_names,
                                ir_search_paths, c);
+          } else if (ir_search_io_error) {
+            ir_ui_show_notice("IR Error:", "Search I/O error",
+                              IR_UI_FEEDBACK_MS_DEFAULT);
           } else {
             ir_ui_show_notice("IR Status:", "No matches found",
                               IR_UI_FEEDBACK_MS_DEFAULT);

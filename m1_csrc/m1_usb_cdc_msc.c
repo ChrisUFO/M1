@@ -539,6 +539,9 @@ static void cdc_start_usb2ser(void)
   /* Prepare usb rx to usart tx */
   h_usb_rx_streambuf = xStreamBufferCreate(RXSTREAMBUF_USB_SIZE, 1);
   h_usb_cli_rx_streambuf = xStreamBufferCreate(USB_RX_BUF_SIZE, 1);
+  if (h_usb_cli_rx_streambuf == NULL) {
+    m1_usbcdc_mode = CDC_MODE_VCP;
+  }
 
   usb2ser_task_semaphore = xSemaphoreCreateBinary();
   xSemaphoreGive(usb2ser_task_semaphore);
