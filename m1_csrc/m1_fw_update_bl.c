@@ -24,7 +24,6 @@
 #include <stdint.h>
 #include <stdio.h>
 
-
 /*************************** D E F I N E S ************************************/
 
 #define M1_LOGDB_TAG "FW-BL"
@@ -723,6 +722,15 @@ void boot_recovery_check(void) {
 
   if (calc_crc == stored_crc) {
     // Integrity check passed!
+
+    // Clear any previous swap-failure flags to prevent an unexpected
+    // DFU fallback later due to transient errors adding up.
+    HAL_PWR_EnableBkUpAccess();
+    __HAL_RCC_RTC_ENABLE();
+    if (TAMP->BKP1R == 0xDEADBEEF) {
+      TAMP->BKP1R = DEV_OP_STATUS_NO_OP;
+    }
+
     // Disable CRC clock to save power
     __HAL_RCC_CRC_CLK_DISABLE();
     return;
@@ -742,7 +750,19 @@ recovery_fallback:
   // Enable RTC clock
   __HAL_RCC_RTC_ENABLE();
 
-  // Check if we already swapped and failed
+  if (TAMP->BKP1R != 0xDEADBEEF) {
+    // Validate Backup Bank Magic Number before swapping
+    uint32_t alternate_bank_magic =
+        *(volatile uint32_t *)(FW_CONFiG_ADDRESS + M1_FLASH_BANK_SIZE);
+    if (alternate_bank_magic != FW_CONFIG_MAGIC_NUMBER_1 &&
+        alternate_bank_magic != FW_CONFIG_MAGIC_NUMBER_2) {
+      // The alternate bank is not valid (likely empty/corrupt).
+      // Skip the swap and go straight to ROM USB DFU to prevent a double-fault.
+      TAMP->BKP1R = 0xDEADBEEF;
+    }
+  }
+
+  // Check if we already swapped and failed, or if the backup bank is invalid
   if (TAMP->BKP1R == 0xDEADBEEF) {
     // We already failed once! Both banks are corrupt.
     // Fallback to ROM USB DFU mode
