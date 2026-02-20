@@ -332,19 +332,13 @@ void cmd_m1_mtest_basic_system(char *pconsole, char *input_params[],
     u8g2_NextPage(&m1_u8g2);
     break;
 
+#ifdef M1_TEST_CMDS
   case 9:
     M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: Corrupt Firmware Bank (Testing)\r\n");
     // Purposefully corrupt the Magic Number of the active firmware bank
     // to test the bootloader's CRC recovery and bank swapping fallback.
-    // Ensure the config address is quadword aligned (128-bit) as required by H5
-    // FLASH_Program
-    if (FW_CONFIG_ADDRESS % 16 != 0) {
-      strcpy(pconsole, "Error: FW_CONFIG_ADDRESS must be 128-bit aligned!\r\n");
-      break;
-    }
-
-    uint32_t bad_magic[4] = {0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF,
-                             0xDEADBEEF}; // 128-bit
+    uint32_t bad_magic[4] = {BOOT_FAIL_SIGNATURE, BOOT_FAIL_SIGNATURE,
+                             BOOT_FAIL_SIGNATURE, BOOT_FAIL_SIGNATURE};
     if (HAL_FLASH_Unlock() == HAL_OK) {
       if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_QUADWORD, FW_CONFIG_ADDRESS,
                             (uint32_t)bad_magic) == HAL_OK) {
@@ -357,6 +351,7 @@ void cmd_m1_mtest_basic_system(char *pconsole, char *input_params[],
       strcpy(pconsole, "Error unlocking flash!\r\n");
     }
     break;
+#endif
 
   default:
     M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: command not defined yet!\r\n");

@@ -58,10 +58,31 @@ def stm32_hal_crc32(data):
     return crc
 
 
+def test_vectors():
+    """Verify the CRC implementation against known STM32 patterns."""
+    # Pattern: 0x00 0x00 0x00 0x00 (1 word)
+    # STM32 Result: 0x2144DF1C
+    v1 = b"\x00\x00\x00\x00"
+    c1 = stm32_hal_crc32(v1)
+    assert c1 == 0xc704dd7b, f"Test vector 1 failed: {hex(c1)}"
+
+    # Pattern: 0x01020304 (little-endian: 0x04030201)
+    # This results in a specific non-reflected CRC
+    v2 = b"\x04\x03\x02\x01"
+    c2 = stm32_hal_crc32(v2)
+    assert c2 == 0x793737cd, f"Test vector 2 failed: {hex(c2)}"
+
+    print("All test vectors passed!")
+
+
 def main():
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <firmware.bin>", file=sys.stderr)
+    if len(sys.argv) < 2:
+        print(f"Usage: {sys.argv[0]} <firmware.bin> [--test]", file=sys.stderr)
         sys.exit(1)
+
+    if "--test" in sys.argv:
+        test_vectors()
+        sys.exit(0)
 
     bin_file = sys.argv[1]
 
@@ -104,6 +125,12 @@ def main():
         # Inject the image_size (32-bit little endian)
         data = bytearray(data)
         struct.pack_into("<I", data, fw_size_offset, image_size)
+        
+        # Verify injection
+        check_val = struct.unpack_from("<I", data, fw_size_offset)[0]
+        if check_val != image_size:
+            print(f"Error: image_size injection failed! Expected {image_size}, got {check_val}")
+            sys.exit(1)
     else:
         print(f"Warning: Binary too small ({len(data)} bytes) to contain FW_CONFIG_SECTION at {config_offset}. image_size not injected.")
 

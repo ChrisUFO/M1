@@ -25,7 +25,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-
 /*************************** D E F I N E S ************************************/
 
 #define FLASH_BL_ADDRESS 0x08000000
@@ -600,16 +599,12 @@ void firmware_update_usb_dfu_mode_cli(void) {
  */
 /*============================================================================*/
 void firmware_update_enter_usb_dfu(void) {
-  uint32_t jump_address;
-  pFunction jump_to_boot;
-  uint32_t idx;
 
   M1_LOG_I(M1_LOGDB_TAG, "Entering USB DFU mode...\r\n");
 
-  /* Verify SP points to SRAM range before jumping to system memory bootloader.
-   */
-  if ((*(uint32_t *)FLASH_SYSTEM_MEMORY_ADDRESS & SRAM_ADDRESS_MASK) !=
-      SRAM_BASE_ADDRESS) {
+  /* Verify SP points to reasonable SRAM range for H5 (SRAM1: 0x20000000)
+     before jumping to system memory bootloader. */
+  if ((*(uint32_t *)M1_SYSTEM_MEMORY_BASE & 0xFF000000) != 0x20000000) {
     M1_LOG_I(M1_LOGDB_TAG, "Invalid system bootloader vector table\r\n");
     return;
   }
@@ -626,29 +621,7 @@ void firmware_update_enter_usb_dfu(void) {
 
   HAL_RCC_DeInit();
 
-  __disable_irq();
-
-  SysTick->CTRL = 0;
-  SysTick->LOAD = 0;
-  SysTick->VAL = 0;
-
-  for (idx = 0; idx < (sizeof(NVIC->ICER) / sizeof(NVIC->ICER[0])); idx++) {
-    NVIC->ICER[idx] = 0xFFFFFFFF;
-    NVIC->ICPR[idx] = 0xFFFFFFFF;
-  }
-
-  jump_address = *(uint32_t *)(FLASH_SYSTEM_MEMORY_ADDRESS + 4U);
-  jump_to_boot = (pFunction)jump_address;
-
-  SCB->VTOR = FLASH_SYSTEM_MEMORY_ADDRESS;
-  __DSB();
-  __ISB();
-
-  __set_CONTROL(0x00U);
-  __set_PSP(0x00U);
-  __set_MSP(*(uint32_t *)FLASH_SYSTEM_MEMORY_ADDRESS);
-
-  jump_to_boot();
+  bl_jump_to_dfu();
 } // void firmware_update_enter_usb_dfu(void)
 
 /*============================================================================*/

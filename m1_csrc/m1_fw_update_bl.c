@@ -752,11 +752,8 @@ recovery_fallback:
   __HAL_RCC_RTC_ENABLE();
 
   if (TAMP->BKP1R != BOOT_FAIL_SIGNATURE) {
-    // Validate Backup Bank Magic Number before swapping
-    uint32_t alternate_bank_magic =
-        *(volatile uint32_t *)(FW_CONFIG_ADDRESS + M1_FLASH_BANK_SIZE);
-    if (alternate_bank_magic != FW_CONFIG_MAGIC_NUMBER_1 &&
-        alternate_bank_magic != FW_CONFIG_MAGIC_NUMBER_2) {
+    // Validate Backup Bank Header before swapping
+    if (!bl_validate_fw_header(FW_CONFIG_ADDRESS + M1_FLASH_BANK_SIZE)) {
       // The alternate bank is not valid (likely empty/corrupt).
       // Skip the swap and go straight to ROM USB DFU to prevent a double-fault.
       TAMP->BKP1R = BOOT_FAIL_SIGNATURE;
@@ -767,40 +764,22 @@ recovery_fallback:
   if (TAMP->BKP1R == BOOT_FAIL_SIGNATURE) {
     // We already failed once! Both banks are corrupt.
     // Fallback to ROM USB DFU mode
-
-    // Set device_op_status in BKP registers to DEV_OP_STATUS_FW_UPDATE_ACTIVE
-    // so the GUI will know the update completely failed if it somehow boots.
-    // device_op_status is located in the second 32-bit register because
-    // the first is magic_number. TAMP->BKP1R maps to RTC_BKP_DR1.
-    TAMP->BKP1R = DEV_OP_STATUS_FW_UPDATE_ACTIVE;
-
-    // Set boot mode to System Memory (DFU) and trigger reset
-    // On the STM32H573, System Memory starts at 0x0BF90000.
-    // Ensure interrupts are disabled and stack is reset before jumping.
-    __disable_irq();
-    SysTick->CTRL = 0;
-    SysTick->LOAD = 0;
-    SysTick->VAL = 0;
-
-    void (*SysMemBootJump)(void);
-    // Address + 4 is the reset handler in the vector table
-    SysMemBootJump = (void (*)(void))(*((uint32_t *)(0x0BF90000 + 4)));
-    __set_MSP(*(uint32_t *)0x0BF90000);
-    SysMemBootJump();
-
-    while (1) {
-      __NOP();
-    }
+    TAMP->BKP1R = DEV_OP_STATUS_FW_INTEGRITY_FAIL;
+    bl_jump_to_dfu();
   }
 
   // Mark that we are attempting a recovery swap
   TAMP->BKP1R = BOOT_FAIL_SIGNATURE;
 
-  // Perform bank swap
+  // Perform bank swap with validation
   // Unlock FLASH
   if (FLASH->OPTCR & FLASH_OPTCR_OPTLOCK) {
     FLASH->OPTKEYR = 0x08192A3B;
     FLASH->OPTKEYR = 0x4C5D6E7F;
+  }
+
+  // Ensure any previous operation is complete
+  while (FLASH->NSSR & FLASH_FLAG_BSY) {
   }
 
   // Toggle SWAP_BANK bit
@@ -810,16 +789,93 @@ recovery_fallback:
   // Start option byte programming
   FLASH->OPTCR |= FLASH_OPTCR_OPTSTART;
 
-  // Wait for BSY
+  // Wait for programming to complete
   while (FLASH->NSSR & FLASH_FLAG_BSY) {
   }
 
-  // Generate System Reset to reload Option Bytes and boot from the other bank
-  FLASH->OPTCR |= FLASH_OPTCR_OPTSTART; // Launch
+  // Verify the bit was actually programmed in PRG register
+  if ((FLASH->OPTSR_PRG & FLASH_OPTSR_SWAP_BANK) !=
+      (optsr & FLASH_OPTSR_SWAP_BANK)) {
+    // Launch/Reload the option bytes to commit the change and reset the system
+    FLASH->OPTCR |= FLASH_OPTCR_OPTSTART;
+    // Wait for reload (system reset should occur)
+    for (int i = 0; i < 1000; i++) {
+      __NOP();
+    }
+  }
 
-  // Let's use NVIC System Reset to be completely safe.
+  // If we reach here, launch failed or something is wrong. Force a reset.
   NVIC_SystemReset();
 
   while (1) {
   } // Unreachable
+}
+
+/**
+ * @brief Validates the firmware header at a given address
+ * @param address The flash address to check
+ * @return true if valid, false otherwise
+ */
+bool bl_validate_fw_header(uint32_t address) {
+  S_M1_FW_CONFIG_t *fw_cfg = (S_M1_FW_CONFIG_t *)address;
+
+  // Verify Magic numbers
+  if (fw_cfg->magic_number_1 != FW_CONFIG_MAGIC_NUMBER_1 ||
+      fw_cfg->magic_number_2 != FW_CONFIG_MAGIC_NUMBER_2) {
+    return false;
+  }
+
+  // Verify image size is within reasonable bounds
+  if (fw_cfg->fw_image_size == 0 || fw_cfg->fw_image_size > FW_IMAGE_SIZE_MAX) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * @brief Robust jump to System Memory (ROM) DFU bootloader
+ */
+void bl_jump_to_dfu(void) {
+  uint32_t jump_address;
+  void (*jump_to_boot)(void);
+
+  /* Verify SP points to reasonable SRAM range for H5 (SRAM1: 0x20000000)
+     Note: In early boot, we can't log, so we just reset if invalid. */
+  uint32_t sp_val = *(volatile uint32_t *)M1_SYSTEM_MEMORY_BASE;
+  if ((sp_val & 0xFF000000) != 0x20000000) {
+    NVIC_SystemReset();
+  }
+
+  __disable_irq();
+
+  // Reset Systick
+  SysTick->CTRL = 0;
+  SysTick->LOAD = 0;
+  SysTick->VAL = 0;
+
+  // Clear all pending interrupts and disable them
+  for (int i = 0; i < 8; i++) {
+    NVIC->ICER[i] = 0xFFFFFFFF;
+    NVIC->ICPR[i] = 0xFFFFFFFF;
+  }
+
+  // Set the Vector Table Offset Register
+  SCB->VTOR = M1_SYSTEM_MEMORY_BASE;
+
+  // Set up the jump
+  jump_address = *(volatile uint32_t *)(M1_SYSTEM_MEMORY_BASE + 4);
+  jump_to_boot = (void (*)(void))jump_address;
+
+  // Barriers
+  __DSB();
+  __ISB();
+
+  // Reset Stack Pointer and Jump
+  __set_MSP(sp_val);
+  jump_to_boot();
+
+  while (1) {
+    __NOP();
+  }
 }

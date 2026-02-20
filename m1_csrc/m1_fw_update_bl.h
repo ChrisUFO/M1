@@ -121,12 +121,16 @@ typedef enum {
   BL_PROTECTION_PCROP = 0x4
 } S_M1_BL_PROTECTION_t;
 
+#define M1_SYSTEM_MEMORY_BASE ((uint32_t)0x0BF90000)
+
 uint32_t bl_get_crc_chunk(uint32_t *data_scr, uint32_t len, bool crc_init,
                           bool last_chunk);
 uint8_t bl_flash_app(FIL *hfile);
 uint16_t bl_get_active_bank(void);
 uint8_t bl_crc_check(uint32_t image_size);
 void bl_swap_banks(void);
+bool bl_validate_fw_header(uint32_t address);
+void bl_jump_to_dfu(void);
 void fw_gui_progress_update(size_t remainder);
 
 extern FW_CFG_SECTION S_M1_FW_CONFIG_t m1_fw_config;
