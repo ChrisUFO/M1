@@ -108,6 +108,14 @@ Version is defined in `m1_csrc/m1_fw_update_bl.h`:
 - **Example:** `M1_v0.8.4-ChrisUFO.bin`
 - **Display:** "Version 0.8.4" on splash screen and About menu
 
+### Secure Boot Sequence
+
+To protect against corrupted flash banks (Issue #20), the M1 employs an early boot integrity check:
+1. `SystemInit()` in `system_stm32h5xx.c` invokes `boot_recovery_check()` before any RAM initialization.
+2. The STM32H5 Hardware CRC unit computes the CRC-32 of the active firmware bank (using sizes derived from `S_M1_FW_CONFIG_t`).
+3. If the payload is invalid, the bootloader writes `0xDEADBEEF` to `RTC->BKP1R` and securely toggles the `SWAP_BANK` option byte.
+4. A system reset safely swaps to the alternate hardware bank. If both banks fail, `RTC->BKP1R` forces a direct fallback to ROM USB DFU mode.
+
 ### Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for version history. Format follows [Keep a Changelog](https://keepachangelog.com/) with sections for:

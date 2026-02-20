@@ -88,6 +88,25 @@ def main():
     if padding_needed:
         data = data + b"\x00" * padding_needed
 
+    # Find the config structure offset (0xFFC00 based on linker script)
+    # The structure starts at FW_CONFIG_RESERVED (0x080FFC00) 
+    # relative to FW_START_ADDRESS (0x08000000)
+    config_offset = 0xFFC00
+    
+    # We will write the total image size (excluding the CRC itself) 
+    # into the fw_image_size field. The size is len(data).
+    image_size = len(data)
+    
+    # The 'fw_image_size' is at offset +16 from the start of S_M1_FW_CONFIG_t
+    fw_size_offset = config_offset + 16
+    
+    if len(data) >= fw_size_offset + 4:
+        # Inject the image_size (32-bit little endian)
+        data = bytearray(data)
+        struct.pack_into("<I", data, fw_size_offset, image_size)
+    else:
+        print(f"Warning: Binary too small ({len(data)} bytes) to contain FW_CONFIG_SECTION at {config_offset}. image_size not injected.")
+
     # Calculate CRC32 using STM32 HAL algorithm
     crc = stm32_hal_crc32(data)
 
@@ -99,6 +118,7 @@ def main():
         f.write(data)
         f.write(struct.pack("<I", crc))
 
+    print(f"Injected image_size: {image_size} bytes (0x{image_size:08X}) at offset 0x{fw_size_offset:08X}")
     print(f"Appended CRC32: 0x{crc:08X}")
     print(f"Firmware file updated: {bin_file}")
 

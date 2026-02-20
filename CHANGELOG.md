@@ -7,6 +7,15 @@ All notable changes to the M1 project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 
+## [v0.8.7] - 2026-02-20
+
+### Added
+- **Hardware Integration**:
+  - Implemented boot-time Secure Firmware Integrity check via STM32H5 Hardware CRC unit (Issue #20).
+  - Added infinite boot-loop protection leveraging RTC Backup Registers to recover gracefully into USB DFU mode.
+- **CLI Commands**:
+  - Added new basic testing command `9` to purposely corrupt the firmware magic number.
+
 ## [v0.8.6] - 2026-02-19
 
 ### Changed
