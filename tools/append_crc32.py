@@ -58,10 +58,31 @@ def stm32_hal_crc32(data):
     return crc
 
 
+def test_vectors():
+    """Verify the CRC implementation against known STM32 patterns."""
+    # Pattern: 0x00 0x00 0x00 0x00 (1 word)
+    # STM32 HAL CRC32 Result: 0xC704DD7B (MPEG-2 variant, no reflection)
+    v1 = b"\x00\x00\x00\x00"
+    c1 = stm32_hal_crc32(v1)
+    assert c1 == 0xc704dd7b, f"Test vector 1 failed: {hex(c1)}"
+
+    # Pattern: 0x01020304 (little-endian: 0x04030201)
+    # This results in a specific non-reflected CRC
+    v2 = b"\x04\x03\x02\x01"
+    c2 = stm32_hal_crc32(v2)
+    assert c2 == 0x793737cd, f"Test vector 2 failed: {hex(c2)}"
+
+    print("All test vectors passed!")
+
+
 def main():
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <firmware.bin>", file=sys.stderr)
+    if len(sys.argv) < 2:
+        print(f"Usage: {sys.argv[0]} <firmware.bin> [--test]", file=sys.stderr)
         sys.exit(1)
+
+    if "--test" in sys.argv:
+        test_vectors()
+        sys.exit(0)
 
     bin_file = sys.argv[1]
 
@@ -88,6 +109,43 @@ def main():
     if padding_needed:
         data = data + b"\x00" * padding_needed
 
+    # Find the config structure offset (0xFFC00 based on linker script)
+    # The structure starts at FW_CONFIG_RESERVED (0x080FFC00) 
+    # relative to FW_START_ADDRESS (0x08000000)
+    config_offset = 0xFFC00
+    
+    # We will write the total image size (excluding the CRC itself) 
+    # into the fw_image_size field. The size is len(data).
+    image_size = len(data)
+    
+    # The 'fw_image_size' field offset within S_M1_FW_CONFIG_t:
+    #   magic_number_1   : uint32_t  (+0,  4 bytes)
+    #   fw_version_rc    : uint8_t   (+4,  1 byte)
+    #   fw_version_build : uint8_t   (+5,  1 byte)
+    #   fw_version_minor : uint8_t   (+6,  1 byte)
+    #   fw_version_major : uint8_t   (+7,  1 byte)
+    #   user_option_1    : uint16_t  (+8,  2 bytes)
+    #   user_option_2    : uint16_t  (+10, 2 bytes)
+    #   ism_band_region  : uint8_t   (+12, 1 byte)
+    #   reserve_1[3]     : uint8_t   (+13, 3 bytes)
+    #   fw_image_size    : uint32_t  (+16, 4 bytes)  <-- target
+    #   magic_number_2   : uint32_t  (+20, 4 bytes)
+    # Total struct size: 24 bytes
+    fw_size_offset = config_offset + 16
+    
+    if len(data) >= fw_size_offset + 4:
+        # Inject the image_size (32-bit little endian)
+        data = bytearray(data)
+        struct.pack_into("<I", data, fw_size_offset, image_size)
+        
+        # Verify injection
+        check_val = struct.unpack_from("<I", data, fw_size_offset)[0]
+        if check_val != image_size:
+            print(f"Error: image_size injection failed! Expected {image_size}, got {check_val}")
+            sys.exit(1)
+    else:
+        print(f"Warning: Binary too small ({len(data)} bytes) to contain FW_CONFIG_SECTION at {config_offset}. image_size not injected.")
+
     # Calculate CRC32 using STM32 HAL algorithm
     crc = stm32_hal_crc32(data)
 
@@ -99,6 +157,7 @@ def main():
         f.write(data)
         f.write(struct.pack("<I", crc))
 
+    print(f"Injected image_size: {image_size} bytes (0x{image_size:08X}) at offset 0x{fw_size_offset:08X}")
     print(f"Appended CRC32: 0x{crc:08X}")
     print(f"Firmware file updated: {bin_file}")
 

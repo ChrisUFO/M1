@@ -44,6 +44,7 @@ logs/
 *.backup
 build_log.txt
 *log.txt
+build_err.txt
 build_log_*.txt
 review_*.json
 review*.txt

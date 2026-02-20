@@ -75,8 +75,10 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME}
-    m1_01
-
+    -Wl,--whole-archive
+    m1_core
+    -Wl,--no-whole-archive
+    m1_drivers
     # Add user defined libraries
 )
 
@@ -102,8 +104,16 @@ if(OBJCOPY_TOOL)
         TARGET ${CMAKE_PROJECT_NAME}
         POST_BUILD
         COMMAND ${OBJCOPY_TOOL}
-    -O binary ${TARGET_ELF} ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin
+    -O binary --gap-fill 0xFF ${TARGET_ELF} ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin
         #COMMENT "Generating .bin file"
+    )
+
+    # Command to test CRC32 algorithm integrity
+    add_custom_command(
+        COMMAND ${CMAKE_COMMAND} -E echo "Running CRC32 regression tests..."
+        TARGET ${CMAKE_PROJECT_NAME}
+        POST_BUILD
+        COMMAND python ${CMAKE_SOURCE_DIR}/tools/append_crc32.py ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin --test
     )
 
     # Command to append CRC32 to .bin file (required for STM32 firmware update)
@@ -120,7 +130,7 @@ if(OBJCOPY_TOOL)
         TARGET ${CMAKE_PROJECT_NAME}
         POST_BUILD
         COMMAND ${OBJCOPY_TOOL}
-    -O ihex ${TARGET_ELF} ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.hex
+    -I binary -O ihex --change-addresses 0x08000000 ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.hex
         #COMMENT "Generating .hex file"
     )
 else()

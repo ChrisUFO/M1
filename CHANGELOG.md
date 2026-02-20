@@ -7,6 +7,36 @@ All notable changes to the M1 project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 
+## [v0.8.7] - 2026-02-20
+
+### Added
+- **Hardware Integration**:
+  - Implemented boot-time Secure Firmware Integrity check via STM32H5 Hardware CRC unit (Issue #20).
+  - Added infinite boot-loop protection leveraging RTC Backup Registers to recover gracefully into USB DFU mode.
+- **CLI Commands**:
+  - Added new basic testing command `9` to purposely corrupt the firmware magic number.
+
+### Fixed
+- **USB DFU Mode Entry**:
+  - Fixed "DFU MODE FAILED!" by disabling interrupts and SysTick before tearing down clocks in `firmware_update_enter_usb_dfu()`. FreeRTOS SysTick firing during `HAL_RCC_DeInit()` caused a HardFault → reset.
+- **Boot/Artifact Integrity Pipeline**:
+  - Fixed `.bin` generation to use `objcopy --gap-fill 0xFF` so CRC input matches erased flash semantics.
+  - Fixed `.hex` generation to be produced from the post-processed `.bin` (after `append_crc32.py`) instead of directly from `.elf`.
+  - Resolved non-booting firmware caused by mismatched flash image content vs embedded `fw_image_size`/CRC metadata in early boot verification.
+- **Code Review Hardening**:
+  - Removed duplicate `SYS_CONFIG_MAGIC_NUMBER` definition (now single source in `m1_fw_update_bl.h`).
+  - Added defensive parentheses to `FW_CRC_ADDRESS` macro to prevent operator precedence bugs.
+  - Added NULL guard for `button_events_q_hdl` in firmware corruption handler to prevent undefined behavior during early boot.
+  - Added `bl_validate_fw_header()` check before rollback bank swap to prevent bricking on corrupted alternate bank.
+- **Linking/Startup Symbol Retention**:
+  - Updated final link strategy to force-retain `m1_core` objects while keeping `m1_drivers` linked normally, avoiding dropped startup/ISR overrides without introducing duplicate libc/syscall symbol conflicts.
+- **WiFi UI Layout (128x64 LCD)**:
+  - Adjusted WiFi Config menu row spacing so all three items render fully on-screen instead of clipping below the bottom edge.
+  - Reflowed WiFi Connection Status text rows to keep status, SSID, IP, and RSSI visible above footer controls.
+  - Compressed AP detail rows in scan list from separate Channel/Auth lines into a single `Ch/Auth` line to prevent overflow on 64px height.
+- **Documentation**:
+  - Documented the boot-critical artifact pipeline and flashing guidance in `README.md` and `ARCHITECTURE.md`.
+
 ## [v0.8.6] - 2026-02-19
 
 ### Changed
