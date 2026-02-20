@@ -287,10 +287,7 @@ static uint16_t wifi_ap_list_print(ctrl_cmd_t *app_resp, bool up_dir) {
   sprintf(prn_msg, "RSSI: %ddBm", list[i].rssi);
   u8g2_DrawStr(&m1_u8g2, 2, y_offset, prn_msg);
   y_offset += M1_GUI_FONT_HEIGHT;
-  sprintf(prn_msg, "Channel: %d", list[i].channel);
-  u8g2_DrawStr(&m1_u8g2, 2, y_offset, prn_msg);
-  y_offset += M1_GUI_FONT_HEIGHT;
-  sprintf(prn_msg, "Auth mode: %d", list[i].encryption_mode);
+  sprintf(prn_msg, "Ch:%d Auth:%d", list[i].channel, list[i].encryption_mode);
   u8g2_DrawStr(&m1_u8g2, 2, y_offset, prn_msg);
 
   m1_u8g2_nextpage(); // Update display RAM
@@ -343,6 +340,11 @@ void wifi_config(void) {
   S_M1_Main_Q_t q_item;
   BaseType_t ret;
   uint8_t menu_sel = 0;
+  const uint8_t menu_title_y = 15;
+  const uint8_t menu_first_item_y = 28;
+  const uint8_t menu_item_spacing = 12;
+  const uint8_t menu_highlight_height = 11;
+  const uint8_t menu_footer_y = 62;
   bool run_menu = true;
 
   // Initialize ESP32 if not already done
@@ -363,20 +365,20 @@ void wifi_config(void) {
     // Display menu
     m1_u8g2_firstpage();
     u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
-    u8g2_DrawStr(&m1_u8g2, 6, 15, "WiFi Config:");
+    u8g2_DrawStr(&m1_u8g2, 6, menu_title_y, "WiFi Config:");
 
     // Menu items
     const char *menu_items[] = {"Join Network", "Saved Networks",
                                 "Connection Status"};
     const uint8_t num_items = sizeof(menu_items) / sizeof(menu_items[0]);
 
-    // Draw menu items with selection indicator - tighter spacing to fit all 3
-    // items
+    // Draw menu items with selection indicator.
+    // Keep all text above the footer on a 128x64 display.
     for (uint8_t i = 0; i < num_items; i++) {
-      uint8_t y_pos = 32 + (i * 14); // Reduced from 16 to 14 pixel spacing
+      uint8_t y_pos = menu_first_item_y + (i * menu_item_spacing);
       if (i == menu_sel) {
         u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
-        u8g2_DrawBox(&m1_u8g2, 0, y_pos - 7, 128, 11); // Slightly smaller box
+        u8g2_DrawBox(&m1_u8g2, 0, y_pos - 7, 128, menu_highlight_height);
         u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
       }
       u8g2_DrawStr(&m1_u8g2, 6, y_pos, menu_items[i]);
@@ -385,7 +387,7 @@ void wifi_config(void) {
       }
     }
 
-    u8g2_DrawStr(&m1_u8g2, 2, 62, "Back: Exit");
+    u8g2_DrawStr(&m1_u8g2, 2, menu_footer_y, "Back: Exit");
     m1_u8g2_nextpage();
 
     // Wait for button event
@@ -970,15 +972,15 @@ void wifi_show_connection_status(void) {
       // Display actual connection info
       char display_line[22];
 
-      u8g2_DrawStr(&m1_u8g2, 6, 24, "Status: Connected");
+      u8g2_DrawStr(&m1_u8g2, 6, 22, "Status: Connected");
 
       // SSID (truncate if needed)
       strncpy(display_line, status_ssid, 21);
       display_line[21] = '\0';
-      u8g2_DrawStr(&m1_u8g2, 6, 36, display_line);
+      u8g2_DrawStr(&m1_u8g2, 6, 32, display_line);
 
       // IP Address
-      u8g2_DrawStr(&m1_u8g2, 6, 48, status_ip);
+      u8g2_DrawStr(&m1_u8g2, 6, 42, status_ip);
 
       // RSSI unknown until status AT command is implemented in SPI-AT glue
       if (status_rssi == 0) {
@@ -986,7 +988,7 @@ void wifi_show_connection_status(void) {
       } else {
         sprintf(display_line, "RSSI: %ddBm", status_rssi);
       }
-      u8g2_DrawStr(&m1_u8g2, 6, 60, display_line);
+      u8g2_DrawStr(&m1_u8g2, 6, 52, display_line);
     }
 
     if (is_connected) {

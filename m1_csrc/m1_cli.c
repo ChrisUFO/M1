@@ -333,7 +333,7 @@ void cmd_m1_mtest_basic_system(char *pconsole, char *input_params[],
     break;
 
 #ifdef M1_TEST_CMDS
-  case 9:
+  case 9: {
     M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: Corrupt Firmware Bank (Testing)\r\n");
     // Purposefully corrupt the Magic Number of the active firmware bank
     // to test the bootloader's CRC recovery and bank swapping fallback.
@@ -351,6 +351,7 @@ void cmd_m1_mtest_basic_system(char *pconsole, char *input_params[],
       strcpy(pconsole, "Error unlocking flash!\r\n");
     }
     break;
+  }
 #endif
 
   default:

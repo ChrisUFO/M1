@@ -23,6 +23,10 @@ and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
   - Resolved non-booting firmware caused by mismatched flash image content vs embedded `fw_image_size`/CRC metadata in early boot verification.
 - **Linking/Startup Symbol Retention**:
   - Updated final link strategy to force-retain `m1_core` objects while keeping `m1_drivers` linked normally, avoiding dropped startup/ISR overrides without introducing duplicate libc/syscall symbol conflicts.
+- **WiFi UI Layout (128x64 LCD)**:
+  - Adjusted WiFi Config menu row spacing so all three items render fully on-screen instead of clipping below the bottom edge.
+  - Reflowed WiFi Connection Status text rows to keep status, SSID, IP, and RSSI visible above footer controls.
+  - Compressed AP detail rows in scan list from separate Channel/Auth lines into a single `Ch/Auth` line to prevent overflow on 64px height.
 - **Documentation**:
   - Documented the boot-critical artifact pipeline and flashing guidance in `README.md` and `ARCHITECTURE.md`.
 

@@ -602,13 +602,6 @@ void firmware_update_enter_usb_dfu(void) {
 
   M1_LOG_I(M1_LOGDB_TAG, "Entering USB DFU mode...\r\n");
 
-  /* Verify SP points to reasonable SRAM range for H5 (SRAM1: 0x20000000)
-     before jumping to system memory bootloader. */
-  if ((*(uint32_t *)M1_SYSTEM_MEMORY_BASE & 0xFF000000) != 0x20000000) {
-    M1_LOG_I(M1_LOGDB_TAG, "Invalid system bootloader vector table\r\n");
-    return;
-  }
-
   if (USBD_Stop(&hUsbDeviceFS) != USBD_OK) {
     M1_LOG_I(M1_LOGDB_TAG, "USBD_Stop failed\r\n");
   }

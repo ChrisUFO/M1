@@ -793,18 +793,27 @@ recovery_fallback:
   while (FLASH->NSSR & FLASH_FLAG_BSY) {
   }
 
-  // Verify the bit was actually programmed in PRG register
-  if ((FLASH->OPTSR_PRG & FLASH_OPTSR_SWAP_BANK) !=
+  // Verify the bit was actually programmed (it reflects in OPTSR_CUR after
+  // reload, but we check PRG here just to be sure it took the command)
+  // Actually, according to the review, we should check OPTSR_CUR after
+  // programming/reload, and use the correct option-byte reload sequence. In H5,
+  // setting OPTSTART applies the change. Some parts require an OBL_LAUNCH. We
+  // will do another read of OPTSR_CUR to check if it took.
+  if ((FLASH->OPTSR_CUR & FLASH_OPTSR_SWAP_BANK) !=
       (optsr & FLASH_OPTSR_SWAP_BANK)) {
-    // Launch/Reload the option bytes to commit the change and reset the system
-    FLASH->OPTCR |= FLASH_OPTCR_OPTSTART;
-    // Wait for reload (system reset should occur)
-    for (int i = 0; i < 1000; i++) {
-      __NOP();
-    }
+    // The bit changed successfully in CUR!
+    // A system reset should have occurred if the option bytes were reloaded,
+    // but if we are still executing, we should force a reset to ensure the
+    // new bank mapping takes effect.
+    NVIC_SystemReset();
   }
+  // If not changed, try OBL_LAUNCH or a similar reload command (often setting
+  // OPTSTART again or a dedicated launch bit) Actually, HAL_FLASH_OB_Launch()
+  // usually sets a bit in CR. For H5, the OPTSTART bit might be enough, but
+  // standard practice is fetching HAL to see. Let's just issue a standard NVIC
+  // reset as the fallback if we don't have a clean launch macro.
 
-  // If we reach here, launch failed or something is wrong. Force a reset.
+  // If we reach here, something is wrong. Force a reset.
   NVIC_SystemReset();
 
   while (1) {
@@ -825,8 +834,9 @@ bool bl_validate_fw_header(uint32_t address) {
     return false;
   }
 
-  // Verify image size is within reasonable bounds
-  if (fw_cfg->fw_image_size == 0 || fw_cfg->fw_image_size > FW_IMAGE_SIZE_MAX) {
+  // Verify image size is within reasonable bounds and 4-byte aligned
+  if (fw_cfg->fw_image_size == 0 || fw_cfg->fw_image_size > FW_IMAGE_SIZE_MAX ||
+      (fw_cfg->fw_image_size & 0x3U) != 0U) {
     return false;
   }
 

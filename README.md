@@ -2,10 +2,11 @@
 
 # M1 Firmware — ChrisUFO Fork
 
+> ⚠️ **DISCLAIMER: USE AT YOUR OWN RISK**
+> This firmware is provided "as is", without warranty of any kind. You use this firmware entirely at your own risk. It is **highly recommended** to have an ST-Link programmer available to recover your device in case you encounter bugs, errors, or a failed firmware update.
+
 > **This is a community fork of the [Monstatek/M1](https://github.com/Monstatek/M1) repository.**
-> It adds the **Universal Remote** feature on top of the upstream codebase.
-> A pull request to merge this back upstream is open at
-> [ChrisUFO/M1#1](https://github.com/ChrisUFO/M1/pull/1).
+> Pre-compiled `.bin` and `.hex` files can be downloaded from the [Releases](https://github.com/ChrisUFO/M1/releases) section, or you can build the firmware yourself following the instructions below.
 
 Firmware for the M1 NFC/RFID multi-protocol device, built on STM32H5.
 
@@ -51,6 +52,7 @@ Adjust the path in `CMakePresets.json` if your toolchain is installed elsewhere.
 ### Build steps
 
 **Quick Build (Recommended):**
+> *(Note: The `./build` convenience script is exclusive to this fork and was not part of the upstream Monstatek release.)*
 ```bash
 ./build          # Build firmware and copy to distribution/
 ./build clean    # Clean build artifacts and rebuild

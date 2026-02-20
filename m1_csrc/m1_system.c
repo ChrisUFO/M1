@@ -555,167 +555,155 @@ void startup_device_init(void) {
 
 /*============================================================================*/
 /*
+ * Static helper handlers for device operation status during power-up
+ */
+/*============================================================================*/
+static void handle_op_status_fw_corruption(void) {
+  S_M1_Main_Q_t q_item;
+  S_M1_Buttons_Status this_button_status;
+  BaseType_t ret;
+
+  startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_NO_OP);
+
+  // If we came here from a DFU fallback due to completely wiped banks
+  if (m1_device_stat.bu_regs.device_op_status ==
+      DEV_OP_STATUS_FW_INTEGRITY_FAIL) {
+    startup_error_screen_display("Dual Bank Corrupt", "USB DFU Fallback");
+    M1_LOG_I(M1_LOGDB_TAG,
+             "Both firmware banks corrupted. Entering USB DFU Fallback.\r\n");
+  } else {
+    startup_error_screen_display("FW Corrupted.", "Swapped Bank.");
+    M1_LOG_I(M1_LOGDB_TAG, "FW update failed. Device got reset unexpectedly. "
+                           "Swapped to alternate bank.\r\n");
+  }
+
+  // Wait for user acknowledgment
+  while (1) {
+    ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
+    if (ret == pdTRUE && q_item.q_evt_type == Q_EVENT_KEYPAD) {
+      ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+      if (this_button_status.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK ||
+          this_button_status.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK) {
+        break;
+      }
+    }
+  }
+}
+
+static void handle_op_status_fw_update_complete(void) {
+  startup_bu_registers_init(); // Reinitialize after update
+  startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_NO_OP);
+  startup_info_screen_display("UPDATE COMPLETED!");
+  M1_LOG_I(M1_LOGDB_TAG, "FW update complete!\r\n");
+}
+
+static void handle_op_status_fw_rollback_complete(void) {
+  startup_bu_registers_init(); // Reinitialize after rollback
+  startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_NO_OP);
+  startup_info_screen_display("ROLLBACK COMPLETED!");
+  M1_LOG_I(M1_LOGDB_TAG, "FW rollback complete!\r\n");
+}
+
+static void handle_op_status_reboot(void) {
+  S_M1_Main_Q_t q_item;
+  S_M1_Buttons_Status this_button_status;
+  BaseType_t ret;
+
+  m1_led_fw_update_on(NULL);
+  if (!m1_device_stat.dev_reset_by_wdt) // Device got reset by normal cause?
+  {
+    vTaskDelay(POWER_UP_SYS_CONFIG_WAIT_TIME); // Wait for stable key press
+                                               // during power up
+    do {
+      // menu_main_handler_task() is giving some time to this function to
+      // read the main_q_hdl during power-up.
+      ret = xQueueReceive(main_q_hdl, &q_item, 0);
+      if (ret != pdTRUE)
+        break;
+      if (q_item.q_evt_type != Q_EVENT_KEYPAD)
+        break;
+      ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+      if ((this_button_status.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK) &&
+          (this_button_status.event[BUTTON_DOWN_KP_ID] ==
+           BUTTON_EVENT_CLICK)) // Rollback request?
+      {
+        // User requests the update rollback.
+        M1_LOG_I(M1_LOGDB_TAG, "Update rollback requested!\r\n");
+        // Display rollback confirm message here
+        m1_device_stat.bu_regs.device_op_status = DEV_OP_STATUS_FW_ROLLBACK_REQ;
+        startup_config_write(BK_REGS_SELECT_DEV_OP_STAT,
+                             m1_device_stat.bu_regs.device_op_status);
+        startup_error_screen_display("FW ROLLBACK", "CONFIRM OK");
+
+        while (1) {
+          ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
+          if (ret == pdTRUE && q_item.q_evt_type == Q_EVENT_KEYPAD) {
+            ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+            if (this_button_status.event[BUTTON_OK_KP_ID] ==
+                BUTTON_EVENT_CLICK) {
+              m1_device_stat.bu_regs.device_op_status =
+                  DEV_OP_STATUS_FW_ROLLBACK_START;
+              startup_config_write(BK_REGS_SELECT_DEV_OP_STAT,
+                                   m1_device_stat.bu_regs.device_op_status);
+              NVIC_SystemReset();
+            } else { // Canceled
+              break;
+            } // else
+          } // if ( ret == pdTRUE && q_item.q_evt_type == Q_EVENT_KEYPAD )
+        } // while(1)
+      } // if (
+        // (this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK) &&
+        // (this_button_status.event[BUTTON_DOWN_KP_ID]==BUTTON_EVENT_CLICK) )
+    } while (1);
+    //
+    startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_NO_OP);
+  } // if (!m1_device_stat.dev_reset_by_wdt)
+  m1_led_fw_update_off();
+}
+
+static void handle_op_status_usb_dfu_request(void) {
+  startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_NO_OP);
+  startup_info_screen_display("USB DFU MODE...");
+  firmware_update_enter_usb_dfu();
+  startup_info_screen_display("DFU MODE FAILED!");
+  M1_LOG_I(M1_LOGDB_TAG, "Failed to enter USB DFU mode!\r\n");
+}
+
+static void handle_device_op_status(void) {
+  uint32_t status = m1_device_stat.bu_regs.device_op_status;
+
+  if (status == DEV_OP_STATUS_FW_UPDATE_ACTIVE ||
+      status == DEV_OP_STATUS_FW_INTEGRITY_FAIL) {
+    handle_op_status_fw_corruption();
+  } else if (status == DEV_OP_STATUS_FW_UPDATE_COMPLETE) {
+    handle_op_status_fw_update_complete();
+  } else if (status == DEV_OP_STATUS_FW_ROLLBACK_COMPLETE) {
+    handle_op_status_fw_rollback_complete();
+  } else if (status == DEV_OP_STATUS_REBOOT) {
+    handle_op_status_reboot();
+  } else if (status == DEV_OP_STATUS_USB_DFU_REQUEST) {
+    handle_op_status_usb_dfu_request();
+  }
+}
+
+/*============================================================================*/
+/*
  * This function checks the start-up status and does tasks accordingly
  */
 /*============================================================================*/
 void startup_config_handler(void) {
-  uint16_t i, k;
-  uint32_t *bu_reg_read, crc32_add;
-  uint32_t fw_ver_old, fw_ver_new;
-  S_M1_FW_CONFIG_t old_fw_config;
-  BaseType_t ret;
-  S_M1_Main_Q_t q_item;
-  S_M1_Buttons_Status this_button_status;
 
   if (m1_device_stat.bu_regs.magic_number !=
       SYS_CONFIG_MAGIC_NUMBER) // Not initialized yet?
   {
     startup_bu_registers_init();
-  } // if ( m1_device_stat.bu_regs.magic_number != SYS_CONFIG_MAGIC_NUMBER )
-  else {
-    if (m1_device_stat.bu_regs.device_op_status ==
-            DEV_OP_STATUS_FW_UPDATE_ACTIVE ||
-        m1_device_stat.bu_regs.device_op_status ==
-            DEV_OP_STATUS_FW_INTEGRITY_FAIL) {
-      startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_NO_OP);
-      startup_error_screen_display("FW Corrupted.", "Swapped Bank.");
-      M1_LOG_I(M1_LOGDB_TAG,
-               "FW update failed. Device got reset unexpectedly!\r\n");
-
-      // Wait for user acknowledgment
-      while (1) {
-        ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
-        if (ret == pdTRUE && q_item.q_evt_type == Q_EVENT_KEYPAD) {
-          ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
-          if (this_button_status.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK ||
-              this_button_status.event[BUTTON_BACK_KP_ID] ==
-                  BUTTON_EVENT_CLICK) {
-            break;
-          }
-        }
-      }
-    } // if (
-      // m1_device_stat.bu_regs.device_op_status==DEV_OP_STATUS_FW_UPDATE_ACTIVE
-      // )
-    else if (m1_device_stat.bu_regs.device_op_status ==
-             DEV_OP_STATUS_FW_UPDATE_COMPLETE) {
-      startup_bu_registers_init(); // Reinitialize after update
-      startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_NO_OP);
-      startup_info_screen_display("UPDATE COMPLETED!");
-      M1_LOG_I(M1_LOGDB_TAG, "FW update complete!\r\n");
-    } // else if (
-      // m1_device_stat.bu_regs.device_op_status==DEV_OP_STATUS_FW_UPDATE_COMPLETE
-      // )
-    else if (m1_device_stat.bu_regs.device_op_status ==
-             DEV_OP_STATUS_FW_ROLLBACK_COMPLETE) {
-      startup_bu_registers_init(); // Reinitialize after rollback
-      startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_NO_OP);
-      startup_info_screen_display("ROLLBACK COMPLETED!");
-      M1_LOG_I(M1_LOGDB_TAG, "FW rollback complete!\r\n");
-    } // else if (
-      // m1_device_stat.bu_regs.device_op_status==DEV_OP_STATUS_FW_ROLLBACK_COMPLETE
-      // )
-    else if (m1_device_stat.bu_regs.device_op_status == DEV_OP_STATUS_REBOOT) {
-      m1_led_fw_update_on(NULL);
-      if (!m1_device_stat.dev_reset_by_wdt) // Device got reset by normal cause?
-      {
-        vTaskDelay(POWER_UP_SYS_CONFIG_WAIT_TIME); // Wait for stable key press
-                                                   // during power up
-        do {
-          // menu_main_handler_task() is giving some time to this function to
-          // read the main_q_hdl during power-up.
-          ret = xQueueReceive(main_q_hdl, &q_item, 0);
-          if (ret != pdTRUE)
-            break;
-          if (q_item.q_evt_type != Q_EVENT_KEYPAD)
-            break;
-          ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
-          if ((this_button_status.event[BUTTON_BACK_KP_ID] ==
-               BUTTON_EVENT_CLICK) &&
-              (this_button_status.event[BUTTON_DOWN_KP_ID] ==
-               BUTTON_EVENT_CLICK)) // Rollback request?
-          {
-            // User requests the update rollback.
-            M1_LOG_I(M1_LOGDB_TAG, "Update rollback requested!\r\n");
-            // Display rollback confirm message here
-            bu_reg_read =
-                (uint32_t *)(FW_CONFIG_ADDRESS +
-                             M1_FLASH_BANK_SIZE); // Always read data from the
-                                                  // other bank
-            k = FW_CONFIG_SIZE / 4 - 1; // Convert to 32-bit and exclude the
-                                        // last slot for the add-on CRC32
-            for (i = 0; i < k; i++) {
-              if (*bu_reg_read == FW_CONFIG_MAGIC_NUMBER_2)
-                break;
-              bu_reg_read++;
-            } // for (i=0; i<k; i++)
-            if (i < k) {
-              M1_LOG_I(M1_LOGDB_TAG,
-                       "Valid firmware found for rollback. Checking CRC...");
-              bu_reg_read++; // Move to CRC32 location which is right after the
-                             // Magic Number 2
-              crc32_add = (uint32_t)
-                  bu_reg_read; // Get the CRC address and use it as the size of
-                               // the firmware resided in this bank
-              crc32_add -= (FW_START_ADDRESS +
-                            M1_FLASH_BANK_SIZE); // Exclude the size of bank 1
-              crc32_add /= 4; // convert size from byte to word (32-bit)
-              if (bl_crc_check(crc32_add) == BL_CODE_OK) {
-                M1_LOG_N(M1_LOGDB_TAG, "OK\r\n");
-                i++; // Move to CRC32 location which is right after the Magic
-                     // Number 2
-                memcpy((uint8_t *)&old_fw_config,
-                       (uint8_t *)(FW_CONFIG_ADDRESS + M1_FLASH_BANK_SIZE),
-                       i * 4);
-                fw_ver_new = *(uint32_t *)&m1_device_stat.config.fw_version_rc;
-                fw_ver_old = *(uint32_t *)&old_fw_config.fw_version_rc;
-                if (fw_ver_old < fw_ver_new) // Existing FW in bank 2 is older
-                                             // than current FW?
-                {
-                  M1_LOG_I(M1_LOGDB_TAG, "Rollback is ready!\r\n");
-                  startup_info_screen_display("FW ROLLBACK...");
-                  startup_config_write(BK_REGS_SELECT_DEV_OP_STAT,
-                                       DEV_OP_STATUS_FW_ROLLBACK_COMPLETE);
-                  vTaskDelay(pdMS_TO_TICKS(2000));
-                  bl_swap_banks();
-                } // if ( fw_ver_old < fw_ver_new )
-                else // Existing FW in bank 2 is newer than current FW. Rollback
-                     // is not allowed!
-                {
-                  M1_LOG_I(M1_LOGDB_TAG, "Rollback was already completed!\r\n");
-                }
-              } // if ( bl_crc_check(crc32_add)==BL_CODE_OK )
-              else {
-                M1_LOG_N(M1_LOGDB_TAG, "Failed\r\n");
-              } // else
-            } // if ( i < k )
-            else {
-              startup_info_screen_display("ROLLBACK FAILED!");
-              M1_LOG_I(M1_LOGDB_TAG,
-                       "No valid firmware found for rollback!\r\n");
-            } // else
-          } // if (
-            // (this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK)
-            // &&
-        } while (0);
-      } // if ( !m1_device_stat.dev_reset_by_wdt )
-      m1_led_fw_update_off();
-    } // else if ( m1_device_stat.bu_regs.device_op_status==DEV_OP_STATUS_REBOOT
-      // )
-    else if (m1_device_stat.bu_regs.device_op_status ==
-             DEV_OP_STATUS_USB_DFU_REQUEST) {
-      startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_NO_OP);
-      startup_info_screen_display("USB DFU MODE...");
-      firmware_update_enter_usb_dfu();
-      startup_info_screen_display("DFU MODE FAILED!");
-      M1_LOG_I(M1_LOGDB_TAG, "Failed to enter USB DFU mode!\r\n");
-    }
-  } // else
+  } else {
+    handle_device_op_status();
+  }
 
   if (m1_device_stat.op_mode != M1_OPERATION_MODE_DISPLAY_ON) {
     m1_gui_welcome_scr();
   }
-
   m1_device_stat.active_bank = bl_get_active_bank();
 
   M1_LOG_I(M1_LOGDB_TAG, "Device firmware version %d.%d.%d.%d.\r\n",
@@ -724,8 +712,6 @@ void startup_config_handler(void) {
            m1_device_stat.config.fw_version_build,
            m1_device_stat.config.fw_version_rc);
 } // void startup_config_handler(void)
-
-/*============================================================================*/
 /*
  * This function writes data to backup registers
  */

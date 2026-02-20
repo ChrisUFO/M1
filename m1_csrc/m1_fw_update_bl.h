@@ -54,6 +54,22 @@
 #define BANK1_ACTIVE 0x534A
 #define BANK2_ACTIVE 0x1F41
 
+// System configuration and boot status
+#define SYS_CONFIG_MAGIC_NUMBER ((uint32_t)0x534A1F41)
+
+typedef enum {
+  DEV_OP_STATUS_NO_OP = 0,
+  DEV_OP_STATUS_FW_UPDATE_ACTIVE,
+  DEV_OP_STATUS_FW_UPDATE_COMPLETE,
+  DEV_OP_STATUS_FW_ROLLBACK_COMPLETE,
+  DEV_OP_STATUS_REBOOT,
+  DEV_OP_STATUS_USB_DFU_REQUEST,
+  DEV_OP_STATUS_FW_ROLLBACK_REQ,
+  DEV_OP_STATUS_FW_ROLLBACK_START,
+  DEV_OP_STATUS_FW_INTEGRITY_FAIL = 0xEF,
+  DEV_OP_STATUS_UNKNOWN
+} S_M1_DEV_OP_STATUS_t;
+
 #define FW_UPDATE_SLIDER_WIDTH 5 // pixel
 #define FW_UPDATE_SLIDER_OVERLAP                                               \
   2 // pixel, each slider will be overlapped by 2 pixel when it's drawn on

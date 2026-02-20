@@ -108,6 +108,14 @@ if(OBJCOPY_TOOL)
         #COMMENT "Generating .bin file"
     )
 
+    # Command to test CRC32 algorithm integrity
+    add_custom_command(
+        COMMAND ${CMAKE_COMMAND} -E echo "Running CRC32 regression tests..."
+        TARGET ${CMAKE_PROJECT_NAME}
+        POST_BUILD
+        COMMAND python ${CMAKE_SOURCE_DIR}/tools/append_crc32.py ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin --test
+    )
+
     # Command to append CRC32 to .bin file (required for STM32 firmware update)
     add_custom_command(
         COMMAND ${CMAKE_COMMAND} -E echo "Appending CRC32 to ${CMAKE_PROJECT_NAME}.bin"
