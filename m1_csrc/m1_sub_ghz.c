@@ -266,7 +266,7 @@ void sub_ghz_record(void);
 void sub_ghz_replay(void);
 void sub_ghz_frequency_reader(void);
 void sub_ghz_regional_information(void);
-void sub_ghz_radio_settings(void);
+// void sub_ghz_radio_settings(void);
 
 static void sub_ghz_rx_init(void);
 static void sub_ghz_rx_start(void);
@@ -715,7 +715,8 @@ static int subghz_record_gui_message(void) {
       // m1_buzzer_notification();
       rcv_samples = ringbuffer_get_data_slots(&subghz_rx_rawdata_rb);
       if (rcv_samples >= SUBGHZ_RAW_DATA_SAMPLES_TO_RW) {
-        M1_LOG_N(M1_LOGDB_TAG, "Raw samples %lu\r\n", (unsigned long)rcv_samples);
+        M1_LOG_N(M1_LOGDB_TAG, "Raw samples %lu\r\n",
+                 (unsigned long)rcv_samples);
         sub_ghz_rx_raw_save(false, false);
         vTaskDelay(10); // Give the system some time in case RF noise is
                         // flooding the receiver
@@ -1306,16 +1307,16 @@ static uint8_t sub_ghz_file_load(void) {
       break;
     if (strcmp(&f_info->file_name[uret], SUB_GHZ_FILE_EXTENSION))
       break;
-    
+
     size_t d_len = strlen(f_info->dir_name);
     size_t f_len = strlen(f_info->file_name);
     if (d_len + f_len + 2 <= sizeof(datfile_info.dat_filename)) {
-        memcpy(datfile_info.dat_filename, f_info->dir_name, d_len);
-        datfile_info.dat_filename[d_len] = '/';
-        memcpy(&datfile_info.dat_filename[d_len+1], f_info->file_name, f_len);
-        datfile_info.dat_filename[d_len + 1 + f_len] = '\0';
+      memcpy(datfile_info.dat_filename, f_info->dir_name, d_len);
+      datfile_info.dat_filename[d_len] = '/';
+      memcpy(&datfile_info.dat_filename[d_len + 1], f_info->file_name, f_len);
+      datfile_info.dat_filename[d_len + 1 + f_len] = '\0';
     } else {
-        break;
+      break;
     }
 
     sys_error = sub_ghz_ring_buffers_init();
@@ -1495,7 +1496,8 @@ void sub_ghz_frequency_reader(void) {
                    M1_LCD_DISPLAY_WIDTH, 10); // Clear old content
       u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
       u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
-      sprintf((char *)prn_buffer, "%sMHz RSSI%ddBm", (char *)float_buffer, rssi);
+      sprintf((char *)prn_buffer, "%sMHz RSSI%ddBm", (char *)float_buffer,
+              rssi);
       u8g2_DrawStr(&m1_u8g2, 1, INFO_BOX_Y_POS_ROW_1 + detection_count * 10,
                    (char *)prn_buffer);
       m1_u8g2_nextpage(); // Update display RAM
@@ -1640,57 +1642,6 @@ void sub_ghz_regional_information(void) {
   } // while (1 ) // Main loop of this task
 
 } // void sub_ghz_regional_information(void)
-
-/*============================================================================*/
-/**
- * @brief
- * @param
- * @retval
- */
-/*============================================================================*/
-void sub_ghz_radio_settings(void) {
-  S_M1_Buttons_Status this_button_status;
-  S_M1_Main_Q_t q_item;
-  BaseType_t ret;
-
-  m1_gui_let_update_fw();
-
-  while (1) // Main loop of this task
-  {
-    ;
-    ; // Do other parts of this task here
-    ;
-
-    // Wait for the notification from button_event_handler_task to
-    // subfunc_handler_task. This task is the sub-task of subfunc_handler_task.
-    // The notification is given in the form of an item in the main queue.
-    // So let read the main queue.
-    ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
-    if (ret == pdTRUE) {
-      if (q_item.q_evt_type == Q_EVENT_KEYPAD) {
-        // Notification is only sent to this task when there's any button
-        // activity, so it doesn't need to wait when reading the event from the
-        // queue
-        ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
-        if (this_button_status.event[BUTTON_BACK_KP_ID] ==
-            BUTTON_EVENT_CLICK) // user wants to exit?
-        {
-          ; // Do extra tasks here if needed
-
-          xQueueReset(main_q_hdl); // Reset main q before return
-          break; // Exit and return to the calling task (subfunc_handler_task)
-        } // if ( m1_buttons_status[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK )
-        else {
-          ; // Do other things for this task, if needed
-        }
-      } // if ( q_item.q_evt_type==Q_EVENT_KEYPAD )
-      else {
-        ; // Do other things for this task
-      }
-    } // if (ret==pdTRUE)
-  } // while (1 ) // Main loop of this task
-
-} // void sub_ghz_radio_settings(void)
 
 /*============================================================================*/
 /*
@@ -2155,16 +2106,17 @@ static uint8_t sub_ghz_raw_samples_init(void) {
     double_buffer_ptr[0] = subghz_front_buffer;
     double_buffer_ptr[1] = subghz_back_buffer;
 
-    error =
-        m1_fb_open_file(&datfile_info.dat_file_hdl, (char *)datfile_info.dat_filename);
+    error = m1_fb_open_file(&datfile_info.dat_file_hdl,
+                            (char *)datfile_info.dat_filename);
     if (error)
       break;
 
     sdcard_dat_file_size = f_size(&datfile_info.dat_file_hdl);
     if (sdcard_dat_read_size > sdcard_dat_file_size)
       sdcard_dat_read_size = sdcard_dat_file_size;
-    sdcard_read_result = m1_fb_read_from_file(
-        &datfile_info.dat_file_hdl, (char *)sdcard_dat_buffer, sdcard_dat_read_size);
+    sdcard_read_result =
+        m1_fb_read_from_file(&datfile_info.dat_file_hdl,
+                             (char *)sdcard_dat_buffer, sdcard_dat_read_size);
     if (sdcard_read_result != sdcard_dat_read_size) {
       error = 1;
       break;
@@ -2183,8 +2135,8 @@ static uint8_t sub_ghz_raw_samples_init(void) {
 
     key_len = SUB_GHZ_DATAFILE_KEY_FORMAT_N;
     i = 0;
-    token =
-        (uint8_t *)strtok((char *)psdcard_dat_buffer, "\r\n"); // Tokenize this duplicated buffer
+    token = (uint8_t *)strtok((char *)psdcard_dat_buffer,
+                              "\r\n"); // Tokenize this duplicated buffer
     if (strstr((char *)token, subghz_datfile_keywords[i])) {
       if (strstr((char *)token, SUB_GHZ_DATAFILE_FILETYPE_NOISE))
         key_len = SUB_GHZ_DATAFILE_RAW_FORMAT_N;
@@ -2268,10 +2220,11 @@ static uint8_t sub_ghz_parse_raw_data(uint8_t buffer_ptr_id) {
   crlf = 0;
 
   while (true) {
-    token = (char *)strstr((char *)sdcard_buffer_run_ptr, " "); // Find next numbers
+    token =
+        (char *)strstr((char *)sdcard_buffer_run_ptr, " "); // Find next numbers
     if (token == NULL) {
       token = (char *)strstr((char *)sdcard_buffer_run_ptr,
-                     "\r\n"); // Find end of current data block
+                             "\r\n"); // Find end of current data block
       do {
         if (token == NULL) // Possibly last few characters of this buffer
         {
@@ -2312,9 +2265,9 @@ static uint8_t sub_ghz_parse_raw_data(uint8_t buffer_ptr_id) {
                 sdcard_dat_file_size) // Last block to read from file?
               sdcard_dat_read_size =
                   sdcard_dat_file_size; // Adjust the read size
-            sdcard_read_result =
-                m1_fb_read_from_file(&datfile_info.dat_file_hdl,
-                                     (char *)sdcard_dat_buffer, sdcard_dat_read_size);
+            sdcard_read_result = m1_fb_read_from_file(
+                &datfile_info.dat_file_hdl, (char *)sdcard_dat_buffer,
+                sdcard_dat_read_size);
             if (sdcard_read_result != sdcard_dat_read_size) {
               error_code = SUB_GHZ_RAW_DATA_PARSER_ERROR_L2;
               break;
@@ -2331,12 +2284,13 @@ static uint8_t sub_ghz_parse_raw_data(uint8_t buffer_ptr_id) {
                                       // block
             sdcard_dat_buffer[sdcard_dat_read_size] =
                 '\0'; // Add end of string to the buffer
-            token = (char *)strstr((char *)sdcard_buffer_run_ptr, " "); // Find next numbers
-            if (token == NULL)                          // Possibly error.
+            token = (char *)strstr((char *)sdcard_buffer_run_ptr,
+                                   " "); // Find next numbers
+            if (token == NULL)           // Possibly error.
             {
               token = (char *)strstr((char *)sdcard_buffer_run_ptr,
-                             "\r\n"); // Find end of current data block
-              if (token == NULL)      // Real error
+                                     "\r\n"); // Find end of current data block
+              if (token == NULL)              // Real error
                 error_code = SUB_GHZ_RAW_DATA_PARSER_ERROR_L3;
               else
                 crlf = 1; // CRLF found, likely reaching end of file
@@ -2539,8 +2493,8 @@ static uint8_t sub_ghz_rx_raw_save(bool header_init, bool last_data) {
   assert(prn_buffer != NULL);
   pfillbuffer = subghz_sdcard_write_buffer;
   if (header_init) {
-    sprintf((char *)pfillbuffer, "%s M1 SubGHz %s\r\n", subghz_datfile_keywords[0],
-            SUB_GHZ_DATAFILE_FILETYPE_KEYWORD);
+    sprintf((char *)pfillbuffer, "%s M1 SubGHz %s\r\n",
+            subghz_datfile_keywords[0], SUB_GHZ_DATAFILE_FILETYPE_KEYWORD);
     sprintf(prn_buffer, "%s %d.%d\r\n", subghz_datfile_keywords[1],
             m1_device_stat.config.fw_version_major,
             m1_device_stat.config.fw_version_minor);

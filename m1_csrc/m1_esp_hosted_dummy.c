@@ -10,9 +10,9 @@
 
 /*************************** I N C L U D E S **********************************/
 
-#include <stdint.h>
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 /*************************** D E F I N E S ************************************/
 
@@ -20,13 +20,10 @@
 
 /***************************** V A R I A B L E S ******************************/
 
-
 /********************* F U N C T I O N   P R O T O T Y P E S ******************/
 
 bool get_esp32_ready_status(void);
 void esp_restart(void);
-void esp32_app_init(void);
-void test_get_available_wifi(void);
 void esp32_app_init(void);
 /*************** F U N C T I O N   I M P L E M E N T A T I O N ****************/
 
@@ -35,32 +32,9 @@ void esp32_app_init(void);
  *
  */
 /*============================================================================*/
-bool get_esp32_ready_status(void)
-{
-	;
-	return 0;
+bool get_esp32_ready_status(void) {
+  ;
+  return 0;
 }
 
-
-
-/*============================================================================*/
-/*
- *
- */
-/*============================================================================*/
-void test_get_available_wifi(void)
-{
-	;
-}
-
-
-/*============================================================================*/
-/*
- *
- */
-/*============================================================================*/
-void esp32_app_init(void)
-{
-	;
-}
-
+void esp32_app_init(void) { ; }
