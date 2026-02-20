@@ -198,7 +198,7 @@ uint8_t SI446x_Poll_CTS(void) {
   return SI4463_CTS_READY;
 #else
   return SI446x_Get_Resp(0, NULL);
-#endif // #ifdef M1_APP_RADIO_POLL_CTS_ON_ON_GPIO
+#endif // #ifdef M1_APP_RADIO_POLL_CTS_ON_GPIO
 } // uint8_t SI446x_Poll_CTS(void)
 
 /******************************************************************************/
