@@ -16,6 +16,16 @@ and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 - **CLI Commands**:
   - Added new basic testing command `9` to purposely corrupt the firmware magic number.
 
+### Fixed
+- **Boot/Artifact Integrity Pipeline**:
+  - Fixed `.bin` generation to use `objcopy --gap-fill 0xFF` so CRC input matches erased flash semantics.
+  - Fixed `.hex` generation to be produced from the post-processed `.bin` (after `append_crc32.py`) instead of directly from `.elf`.
+  - Resolved non-booting firmware caused by mismatched flash image content vs embedded `fw_image_size`/CRC metadata in early boot verification.
+- **Linking/Startup Symbol Retention**:
+  - Updated final link strategy to force-retain `m1_core` objects while keeping `m1_drivers` linked normally, avoiding dropped startup/ISR overrides without introducing duplicate libc/syscall symbol conflicts.
+- **Documentation**:
+  - Documented the boot-critical artifact pipeline and flashing guidance in `README.md` and `ARCHITECTURE.md`.
+
 ## [v0.8.6] - 2026-02-19
 
 ### Changed
