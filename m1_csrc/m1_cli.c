@@ -878,9 +878,10 @@ void cmd_m1_mtest_subghz(char *pconsole, char *input_params[], uint8_t n_params,
             pinfo->CHIPREV, pinfo->ROMID);
     break;
 
+#if 0
   case 61:
     // Check for init status ready before executing...
-    M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: Sub-GHz - transmit in CW mode\r\n");
+    M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: Sub-GHz - transmit in CW mode (DISABLED)\r\n");
     if (n_params < 2) {
       strcpy(pconsole, "Error: missing parameter(s)!\r\n");
       break;
@@ -890,6 +891,7 @@ void cmd_m1_mtest_subghz(char *pconsole, char *input_params[], uint8_t n_params,
     // radio_set_antenna_mode(RADIO_ANTENNA_MODE_TX);
     // SI446x_Start_Tx_CW(input1_val, MODEM_MOD_TYPE_CW);
     break;
+#endif
 
   case 62:
     M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: Sub-GHz - set transmit power\r\n");
@@ -988,7 +990,7 @@ void cmd_m1_mtest_esp32(char *pconsole, char *input_params[], uint8_t n_params,
       if (!get_esp32_main_init_status())
         esp32_main_init();
       if (get_esp32_ready_status()) {
-        // test_get_available_wifi();
+        M1_LOG_N(M1_LOGDB_TAG, "WiFi scan not enabled.\r\n");
       } else {
         strcpy(pconsole, "ESP32 not ready!\r\n");
       }

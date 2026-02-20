@@ -18,7 +18,7 @@
 #include "main.h"
 #include "stm32h5xx_hal.h"
 #include <stdint.h>
-
+#include <string.h>
 
 #include "radio_config/m1_sub_ghz_915_rxtx_spc25_bwauto_baud106_dev200_e1_10_fsk.h"
 #include "radio_config/si4463_revc2_300_rxtx_spacing250_bw200_baud10_error1_10_OOK.h"
@@ -155,9 +155,7 @@ void Radio_Start_Tx(uint8_t CHANNEL, uint8_t CONDITION, uint16_t TX_LEN);
 void SI446x_Start_Tx(uint8_t channel, uint8_t *pradio_tx_buffer,
                      uint8_t length);
 void SI446x_Calibrate_IR(void);
-void SI446x_GPIO_Config(uint8_t GPIO0, uint8_t GPIO1, uint8_t GPIO2,
-                        uint8_t GPIO3, uint8_t NIRQ, uint8_t SDO,
-                        uint8_t GEN_CONFIG);
+// SI446x_GPIO_Config removed - see git history if needed.
 void SI446x_GPIO_ConfigFast(void);
 void SI446x_Change_State(uint8_t NEXT_STATE1);
 void SI446x_FiFoInfo(uint8_t FIFO);
@@ -167,7 +165,6 @@ void SI446x_Change_Modem_OOK_PDTC(uint8_t NEW_PDTC);
 void SI446x_Change_Radio_Setting(uint8_t mode, uint8_t pa_power);
 void SI446x_Set_Tx_Power(uint8_t power);
 void SI446x_Select_Frontend(S_M1_SubGHz_Band network);
-// void SI446x_Start_Tx_CW(uint16_t channel, uint8_t radio_mod_type);
 void radio_init_rx_tx(S_M1_SubGHz_Band freq, uint8_t mod_type, bool do_reset);
 void radio_patch_init(void);
 uint8_t radio_get_init_state(void);
@@ -205,7 +202,7 @@ uint8_t SI446x_Poll_CTS(void) {
   return SI4463_CTS_READY;
 #else
   return SI446x_Get_Resp(0, NULL);
-#endif // #ifdef M1_APP_RADIO_POLL_CTS_ON_GPIO
+#endif // #ifdef M1_APP_RADIO_POLL_CTS_ON_ON_GPIO
 } // uint8_t SI446x_Poll_CTS(void)
 
 /******************************************************************************/
@@ -652,36 +649,6 @@ void SI446x_Calibrate_IR(void) {
 
 /******************************************************************************/
 /*
- *	Configure the GPIO0-GPIO3
- */
-/******************************************************************************/
-void SI446x_GPIO_Config(uint8_t GPIO0, uint8_t GPIO1, uint8_t GPIO2,
-                        uint8_t GPIO3, uint8_t NIRQ, uint8_t SDO,
-                        uint8_t GEN_CONFIG) {
-  si446x_cmd_buffer[0] = SI446X_CMD_ID_GPIO_PIN_CFG;
-  si446x_cmd_buffer[1] = GPIO0;
-  si446x_cmd_buffer[2] = GPIO1;
-  si446x_cmd_buffer[3] = GPIO2;
-  si446x_cmd_buffer[4] = GPIO3;
-  si446x_cmd_buffer[5] = NIRQ;
-  si446x_cmd_buffer[6] = SDO;
-  si446x_cmd_buffer[7] = GEN_CONFIG;
-
-  SI446x_Send_Cmd(SI446X_CMD_ARG_COUNT_GPIO_PIN_CFG, si446x_cmd_buffer);
-  SI446x_Get_Resp(SI446X_CMD_REPLY_COUNT_GPIO_PIN_CFG, si446x_cmd_buffer);
-
-  si446x_cmd.GPIO_PIN_CFG.GPIO[0] = si446x_cmd_buffer[0];
-  si446x_cmd.GPIO_PIN_CFG.GPIO[1] = si446x_cmd_buffer[1];
-  si446x_cmd.GPIO_PIN_CFG.GPIO[2] = si446x_cmd_buffer[2];
-  si446x_cmd.GPIO_PIN_CFG.GPIO[3] = si446x_cmd_buffer[3];
-  si446x_cmd.GPIO_PIN_CFG.NIRQ = si446x_cmd_buffer[4];
-  si446x_cmd.GPIO_PIN_CFG.SDO = si446x_cmd_buffer[5];
-  si446x_cmd.GPIO_PIN_CFG.GEN_CONFIG = si446x_cmd_buffer[6];
-} // void SI446x_GPIO_Config(uint8_t GPIO0, uint8_t GPIO1, uint8_t GPIO2,
-  // uint8_t GPIO3, uint8_t NIRQ, uint8_t SDO, uint8_t GEN_CONFIG)
-
-/******************************************************************************/
-/*
  * Reads back current GPIO pin configuration. Does NOT configure GPIO pins
  */
 /******************************************************************************/
@@ -698,8 +665,7 @@ void SI446x_GPIO_ConfigFast(void) {
   si446x_cmd.GPIO_PIN_CFG.NIRQ = si446x_cmd_buffer[4];
   si446x_cmd.GPIO_PIN_CFG.SDO = si446x_cmd_buffer[5];
   si446x_cmd.GPIO_PIN_CFG.GEN_CONFIG = si446x_cmd_buffer[6];
-} // void SI446x_GPIO_Config(uint8_t GPIO0, uint8_t GPIO1, uint8_t GPIO2,
-  // uint8_t GPIO3, uint8_t NIRQ, uint8_t SDO, uint8_t GEN_CONFIG)
+} // void SI446x_GPIO_ConfigFast(void)
 
 /******************************************************************************/
 /*
@@ -830,81 +796,6 @@ void SI446x_Change_Radio_Setting(uint8_t mode, uint8_t pa_power) {
     break;
   } // switch (mode)
 } // void SI446x_Change_Radio_Setting(uint8_t mode, uint8_t pa_power)
-
-/******************************************************************************/
-/*
- * Start or stop the radio in CW mode
- *
- */
-/******************************************************************************/
-#if 0
-void SI446x_Start_Tx_CW(uint16_t channel, uint8_t radio_mod_type)
-{
-	GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-	if ( channel <= 255 ) // Turn on?
-	{
-		if  ( radio_state_flag & RADIO_STATE_TX_CW ) // Already in CW mode?
-			return;
-		radio_state_flag |= RADIO_STATE_TX_CW;
-		; // Switch to antenna output for Tx
-	    // Read INTs, clear pending ones
-	    SI446x_Get_IntStatus(0, 0, 0);
-	    SI446x_Change_State(SI446X_CMD_CHANGE_STATE_ARG_NEXT_STATE1_NEW_STATE_ENUM_READY);
-		// Direct mode asynchronous mode, TX direct mode on GPIO2,  modulation is sourced in real-time, OOK
-		// Mode: TX_DIRECT_MODE_TYPE[7]	TX_DIRECT_MODE_GPIO[6:5]	MOD_SOURCE[4:3]	MOD_TYPE[2:0]
-		//					1					10						01				000
-	    //																				CW		0
-	    //																				OOK		1
-	    //																				2FSK	2
-	    //																				2GFSK	3
-	    //																				4FSK	4
-	    //																				4GFSK	5
-		SI446x_Change_ModType(0xC8 | radio_mod_type);
-		// Set GPIO2 as Input to receive direct Tx data from host, others unchanged
-		SI446x_GPIO_Config(0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00);
-		// Set this pin to output
-		GPIO_InitStruct.Pin = SI4463_GPIO2_Pin;
-        GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-        GPIO_InitStruct.Pull = GPIO_NOPULL;
-        GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-        HAL_GPIO_Init(SI4463_GPIO2_GPIO_Port, &GPIO_InitStruct);
-
-        // Raise Tx data to high level
-        HAL_GPIO_WritePin(SI4463_GPIO2_GPIO_Port, SI4463_GPIO2_Pin, GPIO_PIN_SET);
-
-        // Read INTs, clear pending ones
-        SI446x_Get_IntStatus(0, 0, 0);
-
-        /* Start sending packet, channel 0, START immediately */
-    	Radio_Start_Tx(channel, START_TX_COMPLETE_STATE_NOCHANGE, 0); // Do not change state after completion of the packet transmission
-		; // Start timer to automatically stop the CW mode after some time!
-	} // if ( channel <= 255 )
-	else
-	{
-		if  ( !(radio_state_flag & RADIO_STATE_TX_CW) ) // Not in CW mode?
-			return;
-
-        // Restore GPIO2 as Tx Data output from FIFO, others unchanged
-        SI446x_GPIO_Config(0x00, 0x00, 0x13, 0x00, 0x00, 0x00, 0x00);
-
-		// Set this pin to input
-		GPIO_InitStruct.Pin = SI4463_GPIO2_Pin;
-        GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-        GPIO_InitStruct.Pull = GPIO_NOPULL;
-        GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-        HAL_GPIO_Init(SI4463_GPIO2_GPIO_Port, &GPIO_InitStruct);
-
-        // Direct mode asynchronous mode, TX direct mode on GPIO2,  modulation is sourced from the internal pseudo-random generator, OOK
-		// Mode: TX_DIRECT_MODE_TYPE[7]	TX_DIRECT_MODE_GPIO[6:5]	MOD_SOURCE[4:3]	MOD_TYPE[2:0]
-		//					1					10						00				001
-        SI446x_Change_ModType(0xC0 | radio_mod_type);
-        // Put the radio in sleep mode
-        SI446x_Change_State(SI446X_CMD_CHANGE_STATE_ARG_NEXT_STATE1_NEW_STATE_ENUM_SLEEP);
-        radio_state_flag = RADIO_STATE_IDLE; // reset status
-	} // else
-} // void SI446x_Start_Tx_CW(uint16_t channel, uint8_t radio_mod_type)
-#endif
 
 /******************************************************************************/
 /*

@@ -18,7 +18,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-
 #define SI446X_GRP_ID_0x22 0x22
 #define SI446X_GRP_ID_0x22_PA_PWR_LVL 0x01 // PA output power level.
 #define SI446X_GRP_ID_0x22_PA_BIAS_CLKDUTY                                     \
@@ -101,6 +100,9 @@ void SI446x_Start_Rx(uint8_t channel);
 void SI446x_Change_Radio_Setting(uint8_t mode, uint8_t pa_power);
 void SI446x_Set_Tx_Power(uint8_t power);
 void SI446x_Select_Frontend(S_M1_SubGHz_Band network);
+/* NOTE: SI446x_Start_Tx_CW removed in v0.8.6 for code hygiene.
+   Refer to git history if FCC/CW transmit test logic is required for
+   manufacturing. */
 // void SI446x_Start_Tx_CW(uint16_t channel, uint8_t radio_mod_type);
 struct si446x_reply_PART_INFO_map *SI446x_PartInfo(void);
 struct si446x_reply_REQUEST_DEVICE_STATE_map *SI446x_Request_DeviceState(void);
