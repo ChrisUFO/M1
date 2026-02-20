@@ -87,6 +87,14 @@ Current Settings submenu:
   - `m1_core`: Contains all ChrisUFO application logic. Built with strict `-Werror` enforcement.
   - `m1_drivers`: Contains third-party middleware (HAL, FreeRTOS, RFAL). Built with relaxed diagnostics to isolate legacy warnings.
 
+### Firmware Artifact Pipeline (Boot-Critical)
+
+- The release `.bin` is generated from ELF with `objcopy` using `--gap-fill 0xFF`.
+- `tools/append_crc32.py` then writes `fw_image_size` into `S_M1_FW_CONFIG_t` and appends the final CRC32 trailer.
+- The release `.hex` is generated from the post-processed `.bin` (binary input + base address `0x08000000`).
+- This ordering is required for v0.8.5+ early boot integrity checks in `boot_recovery_check()`.
+- If `.hex` is generated directly from `.elf`, flash contents can diverge from the CRC metadata and the device may fail boot integrity checks.
+
 ## Versioning
 
 This project uses **firmware versioning** (MAJOR.MINOR.BUILD.RC) rather than semantic versioning:
@@ -107,6 +115,17 @@ Version is defined in `m1_csrc/m1_fw_update_bl.h`:
 - **Filename:** `M1_v{MAJOR}.{MINOR}.{BUILD}-{FORK_TAG}.bin`
 - **Example:** `M1_v0.8.4-ChrisUFO.bin`
 - **Display:** "Version 0.8.4" on splash screen and About menu
+
+### Secure Boot Sequence
+
+To protect against corrupted flash banks (Issue #20), the M1 employs an early boot integrity check:
+1. `SystemInit()` in `system_stm32h5xx.c` invokes `boot_recovery_check()` before any RAM initialization.
+2. The STM32H5 Hardware CRC unit computes the CRC-32 of the active firmware bank (using sizes derived from `S_M1_FW_CONFIG_t` quadword-aligned).
+3. If the payload is invalid, the bootloader writes `BOOT_FAIL_SIGNATURE` (0xDEADBEEF) to `TAMP->BKP1R` and securely toggles the `SWAP_BANK` option byte.
+4. A system reset safely swaps to the alternate hardware bank. If both banks fail (detected by a persistent `BOOT_FAIL_SIGNATURE`), the system performs a robust direct jump to the STM32H5 System Memory (ROM) Bootloader at `0x0BF90000` for DFU recovery.
+
+Operational note:
+- Programming tools must flash artifacts that include the post-build `fw_image_size` and CRC metadata (the generated `distribution/*.hex` or `distribution/*.bin`). Mismatched artifacts can produce invalid startup vectors or immediate integrity-fail fallback.
 
 ### Changelog
 
