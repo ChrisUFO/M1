@@ -52,6 +52,7 @@
 #define IR_MAX_RECURSION_DEPTH 5
 #define IR_BROWSE_LEVEL_COUNT 3
 
+static StaticSemaphore_t ir_universal_mutex_storage;
 static SemaphoreHandle_t ir_universal_mutex = NULL;
 static S_IR_Device_t ir_device_workspace;
 static char ir_recent_lines[IR_MAX_RECENT][IR_UNIVERSAL_PATH_LEN_MAX];
@@ -125,26 +126,8 @@ static char *ir_trim(char *s) {
 }
 
 static bool ir_workspace_lock(void) {
-  SemaphoreHandle_t created = NULL;
-
   if (ir_universal_mutex == NULL) {
-    created = xSemaphoreCreateMutex();
-    if (created == NULL) {
-      return false;
-    }
-
-    taskENTER_CRITICAL();
-    if (ir_universal_mutex == NULL) {
-      __DSB();
-      __ISB();
-      ir_universal_mutex = created;
-      created = NULL;
-    }
-    taskEXIT_CRITICAL();
-
-    if (created != NULL) {
-      vSemaphoreDelete(created);
-    }
+    ir_universal_mutex = xSemaphoreCreateMutexStatic(&ir_universal_mutex_storage);
   }
   if (ir_universal_mutex == NULL) {
     return false;
@@ -832,6 +815,7 @@ static bool ir_browse_level(const char *base_path, const char *title,
   char(*names)[IR_NAME_BUF_LEN];
 
   if (level >= IR_BROWSE_LEVEL_COUNT) {
+    ir_ui_show_notice("IR Error:", "Too deep", IR_UI_FEEDBACK_MS_SHORT);
     return true;
   }
 
@@ -1110,10 +1094,12 @@ static void ir_dashboard(void) {
     }
     if (btn.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK) {
       if (sel == 0) { /* Favorites */
+        /* Shared search workspace; safe under ir_universal_mutex lock. */
         uint8_t c = ir_list_from_file(IR_FAVORITES_FILE, ir_search_names,
                                       ir_search_paths, IR_MAX_FAVORITES);
         ir_show_fixed_list("Favorites", ir_search_names, ir_search_paths, c);
       } else if (sel == 1) { /* Recent */
+        /* Shared search workspace; safe under ir_universal_mutex lock. */
         uint8_t c = ir_list_from_file(IR_RECENT_FILE, ir_search_names,
                                       ir_search_paths, IR_MAX_RECENT);
         ir_show_fixed_list("Recent", ir_search_names, ir_search_paths, c);

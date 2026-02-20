@@ -324,6 +324,7 @@ static void subghz_record_gui_update(uint8_t param);
 static int subghz_record_gui_message(void);
 static int subghz_record_kp_handler(void);
 static void subghz_rx_dma_process_blocks(void);
+static void subghz_rx_dma_invalidate_block(uint32_t start, uint32_t count);
 
 static void subghz_replay_browse_gui_init(void);
 static void subghz_replay_browse_gui_create(uint8_t param);
@@ -659,7 +660,7 @@ static void subghz_record_gui_update(uint8_t param) {
 
     u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
     char status_line[24];
-    char counters_line[24];
+    char counters_line[40];
     snprintf(status_line, sizeof(status_line), "Capture: %s",
              subghz_rx_queue_notify_pending ? "Flush" : "Live");
     snprintf(counters_line, sizeof(counters_line), "H%lu T%lu D%lu",
@@ -777,6 +778,8 @@ static void subghz_rx_dma_process_blocks(void) {
     uint32_t end = start + SUBGHZ_RX_DMA_BLOCK_SAMPLES;
     uint32_t idx;
 
+    subghz_rx_dma_invalidate_block(start, SUBGHZ_RX_DMA_BLOCK_SAMPLES);
+
     for (idx = start; idx < end; idx++) {
       uint32_t cur_capture = subghz_rx_dma_buffer[idx];
       uint32_t pulse_width;
@@ -820,6 +823,22 @@ static void subghz_rx_dma_process_blocks(void) {
     }
     sub_ghz_rx_raw_save(false, false);
   }
+}
+
+static void subghz_rx_dma_invalidate_block(uint32_t start, uint32_t count) {
+#if defined(__DCACHE_PRESENT) && (__DCACHE_PRESENT == 1U)
+  if ((SCB->CCR & SCB_CCR_DC_Msk) != 0U) {
+    uintptr_t addr = (uintptr_t)&subghz_rx_dma_buffer[start];
+    uintptr_t end = addr + ((uintptr_t)count * sizeof(uint32_t));
+    uintptr_t aligned_start = addr & ~(uintptr_t)0x1FU;
+    uintptr_t aligned_end = (end + 31U) & ~(uintptr_t)0x1FU;
+    SCB_InvalidateDCache_by_Addr((uint32_t *)aligned_start,
+                                 (int32_t)(aligned_end - aligned_start));
+  }
+#else
+  (void)start;
+  (void)count;
+#endif
 }
 
 static int subghz_record_gui_message(void) {
