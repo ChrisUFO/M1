@@ -147,4 +147,7 @@ extern DMA_HandleTypeDef	hdma_subghz_tx;
 extern uint8_t subghz_tx_tc_flag;
 extern S_M1_RingBuffer subghz_rx_rawdata_rb;
 extern uint8_t subghz_record_mode_flag;
+extern volatile uint8_t subghz_rx_queue_notify_pending;
+extern volatile uint32_t subghz_rx_throttle_count;
+extern volatile uint32_t subghz_rx_queue_drop_count;
 #endif /* M1_SUB_GHZ_H_ */

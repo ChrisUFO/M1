@@ -271,7 +271,10 @@ void USART1_IRQHandler(void)
 		{ // add device ID
 			logdb_rx_buffer[1] = TASK_NOTIFY_USART1;
 			//send the char to the command line task
-			xTaskNotifyFromISR(cmdLineTaskHandle, (uint32_t)logdb_rx_buffer[0], eSetValueWithOverwrite , &xHigherPriorityTaskWoken);
+			xTaskNotifyFromISR(cmdLineTaskHandle,
+							  (uint32_t)logdb_rx_buffer[0] + ((uint32_t)TASK_NOTIFY_USART1 << 8),
+							  eSetValueWithOverwrite,
+							  &xHigherPriorityTaskWoken);
 		}
 		portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 #endif // #ifdef M1_DEBUG_CLI_ENABLE
@@ -667,9 +670,9 @@ void TIM1_UP_IRQHandler(void)
 void TIM1_CC_IRQHandler(void)
 {
 	uint32_t cap_val;
+	uint32_t rcv_samples;
 	S_M1_Main_Q_t q_item;
 	portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
-	static uint16_t pulse_counter = 0;
 	uint8_t send_to_q;
 
 	/* Clear Capture Compare flag */
@@ -699,7 +702,6 @@ void TIM1_CC_IRQHandler(void)
 		{
 			subghz_decenc_ctl.pulse_det_stat = PULSE_DET_NORMAL; // Update state
 			subghz_decenc_ctl.pulse_det_pol = PULSE_DET_RISING; // Update current edge
-			pulse_counter = 0;
 		} // if ( SUBGHZ_RX_GPIO_PORT->IDR & SUBGHZ_RX_GPIO_PIN )
 		return;
 	} // if ( subghz_decenc_ctl.pulse_det_stat==PULSE_DET_ACTIVE )
@@ -742,21 +744,30 @@ void TIM1_CC_IRQHandler(void)
 #endif // #ifdef M1_APP_SUB_GHZ_RAW_DATA_RX_NOISE_FILTER_ENABLE
 		{
 			m1_ringbuffer_insert(&subghz_rx_rawdata_rb, (uint8_t *)&cap_val);
-			pulse_counter++;
-			if ( pulse_counter >= SUBGHZ_RAW_DATA_SAMPLES_TO_RW )
+			send_to_q = 0;
+			if ( !subghz_rx_queue_notify_pending )
 			{
-				pulse_counter = 0;
-			} // if ( pulse_counter >= SUBGHZ_RAW_DATA_SAMPLES_TO_RW )
+				rcv_samples = ringbuffer_get_data_slots(&subghz_rx_rawdata_rb);
+				if ( rcv_samples >= SUBGHZ_RAW_DATA_SAMPLES_TO_RW )
+				{
+					send_to_q = 1;
+					subghz_rx_queue_notify_pending = 1;
+				}
+			}
 			else
 			{
-				send_to_q = 0; // Do not flood queue for the raw data
+				subghz_rx_throttle_count++;
 			}
 		}
 	} // if ( subghz_record_mode_flag )
 	if ( send_to_q )
 	{
 		q_item.q_evt_type = Q_EVENT_SUBGHZ_RX;
-		xQueueSendFromISR(main_q_hdl, &q_item, &xHigherPriorityTaskWoken); // Send sample to queue, return: pdPASS or errQUEUE_FULL
+		if ( xQueueSendFromISR(main_q_hdl, &q_item, &xHigherPriorityTaskWoken) != pdPASS )
+		{
+			subghz_rx_queue_notify_pending = 0;
+			subghz_rx_queue_drop_count++;
+		}
 		portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 	} // if ( send_to_q )
 

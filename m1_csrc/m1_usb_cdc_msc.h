@@ -64,6 +64,7 @@ extern volatile uint16_t head_usart1_dma;
 extern volatile uint16_t tail_usart1_dma;
 
 extern StreamBufferHandle_t h_usb_rx_streambuf;
+extern StreamBufferHandle_t h_usb_cli_rx_streambuf;
 extern SemaphoreHandle_t ser2usb_task_semaphore;
 extern SemaphoreHandle_t usb2ser_tx_semaphore;
 

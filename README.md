@@ -32,6 +32,7 @@ See [HARDWARE.md](HARDWARE.md) for more details.
 ## Documentation
 
 - [Build Tool (mbt)](documentation/mbt.md) – Build with STM32CubeIDE or VS Code
+- [Stability Validation](documentation/stability_phase5_validation.md) – Reproducible validation for Issues #22/#26/#27
 - [Architecture](ARCHITECTURE.md) – Project structure
 - [Development](DEVELOPMENT.md) – Development guidelines
 - [Changelog](CHANGELOG.md) – Release history

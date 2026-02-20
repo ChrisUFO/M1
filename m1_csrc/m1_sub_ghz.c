@@ -245,6 +245,9 @@ static uint16_t *double_buffer_ptr[2];
 static uint32_t sdcard_dat_file_size, sdcard_dat_buffer_end_pos;
 uint8_t subghz_tx_tc_flag;
 uint8_t subghz_record_mode_flag = 0;
+volatile uint8_t subghz_rx_queue_notify_pending = 0;
+volatile uint32_t subghz_rx_throttle_count = 0;
+volatile uint32_t subghz_rx_queue_drop_count = 0;
 static uint8_t subghz_uiview_gui_latest_param;
 static uint8_t subghz_replay_ret_code;
 static uint8_t subghz_replay_mod;
@@ -610,6 +613,17 @@ static void subghz_record_gui_update(uint8_t param) {
                       M1_DISP_DRAW_COLOR_BG); // Write text in inverted color
     u8g2_DrawXBMP(&m1_u8g2, 84, 52, 10, 10, target_10x10); // draw TARGET icon
     u8g2_DrawStr(&m1_u8g2, 96, 61, "Stop ");
+
+    u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+    char status_line[24];
+    char counters_line[24];
+    snprintf(status_line, sizeof(status_line), "Capture: %s",
+             subghz_rx_queue_notify_pending ? "Flush" : "Live");
+    snprintf(counters_line, sizeof(counters_line), "Thr:%lu Ovr:%lu",
+             (unsigned long)subghz_rx_throttle_count,
+             (unsigned long)subghz_rx_queue_drop_count);
+    u8g2_DrawStr(&m1_u8g2, 2, 44, status_line);
+    u8g2_DrawStr(&m1_u8g2, 2, 51, counters_line);
     break;
 
   case SUBGHZ_RECORD_DISPLAY_PARAM_COMPLETE:
@@ -711,6 +725,7 @@ static int subghz_record_gui_message(void) {
       // queue
       ret_val = subghz_record_kp_handler();
     } else if (q_item.q_evt_type == Q_EVENT_SUBGHZ_RX) {
+      subghz_rx_queue_notify_pending = 0;
       // arrpush(subghz_rx_q, q_item);
       // m1_buzzer_notification();
       rcv_samples = ringbuffer_get_data_slots(&subghz_rx_rawdata_rb);
@@ -718,6 +733,9 @@ static int subghz_record_gui_message(void) {
         M1_LOG_N(M1_LOGDB_TAG, "Raw samples %lu\r\n",
                  (unsigned long)rcv_samples);
         sub_ghz_rx_raw_save(false, false);
+        if (subghz_uiview_gui_latest_param == SUBGHZ_RECORD_DISPLAY_PARAM_ACTIVE) {
+          subghz_record_gui_update(SUBGHZ_RECORD_DISPLAY_PARAM_ACTIVE);
+        }
         vTaskDelay(10); // Give the system some time in case RF noise is
                         // flooding the receiver
       } // if ( rcv_samples >= SUBGHZ_RAW_DATA_SAMPLES_TO_RW )
@@ -836,6 +854,9 @@ static int subghz_record_kp_handler(void) {
           sub_ghz_rx_init();
           sub_ghz_rx_start();
           subghz_record_mode_flag = true;
+          subghz_rx_queue_notify_pending = 0;
+          subghz_rx_throttle_count = 0;
+          subghz_rx_queue_drop_count = 0;
           m1_uiView_display_update(SUBGHZ_RECORD_DISPLAY_PARAM_ACTIVE);
         } // if ( !ret )
         else {
@@ -1991,6 +2012,9 @@ static void sub_ghz_ring_buffers_deinit(void) {
     subghz_sdcard_write_buffer = NULL;
   }
   subghz_record_mode_flag = false;
+  subghz_rx_queue_notify_pending = 0;
+  subghz_rx_throttle_count = 0;
+  subghz_rx_queue_drop_count = 0;
   M1_LOG_I(M1_LOGDB_TAG, "sub_ghz_ring_buffers_deinit %d\r\n",
            subghz_back_buffer_size);
 } // static void sub_ghz_ring_buffers_deinit(void)

@@ -24,6 +24,7 @@
 #include "m1_tasks.h"
 #include "m1_virtual_kb.h"
 #include "main.h"
+#include "semphr.h"
 #include "stm32h5xx_hal.h"
 #include <ctype.h>
 #include <stdbool.h>
@@ -49,6 +50,24 @@
 #define IR_MAX_FAVORITES 20
 #define IR_SEARCH_MAX_RESULTS 32
 #define IR_MAX_RECURSION_DEPTH 5
+#define IR_BROWSE_LEVEL_COUNT 3
+
+static SemaphoreHandle_t ir_universal_mutex = NULL;
+static S_IR_Device_t ir_device_workspace;
+static char ir_recent_lines[IR_MAX_RECENT][IR_UNIVERSAL_PATH_LEN_MAX];
+static char ir_favorite_lines[IR_MAX_FAVORITES][IR_UNIVERSAL_PATH_LEN_MAX];
+static char ir_search_names[IR_SEARCH_MAX_RESULTS][IR_NAME_BUF_LEN];
+static char ir_search_paths[IR_SEARCH_MAX_RESULTS][IR_UNIVERSAL_PATH_LEN_MAX];
+static char ir_browse_names[IR_BROWSE_LEVEL_COUNT][IR_LIST_MAX_ENTRIES]
+                           [IR_NAME_BUF_LEN];
+static DIR ir_search_dirs[IR_MAX_RECURSION_DEPTH + 1];
+static FILINFO ir_search_fis[IR_MAX_RECURSION_DEPTH + 1];
+static char ir_search_full_paths[IR_MAX_RECURSION_DEPTH + 1]
+                                [IR_UNIVERSAL_PATH_LEN_MAX];
+static char ir_search_lower_names[IR_MAX_RECURSION_DEPTH + 1][IR_NAME_BUF_LEN];
+
+#define IR_UI_FEEDBACK_MS_SHORT 800
+#define IR_UI_FEEDBACK_MS_DEFAULT 1500
 
 /* -------------------------------------------------------------------------
  * Protocol name -> IRMP ID mapping table
@@ -102,6 +121,22 @@ static char *ir_trim(char *s) {
     end--;
   *(end + 1) = '\0';
   return s;
+}
+
+static bool ir_workspace_lock(void) {
+  if (ir_universal_mutex == NULL) {
+    ir_universal_mutex = xSemaphoreCreateMutex();
+  }
+  if (ir_universal_mutex == NULL) {
+    return false;
+  }
+  return (xSemaphoreTake(ir_universal_mutex, pdMS_TO_TICKS(1000)) == pdTRUE);
+}
+
+static void ir_workspace_unlock(void) {
+  if (ir_universal_mutex != NULL) {
+    xSemaphoreGive(ir_universal_mutex);
+  }
 }
 
 /* Parse a hex byte string like "07 00 00 00" -> return first two bytes as
@@ -291,15 +326,19 @@ static void ir_ui_draw_list(const char *title, const char *entries[],
   m1_u8g2_nextpage();
 }
 
-/* Show a simple error message */
-static void ir_ui_show_error(const char *msg) {
+static void ir_ui_show_notice(const char *title, const char *msg,
+                              uint32_t delay_ms) {
   m1_u8g2_firstpage();
   u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
   u8g2_SetFont(&m1_u8g2, M1_DISP_FUNC_MENU_FONT_N);
   u8g2_DrawXBMP(&m1_u8g2, 2, 2, 48, 25, remote_48x25);
-  u8g2_DrawStr(&m1_u8g2, 55, 15, "IR Error:");
+  u8g2_DrawStr(&m1_u8g2, 55, 15, title);
   u8g2_DrawStr(&m1_u8g2, 2, 30, msg);
   m1_u8g2_nextpage();
+
+  if (delay_ms > 0U) {
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+  }
 }
 
 /* Show "Sending..." overlay */
@@ -317,13 +356,19 @@ static void ir_ui_show_sending(const char *cmd_name) {
 }
 
 /* Show "Scanning..." overlay for search */
-static void ir_ui_show_scanning(void) {
+static void ir_ui_show_scanning(const char *query) {
+  char buf[IR_DISP_COL_MAX + 1];
   m1_u8g2_firstpage();
   u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
   u8g2_SetFont(&m1_u8g2, M1_DISP_FUNC_MENU_FONT_N);
   u8g2_DrawXBMP(&m1_u8g2, 2, 2, 48, 25, remote_48x25);
-  u8g2_DrawStr(&m1_u8g2, 55, 15, "Scanning...");
-  u8g2_DrawStr(&m1_u8g2, 55, 25, "Please wait");
+  u8g2_DrawStr(&m1_u8g2, 55, 15, "Searching...");
+  u8g2_DrawStr(&m1_u8g2, 55, 25, "IR database");
+  if (query != NULL && query[0] != '\0') {
+    strncpy(buf, query, IR_DISP_COL_MAX);
+    buf[IR_DISP_COL_MAX] = '\0';
+    u8g2_DrawStr(&m1_u8g2, 2, 40, buf);
+  }
   m1_u8g2_nextpage();
 }
 
@@ -332,14 +377,9 @@ static void ir_ui_show_scanning(void) {
  * ---------------------------------------------------------------------- */
 
 static void ir_add_recent(const char *path) {
-  char (*lines)[IR_UNIVERSAL_PATH_LEN_MAX];
   uint8_t count = 0;
   FIL f;
   FRESULT fr;
-
-  lines = pvPortMalloc(IR_MAX_RECENT * IR_UNIVERSAL_PATH_LEN_MAX);
-  if (!lines)
-    return;
 
   /* Ensure directory exists - removed redundant f_mkdir("0:/System") */
 
@@ -347,10 +387,10 @@ static void ir_add_recent(const char *path) {
   fr = f_open(&f, IR_RECENT_FILE, FA_READ | FA_OPEN_ALWAYS);
   if (fr == FR_OK) {
     while (count < IR_MAX_RECENT &&
-           f_gets(lines[count], IR_UNIVERSAL_PATH_LEN_MAX, &f)) {
-      char *p = ir_trim(lines[count]);
+           f_gets(ir_recent_lines[count], IR_UNIVERSAL_PATH_LEN_MAX, &f)) {
+      char *p = ir_trim(ir_recent_lines[count]);
       if (p[0] != '\0' && strcmp(p, path) != 0) {
-        memmove(lines[count], p, strlen(p) + 1);
+        memmove(ir_recent_lines[count], p, strlen(p) + 1);
         count++;
       }
     }
@@ -362,12 +402,10 @@ static void ir_add_recent(const char *path) {
   if (fr == FR_OK) {
     f_printf(&f, "%s\n", path);
     for (uint8_t i = 0; i < count && i < (IR_MAX_RECENT - 1); i++) {
-      f_printf(&f, "%s\n", lines[i]);
+      f_printf(&f, "%s\n", ir_recent_lines[i]);
     }
     f_close(&f);
   }
-
-  vPortFree(lines);
 }
 
 static bool ir_is_favorite(const char *path) {
@@ -390,28 +428,23 @@ static bool ir_is_favorite(const char *path) {
 }
 
 static void ir_toggle_favorite(const char *path) {
-  char (*lines)[IR_UNIVERSAL_PATH_LEN_MAX];
   uint8_t count = 0;
   bool already_fav = false;
   FIL f;
   FRESULT fr;
 
-  lines = pvPortMalloc(IR_MAX_FAVORITES * IR_UNIVERSAL_PATH_LEN_MAX);
-  if (!lines)
-    return;
-
   /* Read current list */
   fr = f_open(&f, IR_FAVORITES_FILE, FA_READ | FA_OPEN_ALWAYS);
   if (fr == FR_OK) {
     while (count < IR_MAX_FAVORITES &&
-           f_gets(lines[count], IR_UNIVERSAL_PATH_LEN_MAX, &f)) {
-      char *p = ir_trim(lines[count]);
+           f_gets(ir_favorite_lines[count], IR_UNIVERSAL_PATH_LEN_MAX, &f)) {
+      char *p = ir_trim(ir_favorite_lines[count]);
       if (p[0] != '\0') {
         if (strcmp(p, path) == 0) {
           already_fav = true;
           /* skip adding to the list we will rewrite (removing it) */
         } else {
-          memmove(lines[count], p, strlen(p) + 1);
+          memmove(ir_favorite_lines[count], p, strlen(p) + 1);
           count++;
         }
       }
@@ -428,16 +461,15 @@ static void ir_toggle_favorite(const char *path) {
     }
     for (uint8_t i = 0;
          i < count && i < (IR_MAX_FAVORITES - (already_fav ? 0 : 1)); i++) {
-      f_printf(&f, "%s\n", lines[i]);
+      f_printf(&f, "%s\n", ir_favorite_lines[i]);
     }
     f_close(&f);
 
     /* Feedback */
-    ir_ui_show_error(already_fav ? "Removed Favorite" : "Added Favorite");
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    ir_ui_show_notice("IR Status:",
+                      already_fav ? "Removed Favorite" : "Added Favorite",
+                      IR_UI_FEEDBACK_MS_SHORT);
   }
-
-  vPortFree(lines);
 }
 
 static uint8_t ir_list_from_file(const char *file_path,
@@ -493,26 +525,22 @@ static void ir_search_recursive(const char *path, const char *lower_query,
                                 char paths[][IR_UNIVERSAL_PATH_LEN_MAX],
                                 uint8_t *count, uint8_t max_entries,
                                 uint8_t depth) {
-  DIR *dir = NULL;
-  FILINFO *fi = NULL;
-  char *full_path = NULL;
-  char *lower_name = NULL;
+  DIR *dir;
+  FILINFO *fi;
+  char *full_path;
+  char *lower_name;
 
   /* Hardening: recursion depth limit and result limit */
   if (depth > IR_MAX_RECURSION_DEPTH || *count >= max_entries)
     return;
 
-  /* Allocate large buffers on the heap to avoid stack overflow */
-  dir = pvPortMalloc(sizeof(DIR));
-  fi = pvPortMalloc(sizeof(FILINFO));
-  full_path = pvPortMalloc(IR_UNIVERSAL_PATH_LEN_MAX);
-  lower_name = pvPortMalloc(IR_NAME_BUF_LEN);
-
-  if (!dir || !fi || !full_path || !lower_name)
-    goto cleanup;
+  dir = &ir_search_dirs[depth];
+  fi = &ir_search_fis[depth];
+  full_path = ir_search_full_paths[depth];
+  lower_name = ir_search_lower_names[depth];
 
   if (f_opendir(dir, path) != FR_OK)
-    goto cleanup;
+    return;
 
   while (f_readdir(dir, fi) == FR_OK && fi->fname[0] != '\0' &&
          *count < max_entries) {
@@ -551,16 +579,6 @@ static void ir_search_recursive(const char *path, const char *lower_query,
     }
   }
   f_closedir(dir);
-
-cleanup:
-  if (dir)
-    vPortFree(dir);
-  if (fi)
-    vPortFree(fi);
-  if (full_path)
-    vPortFree(full_path);
-  if (lower_name)
-    vPortFree(lower_name);
 }
 
 /* -------------------------------------------------------------------------
@@ -643,7 +661,7 @@ static uint8_t ir_list_dir(const char *path, char names[][IR_NAME_BUF_LEN],
  * ---------------------------------------------------------------------- */
 
 static bool ir_run_command_ui(const char *file_path, const char *device_name) {
-  S_IR_Device_t *dev;
+  S_IR_Device_t *dev = &ir_device_workspace;
   const char *ptrs[IR_UNIVERSAL_CMDS_MAX];
   S_M1_Buttons_Status btn;
   S_M1_Main_Q_t q_item;
@@ -653,18 +671,8 @@ static bool ir_run_command_ui(const char *file_path, const char *device_name) {
   uint8_t i;
   bool tx_active = false;
 
-  /* Allocate device on heap to avoid large stack frame */
-  dev = (S_IR_Device_t *)pvPortMalloc(sizeof(S_IR_Device_t));
-  if (!dev) {
-    ir_ui_show_error("No memory");
-    vTaskDelay(pdMS_TO_TICKS(1500));
-    return true;
-  }
-
   if (ir_universal_parse_file(file_path, dev) == 0) {
-    ir_ui_show_error("Parse failed");
-    vTaskDelay(pdMS_TO_TICKS(1500));
-    vPortFree(dev);
+    ir_ui_show_notice("IR Error:", "Parse failed", IR_UI_FEEDBACK_MS_DEFAULT);
     return true;
   }
 
@@ -734,7 +742,6 @@ static bool ir_run_command_ui(const char *file_path, const char *device_name) {
       }
       infrared_encode_sys_deinit();
       xQueueReset(main_q_hdl);
-      vPortFree(dev);
       return true;
     }
 
@@ -792,15 +799,15 @@ static bool ir_browse_level(const char *base_path, const char *title,
                             uint8_t level) {
   uint16_t skip_count = 0;
   uint8_t items_per_page = IR_LIST_MAX_ENTRIES - 2; /* reserve for next/prev */
+  char(*names)[IR_NAME_BUF_LEN];
+
+  if (level >= IR_BROWSE_LEVEL_COUNT) {
+    return true;
+  }
+
+  names = ir_browse_names[level];
 
   while (1) {
-    char (*names)[IR_NAME_BUF_LEN] =
-        pvPortMalloc(IR_LIST_MAX_ENTRIES * IR_NAME_BUF_LEN);
-    if (!names) {
-      ir_ui_show_error("No memory");
-      vTaskDelay(pdMS_TO_TICKS(1500));
-      return true;
-    }
     const char *ptrs[IR_LIST_MAX_ENTRIES];
     S_M1_Buttons_Status btn;
     S_M1_Main_Q_t q_item;
@@ -820,9 +827,7 @@ static bool ir_browse_level(const char *base_path, const char *title,
                         ir_files_only, skip_count, &more_items);
 
     if (count == 0 && skip_count == 0) {
-      ir_ui_show_error("Empty folder");
-      vTaskDelay(pdMS_TO_TICKS(1500));
-      vPortFree(names);
+      ir_ui_show_notice("IR Status:", "Empty folder", IR_UI_FEEDBACK_MS_DEFAULT);
       return true;
     }
 
@@ -858,9 +863,7 @@ static bool ir_browse_level(const char *base_path, const char *title,
     while (!reload) {
       /* Hardening: Check SD status periodically */
       if (m1_sdcard_get_status() != SD_access_OK) {
-        ir_ui_show_error("SD Removed");
-        vTaskDelay(pdMS_TO_TICKS(1500));
-        vPortFree(names);
+        ir_ui_show_notice("IR Error:", "SD Removed", IR_UI_FEEDBACK_MS_DEFAULT);
         return false; /* Exit completely */
       }
 
@@ -874,7 +877,6 @@ static bool ir_browse_level(const char *base_path, const char *title,
 
       if (btn.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK) {
         xQueueReset(main_q_hdl);
-        vPortFree(names);
         return true;
       }
 
@@ -982,7 +984,6 @@ static bool ir_browse_level(const char *base_path, const char *title,
         continue;
       }
     }
-    vPortFree(names);
   }
 }
 
@@ -999,8 +1000,7 @@ static void ir_show_fixed_list(const char *title, char names[][IR_NAME_BUF_LEN],
   S_M1_Main_Q_t q_item;
 
   if (count == 0) {
-    ir_ui_show_error("List empty");
-    vTaskDelay(pdMS_TO_TICKS(1500));
+    ir_ui_show_notice("IR Status:", "List empty", IR_UI_FEEDBACK_MS_DEFAULT);
     return;
   }
 
@@ -1080,73 +1080,31 @@ static void ir_dashboard(void) {
     }
     if (btn.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK) {
       if (sel == 0) { /* Favorites */
-        char (*names)[IR_NAME_BUF_LEN] =
-            pvPortMalloc(IR_MAX_FAVORITES * IR_NAME_BUF_LEN);
-        char (*paths)[IR_UNIVERSAL_PATH_LEN_MAX] =
-            pvPortMalloc(IR_MAX_FAVORITES * IR_UNIVERSAL_PATH_LEN_MAX);
-
-        if (names && paths) {
-          uint8_t c = ir_list_from_file(IR_FAVORITES_FILE, names, paths,
-                                        IR_MAX_FAVORITES);
-          ir_show_fixed_list("Favorites", names, paths, c);
-        } else {
-          ir_ui_show_error("No memory");
-          vTaskDelay(pdMS_TO_TICKS(1500));
-        }
-        if (names)
-          vPortFree(names);
-        if (paths)
-          vPortFree(paths);
+        uint8_t c = ir_list_from_file(IR_FAVORITES_FILE, ir_search_names,
+                                      ir_search_paths, IR_MAX_FAVORITES);
+        ir_show_fixed_list("Favorites", ir_search_names, ir_search_paths, c);
       } else if (sel == 1) { /* Recent */
-        char (*names)[IR_NAME_BUF_LEN] =
-            pvPortMalloc(IR_MAX_RECENT * IR_NAME_BUF_LEN);
-        char (*paths)[IR_UNIVERSAL_PATH_LEN_MAX] =
-            pvPortMalloc(IR_MAX_RECENT * IR_UNIVERSAL_PATH_LEN_MAX);
-
-        if (names && paths) {
-          uint8_t c =
-              ir_list_from_file(IR_RECENT_FILE, names, paths, IR_MAX_RECENT);
-          ir_show_fixed_list("Recent", names, paths, c);
-        } else {
-          ir_ui_show_error("No memory");
-          vTaskDelay(pdMS_TO_TICKS(1500));
-        }
-        if (names)
-          vPortFree(names);
-        if (paths)
-          vPortFree(paths);
+        uint8_t c = ir_list_from_file(IR_RECENT_FILE, ir_search_names,
+                                      ir_search_paths, IR_MAX_RECENT);
+        ir_show_fixed_list("Recent", ir_search_names, ir_search_paths, c);
       } else if (sel == 2) { /* Search */
         char query[32] = "";
         if (m1_vkb_get_filename("Search IR", "", query) > 0) {
-          ir_ui_show_scanning();
+          ir_ui_show_scanning(query);
           /* Lowercase query once for efficiency */
           for (int i = 0; query[i]; i++)
             query[i] = tolower((unsigned char)query[i]);
 
-          char (*names)[IR_NAME_BUF_LEN] =
-              pvPortMalloc(IR_SEARCH_MAX_RESULTS * IR_NAME_BUF_LEN);
-          char (*paths)[IR_UNIVERSAL_PATH_LEN_MAX] =
-              pvPortMalloc(IR_SEARCH_MAX_RESULTS * IR_UNIVERSAL_PATH_LEN_MAX);
-
-          if (names && paths) {
-            uint8_t c = 0;
-            /* Scan database root */
-            ir_search_recursive(IR_UNIVERSAL_SD_ROOT, query, names, paths, &c,
-                                IR_SEARCH_MAX_RESULTS, 0);
-            if (c > 0) {
-              ir_show_fixed_list("Search Results", names, paths, c);
-            } else {
-              ir_ui_show_error("No matches found");
-              vTaskDelay(pdMS_TO_TICKS(1500));
-            }
+          uint8_t c = 0;
+          ir_search_recursive(IR_UNIVERSAL_SD_ROOT, query, ir_search_names,
+                              ir_search_paths, &c, IR_SEARCH_MAX_RESULTS, 0);
+          if (c > 0) {
+            ir_show_fixed_list("Search Results", ir_search_names,
+                               ir_search_paths, c);
           } else {
-            ir_ui_show_error("No memory");
-            vTaskDelay(pdMS_TO_TICKS(1500));
+            ir_ui_show_notice("IR Status:", "No matches found",
+                              IR_UI_FEEDBACK_MS_DEFAULT);
           }
-          if (names)
-            vPortFree(names);
-          if (paths)
-            vPortFree(paths);
         }
       } else if (sel == 3) { /* Browse */
         ir_browse_level(IR_UNIVERSAL_SD_ROOT, "Database", 0);
@@ -1163,7 +1121,7 @@ static void ir_dashboard(void) {
 void ir_universal_run(void) {
   /* Check SD card is available */
   if (m1_sdcard_get_status() != SD_access_OK) {
-    ir_ui_show_error("No SD card");
+    ir_ui_show_notice("IR Error:", "No SD card", 0);
     /* Wait for BACK to exit */
     S_M1_Buttons_Status btn;
     S_M1_Main_Q_t q_item;
@@ -1180,6 +1138,11 @@ void ir_universal_run(void) {
     return;
   }
 
+  if (!ir_workspace_lock()) {
+    ir_ui_show_notice("IR Status:", "Busy", IR_UI_FEEDBACK_MS_DEFAULT);
+    return;
+  }
+
   /* Ensure System directory exists for history/favorites */
   f_mkdir("0:/System");
 
@@ -1187,4 +1150,5 @@ void ir_universal_run(void) {
   ir_dashboard();
 
   xQueueReset(main_q_hdl);
+  ir_workspace_unlock();
 }

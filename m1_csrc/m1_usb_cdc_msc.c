@@ -81,6 +81,7 @@ SemaphoreHandle_t ser2usb_task_semaphore;
 SemaphoreHandle_t ser2usb_tx_semaphore;
 
 StreamBufferHandle_t h_usb_rx_streambuf;
+StreamBufferHandle_t h_usb_cli_rx_streambuf;
 SemaphoreHandle_t usb2ser_task_semaphore;
 SemaphoreHandle_t usb2ser_tx_semaphore;
 
@@ -537,6 +538,7 @@ static void cdc_start_usb2ser(void)
 
   /* Prepare usb rx to usart tx */
   h_usb_rx_streambuf = xStreamBufferCreate(RXSTREAMBUF_USB_SIZE, 1);
+  h_usb_cli_rx_streambuf = xStreamBufferCreate(USB_RX_BUF_SIZE, 1);
 
   usb2ser_task_semaphore = xSemaphoreCreateBinary();
   xSemaphoreGive(usb2ser_task_semaphore);
