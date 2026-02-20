@@ -61,7 +61,7 @@ def stm32_hal_crc32(data):
 def test_vectors():
     """Verify the CRC implementation against known STM32 patterns."""
     # Pattern: 0x00 0x00 0x00 0x00 (1 word)
-    # STM32 Result: 0x2144DF1C
+    # STM32 HAL CRC32 Result: 0xC704DD7B (MPEG-2 variant, no reflection)
     v1 = b"\x00\x00\x00\x00"
     c1 = stm32_hal_crc32(v1)
     assert c1 == 0xc704dd7b, f"Test vector 1 failed: {hex(c1)}"
@@ -125,7 +125,7 @@ def main():
     #   fw_version_minor : uint8_t   (+6,  1 byte)
     #   fw_version_major : uint8_t   (+7,  1 byte)
     #   user_option_1    : uint16_t  (+8,  2 bytes)
-    #   User_option_2    : uint16_t  (+10, 2 bytes)
+    #   user_option_2    : uint16_t  (+10, 2 bytes)
     #   ism_band_region  : uint8_t   (+12, 1 byte)
     #   reserve_1[3]     : uint8_t   (+13, 3 bytes)
     #   fw_image_size    : uint32_t  (+16, 4 bytes)  <-- target

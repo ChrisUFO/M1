@@ -20,8 +20,8 @@
 #include <stdint.h>
 
 #define FW_CONFIG_ADDRESS                                                      \
-  0x080FFC00                // FW config, range is 0x080FFC00-0x080FFFFF (1KB)
-#define FW_CONFIG_SIZE 1024 // bytes
+  FW_CONFIG_RESERVED_ADDRESS // FW config, range is 0x080FFC00-0x080FFFFF (1KB)
+#define FW_CONFIG_SIZE 1024  // bytes
 #define FLASH_MEM_LAST_SECTOR_ADDRESS 0x080FE000 // Sector 127, 8K
 
 #define FW_START_ADDRESS 0x08000000
@@ -97,7 +97,7 @@ typedef struct {
   uint8_t fw_version_minor;
   uint8_t fw_version_major;
   uint16_t user_option_1;
-  uint16_t User_option_2;
+  uint16_t user_option_2;
   uint8_t ism_band_region;
   uint8_t reserve_1[3];
   uint32_t fw_image_size;
