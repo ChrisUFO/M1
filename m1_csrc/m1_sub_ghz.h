@@ -46,6 +46,7 @@
 
 #define SUBGHZ_RAW_DATA_SAMPLES_TO_RW			512
 #define SUBGHZ_FORTMATTED_DATA_SAMPLES_TO_RW    3840//5120//2560//3072//3840
+#define SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN           8
 
 #define SUBGHZ_MODULATION_LIST					3
 
@@ -154,7 +155,7 @@ extern volatile uint32_t subghz_rx_throttle_count;
 extern volatile uint32_t subghz_rx_queue_drop_count;
 extern volatile uint32_t subghz_rx_dma_ht_count;
 extern volatile uint32_t subghz_rx_dma_tc_count;
-extern volatile uint8_t subghz_rx_dma_block_q[8];
+extern volatile uint8_t subghz_rx_dma_block_q[SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN];
 extern volatile uint8_t subghz_rx_dma_block_head;
 extern volatile uint8_t subghz_rx_dma_block_tail;
 extern volatile uint8_t subghz_rx_dma_block_count;

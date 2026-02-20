@@ -344,10 +344,10 @@ void GPDMA1_Channel3_IRQHandler(void)
 	if ( flag_ht && (__HAL_DMA_GET_IT_SOURCE(&hdma_subghz_rx, DMA_IT_HT) != 0U) )
 	{
 		subghz_rx_dma_ht_count++;
-		if ( subghz_rx_dma_block_count < 8U )
+		if ( subghz_rx_dma_block_count < SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN )
 		{
 			subghz_rx_dma_block_q[subghz_rx_dma_block_head] = 0U;
-			subghz_rx_dma_block_head = (uint8_t)((subghz_rx_dma_block_head + 1U) % 8U);
+			subghz_rx_dma_block_head = (uint8_t)((subghz_rx_dma_block_head + 1U) % SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN);
 			subghz_rx_dma_block_count++;
 			notify = 1U;
 		}
@@ -360,10 +360,10 @@ void GPDMA1_Channel3_IRQHandler(void)
 	if ( flag_tc && (__HAL_DMA_GET_IT_SOURCE(&hdma_subghz_rx, DMA_IT_TC) != 0U) )
 	{
 		subghz_rx_dma_tc_count++;
-		if ( subghz_rx_dma_block_count < 8U )
+		if ( subghz_rx_dma_block_count < SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN )
 		{
 			subghz_rx_dma_block_q[subghz_rx_dma_block_head] = 1U;
-			subghz_rx_dma_block_head = (uint8_t)((subghz_rx_dma_block_head + 1U) % 8U);
+			subghz_rx_dma_block_head = (uint8_t)((subghz_rx_dma_block_head + 1U) % SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN);
 			subghz_rx_dma_block_count++;
 			notify = 1U;
 		}
