@@ -35,7 +35,7 @@ See [HARDWARE.md](HARDWARE.md) for more details.
 - [Stability Validation](documentation/stability_phase5_validation.md) – Reproducible validation for Issues #22/#26/#27
 - [Architecture](ARCHITECTURE.md) – Project structure
 - [Development](DEVELOPMENT.md) – Development guidelines
-- [Changelog](CHANGELOG.md) – Release history
+- [Changelog](CHANGELOG.md) – Release history (see [ARCHITECTURE.md](ARCHITECTURE.md#versioning-criteria) for versioning logic)
 
 ## Building
 

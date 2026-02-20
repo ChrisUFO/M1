@@ -121,7 +121,16 @@ Version is defined in `m1_csrc/m1_fw_update_bl.h`:
 - **Example:** `M1_v0.8.4-ChrisUFO.bin`
 - **Display:** "Version 0.8.4" on splash screen and About menu
 
+### Versioning Criteria
+
+| Type | Format | Definition | Examples |
+| :--- | :--- | :--- | :--- |
+| **MAJOR** | **X**._._ | Revolutionary changes, platform shifts, or breaking compatibility. | Hardware platform migration (e.g., STM32H5 to STM32U5), breaking changes to SD card folder structure or file formats, core UI framework replacement. |
+| **MINOR** | _.**X**._ | Significant new functionality or major feature additions within existing architecture. | New module implementation (e.g., Bluetooth Config, USB HID), major protocol family addition, significant UI overhaul. |
+| **BUILD** | _._.**X** | Incremental improvements, bug fixes, and minor refactors. | USB CDC race condition fixes, new CLI commands, performance optimizations, IR protocol updates. |
+
 ### Secure Boot Sequence
+
 
 To protect against corrupted flash banks (Issue #20), the M1 employs an early boot integrity check:
 1. `SystemInit()` in `system_stm32h5xx.c` invokes `boot_recovery_check()` before any RAM initialization.
