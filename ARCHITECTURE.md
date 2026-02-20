@@ -36,7 +36,7 @@ The firmware is an STM32H573 + FreeRTOS application with menu-driven features fo
   - `button_events_q_hdl` for keypad events (`m1_csrc/m1_system.c`)
 - **Deterministic buffering in hot paths:**
   - USB CLI RX path uses ISR-safe stream buffering before task-level CLI parsing.
-  - Sub-GHz raw capture uses ring-buffer-first ingestion with throttled queue notifications to avoid ISR queue flooding.
+  - Sub-GHz raw capture uses TIM1 CH1 DMA block capture (HT/TC-driven) with task-context ingestion into ring buffer to avoid per-edge ISR queue flooding.
   - IR Universal search and list workflows use pre-allocated module workspaces to avoid transient heap fragmentation.
 - **Task bootstrap path:**
   - `Core/Src/app_freertos.c` -> `m1_system_init()`

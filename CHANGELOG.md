@@ -13,7 +13,7 @@ and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 - **Firmware Update**: Fixed a bug where SD card firmware updates would fail with "Invalid image file!" because the file browser lost the selected filename context.
 - **Issue #27 (USB CDC CLI RX Race)**: Replaced direct ISR overwrite of `logdb_rx_buffer` in `CDC_Receive_FS()` with stream-buffered handoff to CLI task, preventing dropped/truncated commands under burst USB traffic.
 - **Issue #26 (IR Universal Fragmentation Risk)**: Removed transient heap allocation churn in Universal Remote search/list flows by switching to pre-allocated workspace buffers and guarded access.
-- **Issue #22 (Sub-GHz ISR Queue Pressure)**: Reduced `TIM1_CC_IRQHandler()` queue flood behavior by gating raw-capture notifications with pending-state throttling while keeping ring-buffer capture continuous.
+- **Issue #22 (Sub-GHz ISR Queue Pressure)**: Migrated raw capture to TIM1 CH1 DMA block ingest (HT/TC event-driven) with task-context buffering, removing per-edge queue dispatch from the hot path and adding drop/throttle telemetry.
 - **CRC Validation Scripts**: Reworked `tools/test_crc.py` and `tools/test_crc_fix.py` to use current firmware artifact naming and robust trailer-based CRC validation.
 
 ### Changed

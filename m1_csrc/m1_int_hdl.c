@@ -328,6 +328,79 @@ void GPDMA1_Channel2_IRQHandler(void)
 
 /******************************************************************************/
 /*
+ * DMA for Sub-GHz Rx mode
+ */
+/******************************************************************************/
+void GPDMA1_Channel3_IRQHandler(void)
+{
+	S_M1_Main_Q_t q_item;
+	portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
+	uint32_t flag_ht = __HAL_DMA_GET_FLAG(&hdma_subghz_rx, DMA_FLAG_HT);
+	uint32_t flag_tc = __HAL_DMA_GET_FLAG(&hdma_subghz_rx, DMA_FLAG_TC);
+	uint8_t notify = 0;
+
+	HAL_DMA_IRQHandler(&hdma_subghz_rx);
+
+	if ( flag_ht && (__HAL_DMA_GET_IT_SOURCE(&hdma_subghz_rx, DMA_IT_HT) != 0U) )
+	{
+		subghz_rx_dma_ht_count++;
+		if ( subghz_rx_dma_block_count < 8U )
+		{
+			subghz_rx_dma_block_q[subghz_rx_dma_block_head] = 0U;
+			subghz_rx_dma_block_head = (uint8_t)((subghz_rx_dma_block_head + 1U) % 8U);
+			subghz_rx_dma_block_count++;
+			notify = 1U;
+		}
+		else
+		{
+			subghz_rx_queue_drop_count++;
+		}
+	}
+
+	if ( flag_tc && (__HAL_DMA_GET_IT_SOURCE(&hdma_subghz_rx, DMA_IT_TC) != 0U) )
+	{
+		subghz_rx_dma_tc_count++;
+		if ( subghz_rx_dma_block_count < 8U )
+		{
+			subghz_rx_dma_block_q[subghz_rx_dma_block_head] = 1U;
+			subghz_rx_dma_block_head = (uint8_t)((subghz_rx_dma_block_head + 1U) % 8U);
+			subghz_rx_dma_block_count++;
+			notify = 1U;
+		}
+		else
+		{
+			subghz_rx_queue_drop_count++;
+		}
+
+		if ( subghz_record_mode_flag )
+		{
+			subghz_rx_dma_restart_from_isr();
+		}
+	}
+
+	if ( notify )
+	{
+		if ( subghz_rx_queue_notify_pending )
+		{
+			subghz_rx_throttle_count++;
+		}
+		else
+		{
+			subghz_rx_queue_notify_pending = 1;
+			q_item.q_evt_type = Q_EVENT_SUBGHZ_RX;
+			if ( xQueueSendFromISR(main_q_hdl, &q_item, &xHigherPriorityTaskWoken) != pdPASS )
+			{
+				subghz_rx_queue_notify_pending = 0;
+				subghz_rx_queue_drop_count++;
+			}
+			portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+		}
+	}
+}
+
+
+/******************************************************************************/
+/*
  * @brief This function handles USB FS global interrupt.
  */
 /******************************************************************************/
@@ -677,6 +750,11 @@ void TIM1_CC_IRQHandler(void)
 
 	/* Clear Capture Compare flag */
 	__HAL_TIM_CLEAR_FLAG(&timerhdl_subghz_rx, TIM_FLAG_CC1);
+
+	if ( subghz_record_mode_flag )
+	{
+		return;
+	}
 
 	//cap_val =  HAL_TIM_ReadCapturedValue(htim, IR_DECODE_TIMER_RX_CHANNEL);
 	//cap_val = __HAL_TIM_GET_COMPARE(htim, IR_DECODE_TIMER_RX_CHANNEL); // read compare counter

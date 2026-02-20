@@ -125,7 +125,11 @@ static char *ir_trim(char *s) {
 
 static bool ir_workspace_lock(void) {
   if (ir_universal_mutex == NULL) {
-    ir_universal_mutex = xSemaphoreCreateMutex();
+    taskENTER_CRITICAL();
+    if (ir_universal_mutex == NULL) {
+      ir_universal_mutex = xSemaphoreCreateMutex();
+    }
+    taskEXIT_CRITICAL();
   }
   if (ir_universal_mutex == NULL) {
     return false;
