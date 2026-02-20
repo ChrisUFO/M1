@@ -28,7 +28,7 @@
 #define FW_CONFIG_RESERVED_ADDRESS                                             \
   0x080FFC00 // LENGTH = 1K, this address must match the one defined in the
              // MEMORY section in the linker file
-#define FW_CRC_ADDRESS FW_CONFIG_RESERVED_ADDRESS + sizeof(S_M1_FW_CONFIG_t)
+#define FW_CRC_ADDRESS (FW_CONFIG_RESERVED_ADDRESS + sizeof(S_M1_FW_CONFIG_t))
 
 #define BOOT_FAIL_SIGNATURE ((uint32_t)0xDEADBEEF)
 

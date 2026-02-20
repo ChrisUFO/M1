@@ -84,7 +84,7 @@
 
 #define POWER_UP_SYS_CONFIG_WAIT_TIME 100 // ms
 
-#define SYS_CONFIG_MAGIC_NUMBER ((uint32_t)0x534A1F41)
+// SYS_CONFIG_MAGIC_NUMBER is defined in m1_fw_update_bl.h
 
 #define LCD_SAVER_PERIOD 30000 // ms
 

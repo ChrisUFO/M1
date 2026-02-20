@@ -118,7 +118,19 @@ def main():
     # into the fw_image_size field. The size is len(data).
     image_size = len(data)
     
-    # The 'fw_image_size' is at offset +16 from the start of S_M1_FW_CONFIG_t
+    # The 'fw_image_size' field offset within S_M1_FW_CONFIG_t:
+    #   magic_number_1   : uint32_t  (+0,  4 bytes)
+    #   fw_version_rc    : uint8_t   (+4,  1 byte)
+    #   fw_version_build : uint8_t   (+5,  1 byte)
+    #   fw_version_minor : uint8_t   (+6,  1 byte)
+    #   fw_version_major : uint8_t   (+7,  1 byte)
+    #   user_option_1    : uint16_t  (+8,  2 bytes)
+    #   User_option_2    : uint16_t  (+10, 2 bytes)
+    #   ism_band_region  : uint8_t   (+12, 1 byte)
+    #   reserve_1[3]     : uint8_t   (+13, 3 bytes)
+    #   fw_image_size    : uint32_t  (+16, 4 bytes)  <-- target
+    #   magic_number_2   : uint32_t  (+20, 4 bytes)
+    # Total struct size: 24 bytes
     fw_size_offset = config_offset + 16
     
     if len(data) >= fw_size_offset + 4:

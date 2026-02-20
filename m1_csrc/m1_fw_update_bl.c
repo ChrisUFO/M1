@@ -850,8 +850,10 @@ void bl_jump_to_dfu(void) {
   uint32_t jump_address;
   void (*jump_to_boot)(void);
 
-  /* Verify SP points to reasonable SRAM range for H5 (SRAM1: 0x20000000)
-     Note: In early boot, we can't log, so we just reset if invalid. */
+  /* Verify SP points to reasonable SRAM range for H5 (SRAM1: 0x20000000).
+     H5 SRAM covers 0x20000000-0x200FFFFF; coarse mask is sufficient for
+     boot vector sanity. In early boot, we can't log, so just reset if
+     invalid. */
   uint32_t sp_val = *(volatile uint32_t *)M1_SYSTEM_MEMORY_BASE;
   if ((sp_val & 0xFF000000) != 0x20000000) {
     NVIC_SystemReset();

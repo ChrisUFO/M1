@@ -577,7 +577,10 @@ static void handle_op_status_fw_corruption(void) {
                            "Swapped to alternate bank.\r\n");
   }
 
-  // Wait for user acknowledgment
+  // Wait for user acknowledgment (guard against NULL queue in early boot)
+  if (button_events_q_hdl == NULL || main_q_hdl == NULL) {
+    return;
+  }
   while (1) {
     ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
     if (ret == pdTRUE && q_item.q_evt_type == Q_EVENT_KEYPAD) {
@@ -641,6 +644,14 @@ static void handle_op_status_reboot(void) {
             ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
             if (this_button_status.event[BUTTON_OK_KP_ID] ==
                 BUTTON_EVENT_CLICK) {
+              // Validate alternate bank header before allowing swap
+              if (!bl_validate_fw_header(FW_CONFIG_ADDRESS +
+                                         M1_FLASH_BANK_SIZE)) {
+                startup_error_screen_display("ROLLBACK FAILED", "No valid FW");
+                M1_LOG_I(M1_LOGDB_TAG, "Alternate bank header invalid. "
+                                       "Rollback aborted.\r\n");
+                break;
+              }
               m1_device_stat.bu_regs.device_op_status =
                   DEV_OP_STATUS_FW_ROLLBACK_START;
               startup_config_write(BK_REGS_SELECT_DEV_OP_STAT,
