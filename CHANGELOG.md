@@ -7,6 +7,11 @@ All notable changes to the M1 project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 
+## [v0.8.8] - 2026-02-20
+
+### Fixed
+- **Firmware Update**: Fixed a bug where SD card firmware updates would fail with "Invalid image file!" because the file browser lost the selected filename context.
+
 ## [v0.8.7] - 2026-02-20
 
 ### Added
@@ -38,8 +43,6 @@ and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
   - Documented the boot-critical artifact pipeline and flashing guidance in `README.md` and `ARCHITECTURE.md`.
 
 ## [v0.8.6] - 2026-02-19
-
-### Changed
 - Cleaned up leftover FCC test placeholders and associated dead code.
 - Optimized Sub-GHz initialization by removing unused test configurations.
 

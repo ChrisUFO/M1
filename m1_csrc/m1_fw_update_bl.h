@@ -44,7 +44,7 @@
 
 #define FW_VERSION_MAJOR 0
 #define FW_VERSION_MINOR 8
-#define FW_VERSION_BUILD 7
+#define FW_VERSION_BUILD 8
 #define FW_VERSION_RC 0
 #define FW_VERSION_FORK_TAG "ChrisUFO"
 
