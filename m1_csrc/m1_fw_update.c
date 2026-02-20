@@ -612,7 +612,16 @@ void firmware_update_enter_usb_dfu(void) {
     M1_LOG_I(M1_LOGDB_TAG, "HAL_PCD_DeInit failed\r\n");
   }
 
+  /* Disable interrupts and SysTick BEFORE tearing down clocks.
+     Without this, FreeRTOS SysTick fires during HAL_RCC_DeInit(),
+     causing a HardFault -> reset -> "DFU MODE FAILED!". */
+  __disable_irq();
+  SysTick->CTRL = 0;
+  SysTick->LOAD = 0;
+  SysTick->VAL = 0;
+
   HAL_RCC_DeInit();
+  HAL_DeInit();
 
   bl_jump_to_dfu();
 } // void firmware_update_enter_usb_dfu(void)
