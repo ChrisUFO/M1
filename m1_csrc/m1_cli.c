@@ -887,7 +887,7 @@ void cmd_m1_mtest_subghz(char *pconsole, char *input_params[], uint8_t n_params,
     }
     // convert the string to a number
     input1_val = strtol(input_params[1], NULL, 10);
-    radio_set_antenna_mode(RADIO_ANTENNA_MODE_TX);
+    // radio_set_antenna_mode(RADIO_ANTENNA_MODE_TX);
     // SI446x_Start_Tx_CW(input1_val, MODEM_MOD_TYPE_CW);
     break;
 
