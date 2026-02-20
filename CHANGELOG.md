@@ -17,10 +17,17 @@ and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
   - Added new basic testing command `9` to purposely corrupt the firmware magic number.
 
 ### Fixed
+- **USB DFU Mode Entry**:
+  - Fixed "DFU MODE FAILED!" by disabling interrupts and SysTick before tearing down clocks in `firmware_update_enter_usb_dfu()`. FreeRTOS SysTick firing during `HAL_RCC_DeInit()` caused a HardFault → reset.
 - **Boot/Artifact Integrity Pipeline**:
   - Fixed `.bin` generation to use `objcopy --gap-fill 0xFF` so CRC input matches erased flash semantics.
   - Fixed `.hex` generation to be produced from the post-processed `.bin` (after `append_crc32.py`) instead of directly from `.elf`.
   - Resolved non-booting firmware caused by mismatched flash image content vs embedded `fw_image_size`/CRC metadata in early boot verification.
+- **Code Review Hardening**:
+  - Removed duplicate `SYS_CONFIG_MAGIC_NUMBER` definition (now single source in `m1_fw_update_bl.h`).
+  - Added defensive parentheses to `FW_CRC_ADDRESS` macro to prevent operator precedence bugs.
+  - Added NULL guard for `button_events_q_hdl` in firmware corruption handler to prevent undefined behavior during early boot.
+  - Added `bl_validate_fw_header()` check before rollback bank swap to prevent bricking on corrupted alternate bank.
 - **Linking/Startup Symbol Retention**:
   - Updated final link strategy to force-retain `m1_core` objects while keeping `m1_drivers` linked normally, avoiding dropped startup/ISR overrides without introducing duplicate libc/syscall symbol conflicts.
 - **WiFi UI Layout (128x64 LCD)**:
