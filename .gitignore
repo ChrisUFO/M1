@@ -72,3 +72,4 @@ changelog.md
 review_*.txt
 review_*.json
 all_comments.json
+pull_comments.json

@@ -1644,59 +1644,6 @@ void sub_ghz_regional_information(void) {
 } // void sub_ghz_regional_information(void)
 
 /*============================================================================*/
-/**
- * @brief
- * @param
- * @retval
- */
-/*============================================================================*/
-#if 0
-void sub_ghz_radio_settings(void) {
-  S_M1_Buttons_Status this_button_status;
-  S_M1_Main_Q_t q_item;
-  BaseType_t ret;
-
-  m1_gui_let_update_fw();
-
-  while (1) // Main loop of this task
-  {
-    ;
-    ; // Do other parts of this task here
-    ;
-
-    // Wait for the notification from button_event_handler_task to
-    // subfunc_handler_task. This task is the sub-task of subfunc_handler_task.
-    // The notification is given in the form of an item in the main queue.
-    // So let read the main queue.
-    ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
-    if (ret == pdTRUE) {
-      if (q_item.q_evt_type == Q_EVENT_KEYPAD) {
-        // Notification is only sent to this task when there's any button
-        // activity, so it doesn't need to wait when reading the event from the
-        // queue
-        ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
-        if (this_button_status.event[BUTTON_BACK_KP_ID] ==
-            BUTTON_EVENT_CLICK) // user wants to exit?
-        {
-          ; // Do extra tasks here if needed
-
-          xQueueReset(main_q_hdl); // Reset main q before return
-          break; // Exit and return to the calling task (subfunc_handler_task)
-        } // if ( m1_buttons_status[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK )
-        else {
-          ; // Do other things for this task, if needed
-        }
-      } // if ( q_item.q_evt_type==Q_EVENT_KEYPAD )
-      else {
-        ; // Do other things for this task
-      }
-    } // if (ret==pdTRUE)
-  } // while (1 ) // Main loop of this task
-
-} // void sub_ghz_radio_settings(void)
-#endif
-
-/*============================================================================*/
 /*
  * @brief  Initialize the decoder module
  * Input capture mode for both rising and falling edges, given in TIMx_CCR1 for

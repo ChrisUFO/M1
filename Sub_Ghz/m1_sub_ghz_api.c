@@ -31,8 +31,6 @@
 #include "radio_config/si4463_revc2_433_rxtx_spacing250_bw200_baud10_error1_10_OOK.h"
 #include "radio_config/si4463_revc2_patch.h"
 
-// #include "radio_config/m1_sub_ghz_xxx_tx_test.h"
-
 /*************************** D E F I N E S ************************************/
 
 #define M1_LOGDB_TAG "SUB_GHZ"
@@ -100,10 +98,6 @@ const tRadioConfiguration RadioConfiguration_433_92 =
 const uint8_t Radio_915_Configuration_Data_Array[] =
     RADIO_915_CONFIGURATION_DATA_ARRAY;
 const tRadioConfiguration RadioConfiguration_915 = RADIO_915_CONFIGURATION_DATA;
-
-// const uint8_t Radio_Test_Configuration_Data_Array[] =
-// RADIO_TEST_CONFIGURATION_DATA_ARRAY; const tRadioConfiguration
-// RadioConfiguration_Test = RADIO_TEST_CONFIGURATION_DATA;
 
 const uint8_t Radio_Patch_Configuration_Data_Array[] =
     RADIO_PATCH_CONFIGURATION_DATA_ARRAY;
@@ -182,8 +176,10 @@ void radio_set_antenna_mode(tRadioAntennaMode mode);
 void SI446x_Wait_CTS(void) {
   // Check CTS pin
   // GPIO1 is CTS by default after a POR
-  while (HAL_GPIO_ReadPin(SI4463_GPIO1_GPIO_Port, SI4463_GPIO1_Pin) ==
-         GPIO_PIN_RESET)
+  for (uint32_t timeout = 0xFFFF;
+       timeout > 0 && HAL_GPIO_ReadPin(SI4463_GPIO1_GPIO_Port,
+                                       SI4463_GPIO1_Pin) == GPIO_PIN_RESET;
+       timeout--)
     ; // Let wait here until CTS getting ready
 } // void SI446x_Wait_CTS(void)
 #endif // #ifdef M1_APP_RADIO_POLL_CTS_ON_GPIO

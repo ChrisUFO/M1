@@ -878,21 +878,6 @@ void cmd_m1_mtest_subghz(char *pconsole, char *input_params[], uint8_t n_params,
             pinfo->CHIPREV, pinfo->ROMID);
     break;
 
-#if 0
-  case 61:
-    // Check for init status ready before executing...
-    M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: Sub-GHz - transmit in CW mode (DISABLED)\r\n");
-    if (n_params < 2) {
-      strcpy(pconsole, "Error: missing parameter(s)!\r\n");
-      break;
-    }
-    // convert the string to a number
-    input1_val = strtol(input_params[1], NULL, 10);
-    // radio_set_antenna_mode(RADIO_ANTENNA_MODE_TX);
-    // SI446x_Start_Tx_CW(input1_val, MODEM_MOD_TYPE_CW);
-    break;
-#endif
-
   case 62:
     M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: Sub-GHz - set transmit power\r\n");
     if (n_params < 2) {

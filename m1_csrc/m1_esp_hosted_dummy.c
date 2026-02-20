@@ -25,7 +25,6 @@
 bool get_esp32_ready_status(void);
 void esp_restart(void);
 void esp32_app_init(void);
-// void test_get_available_wifi(void);
 /*************** F U N C T I O N   I M P L E M E N T A T I O N ****************/
 
 /*============================================================================*/
