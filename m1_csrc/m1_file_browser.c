@@ -20,7 +20,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-
 /************************** *D E F I N E S ************************************/
 
 #define DISABLE_IRQ                                                            \
@@ -423,7 +422,8 @@ S_M1_file_info *m1_fb_display(S_M1_Buttons_Status *button_status) {
   char name[FF_MAX_LFN + 1];
   FRESULT res;
   static DIR directory;
-  FILINFO file_info = {0}, this_file = {0};
+  FILINFO file_info = {0};
+  static FILINFO this_file = {0};
   const S_M1_menu_icon_data *fb_icon;
   S_M1_file_browser_ext f_ext;
   static uint16_t num_of_files;

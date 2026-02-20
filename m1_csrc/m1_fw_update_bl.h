@@ -19,7 +19,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-
 #define FW_CONFiG_ADDRESS                                                      \
   0x080FFC00                // FW config, range is 0x080FFC00-0x080FFFFF (1KB)
 #define FW_CONFiG_SIZE 1024 // bytes
@@ -43,7 +42,7 @@
 
 #define FW_VERSION_MAJOR 0
 #define FW_VERSION_MINOR 8
-#define FW_VERSION_BUILD 6
+#define FW_VERSION_BUILD 8
 #define FW_VERSION_RC 0
 #define FW_VERSION_FORK_TAG "ChrisUFO"
 
