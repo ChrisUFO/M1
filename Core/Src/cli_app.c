@@ -35,6 +35,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "m1_fw_update_bl.h"
 #include "m1_log_debug.h"
 #include "m1_system.h"
+#include "m1_usb_cdc_msc.h"
 #include "main.h"
 #include "stdbool.h"
 #include "stdio.h"
@@ -64,6 +65,7 @@ void handleNewline(const char *const pcInputString, char *cOutputBuffer,
                    uint8_t *cInputIndex);
 void handleBackspace(uint8_t *cInputIndex, char *pcInputString);
 void handleCharacterInput(uint8_t *cInputIndex, char *pcInputString);
+static void cli_process_rx_char(uint8_t rx_char, uint8_t *cInputIndex);
 
 BaseType_t cmd_log(char *pcWriteBuffer, size_t xWriteBufferLen,
                    const char *pcCommandString, uint8_t num_of_params);
@@ -89,6 +91,12 @@ BaseType_t cmd_reboot_help(void);
 BaseType_t cmd_memory(char *pcWriteBuffer, size_t xWriteBufferLen,
                       const char *pcCommandString, uint8_t num_of_params);
 BaseType_t cmd_memory_help(void);
+BaseType_t cmd_cdcstats(char *pcWriteBuffer, size_t xWriteBufferLen,
+                        const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_cdcstats_help(void);
+BaseType_t cmd_cdcreset(char *pcWriteBuffer, size_t xWriteBufferLen,
+                        const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_cdcreset_help(void);
 
 const CLI_Command_Definition_t xCommandList[] = {
     {.pcCommand = "cls",
@@ -141,6 +149,16 @@ const CLI_Command_Definition_t xCommandList[] = {
      .pxCommandInterpreter = cmd_memory,
      .pxCommandHelper = cmd_memory_help,
      .cExpectedNumberOfParameters = 0},
+    {.pcCommand = "cdcstats",
+     .pcHelpString = "cdcstats:\r\n Shows USB CLI RX diagnostics\r\n\r\n",
+     .pxCommandInterpreter = cmd_cdcstats,
+     .pxCommandHelper = cmd_cdcstats_help,
+     .cExpectedNumberOfParameters = 0},
+    {.pcCommand = "cdcreset",
+     .pcHelpString = "cdcreset:\r\n Resets USB CLI RX diagnostics\r\n\r\n",
+     .pxCommandInterpreter = cmd_cdcreset,
+     .pxCommandHelper = cmd_cdcreset_help,
+     .cExpectedNumberOfParameters = 0},
     {
         .pcCommand = "dfu", /* The command string to type. */
         .pcHelpString = "dfu:\r\n Reboot to USB DFU mode\r\n\r\n",
@@ -170,18 +188,27 @@ void vCommandConsoleTask(void *pvParameters) {
                     0,              // Clear all bits on exit
                     &receivedValue, // Receives the notification value
                     portMAX_DELAY); // Wait indefinitely
-    // echo recevied char
-    cRxedChar = receivedValue & 0xFF;
-    cliWrite((char *)&cRxedChar);
-    if (cRxedChar == '\r' || cRxedChar == '\n') {
-      // user pressed enter, process the command
-      handleNewline(pcInputString, cOutputBuffer, &cInputIndex);
+    uint8_t rx_source = (receivedValue >> 8) & 0xFF;
+    if (rx_source == TASK_NOTIFY_USBCDC && h_usb_cli_rx_streambuf != NULL) {
+      uint8_t rx_byte;
+      while (xStreamBufferReceive(h_usb_cli_rx_streambuf, &rx_byte, 1, 0) == 1) {
+        cli_process_rx_char(rx_byte, &cInputIndex);
+      }
     } else {
-      // user pressed a character add it to the input string
-      handleCharacterInput(&cInputIndex, pcInputString);
+      cli_process_rx_char((uint8_t)(receivedValue & 0xFF), &cInputIndex);
     }
   }
 } // void vCommandConsoleTask(void *pvParameters)
+
+static void cli_process_rx_char(uint8_t rx_char, uint8_t *cInputIndex) {
+  cRxedChar = (int8_t)rx_char;
+  cliWrite((char *)&cRxedChar);
+  if (cRxedChar == '\r' || cRxedChar == '\n') {
+    handleNewline(pcInputString, cOutputBuffer, cInputIndex);
+  } else {
+    handleCharacterInput(cInputIndex, pcInputString);
+  }
+}
 
 /*============================================================================*/
 /*
@@ -387,6 +414,18 @@ BaseType_t cmd_status(char *pcWriteBuffer, size_t xWriteBufferLen,
   written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset,
                      "  Active Bank: %d\r\n",
                      (m1_device_stat.active_bank == BANK1_ACTIVE) ? 1 : 2);
+  if (written > 0 && (size_t)written < xWriteBufferLen - offset)
+    offset += written;
+
+  written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset,
+                     "  USB CLI dropped: %lu bytes\r\n",
+                     (unsigned long)CDC_CLI_RxDroppedBytes());
+  if (written > 0 && (size_t)written < xWriteBufferLen - offset)
+    offset += written;
+
+  written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset,
+                     "  USB CLI buffered: %lu bytes\r\n",
+                     (unsigned long)CDC_CLI_RxBufferedBytes());
   if (written > 0 && (size_t)written < xWriteBufferLen - offset)
     offset += written;
 
@@ -646,9 +685,46 @@ BaseType_t cmd_memory(char *pcWriteBuffer, size_t xWriteBufferLen,
   if (written > 0 && (size_t)written < xWriteBufferLen - offset)
     offset += (size_t)written;
 
+  written = snprintf(pcWriteBuffer + offset, xWriteBufferLen - offset,
+                     "  USB CLI max buf: %lu bytes\r\n",
+                     (unsigned long)CDC_CLI_RxHighWatermark());
+  if (written > 0 && (size_t)written < xWriteBufferLen - offset)
+    offset += (size_t)written;
+
   return pdFALSE;
 }
 
 BaseType_t cmd_memory_help(void) { return pdFALSE; }
+
+BaseType_t cmd_cdcstats(char *pcWriteBuffer, size_t xWriteBufferLen,
+                        const char *pcCommandString, uint8_t num_of_params) {
+  (void)pcCommandString;
+  (void)num_of_params;
+
+  (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                 "USB CLI RX Diagnostics:\r\n"
+                 "  Dropped bytes: %lu\r\n"
+                 "  High watermark: %lu bytes\r\n"
+                 "  Buffered now: %lu bytes\r\n",
+                 (unsigned long)CDC_CLI_RxDroppedBytes(),
+                 (unsigned long)CDC_CLI_RxHighWatermark(),
+                 (unsigned long)CDC_CLI_RxBufferedBytes());
+  return pdFALSE;
+}
+
+BaseType_t cmd_cdcstats_help(void) { return pdFALSE; }
+
+BaseType_t cmd_cdcreset(char *pcWriteBuffer, size_t xWriteBufferLen,
+                        const char *pcCommandString, uint8_t num_of_params) {
+  (void)pcCommandString;
+  (void)num_of_params;
+
+  CDC_CLI_RxResetStats();
+  (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                 "USB CLI RX diagnostics reset.\r\n");
+  return pdFALSE;
+}
+
+BaseType_t cmd_cdcreset_help(void) { return pdFALSE; }
 
 #endif /* CLI_COMMANDS_H */

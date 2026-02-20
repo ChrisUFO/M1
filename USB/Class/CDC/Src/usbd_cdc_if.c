@@ -47,6 +47,8 @@
 
 static uint8_t usbRxBuffer[USB_RX_BUF_SIZE];
 static uint16_t usbRxBufIndex = 0;
+static volatile uint32_t usb_cli_rx_dropped_bytes = 0;
+static volatile uint32_t usb_cli_rx_high_watermark = 0;
 /**
   * @}
   */
@@ -311,16 +313,36 @@ static int8_t CDC_Receive_FS(uint8_t *Buf, uint32_t *Len)
   }
   else
   { // == CDC_MODE_LOG_CLI
-    Buf[*Len] = 0;
+    if ((h_usb_cli_rx_streambuf == NULL) || (*Len == 0U)) {
+      USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+      return (USBD_OK);
+    }
+
     USBD_CDC_ReceivePacket(&hUsbDeviceFS);
 
-    memcpy(logdb_rx_buffer, &Buf[0], *Len);
-    // add device ID, logdb_rx_buffer[1] = TASK_NOTIFY_USBCDC
-    logdb_rx_buffer[1] = TASK_NOTIFY_USBCDC;
-    uint32_t u32buf = logdb_rx_buffer[0] + (TASK_NOTIFY_USBCDC << 8);
+    sentBytes = xStreamBufferSendFromISR(h_usb_cli_rx_streambuf,
+                                         (void *)Buf,
+                                         (size_t)(*Len),
+                                         &xHigherPriorityTaskWoken);
+    if (sentBytes < (size_t)(*Len)) {
+      usb_cli_rx_dropped_bytes += (uint32_t)((size_t)(*Len) - sentBytes);
+    }
 
-    //send the char to the command line task, one char
-    xTaskNotify(cmdLineTaskHandle, (uint32_t)u32buf, eSetValueWithOverwrite);
+    freeSpace = xStreamBufferSpacesAvailable(h_usb_cli_rx_streambuf);
+    if ((USB_RX_BUF_SIZE - freeSpace) > usb_cli_rx_high_watermark) {
+      usb_cli_rx_high_watermark = USB_RX_BUF_SIZE - freeSpace;
+    }
+
+    uint32_t first_byte = (sentBytes > 0U) ? Buf[0] : 0U;
+    uint32_t u32buf = first_byte + (TASK_NOTIFY_USBCDC << 8);
+
+    xTaskNotifyFromISR(cmdLineTaskHandle, u32buf, eSetValueWithOverwrite,
+                       &xHigherPriorityTaskWoken);
+
+    if (xHigherPriorityTaskWoken == pdTRUE)
+    {
+      portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    }
   }
 
   return (USBD_OK);
@@ -388,6 +410,31 @@ uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len)
 #endif
 
   return result;
+}
+
+uint32_t CDC_CLI_RxDroppedBytes(void)
+{
+  return usb_cli_rx_dropped_bytes;
+}
+
+uint32_t CDC_CLI_RxHighWatermark(void)
+{
+  return usb_cli_rx_high_watermark;
+}
+
+uint32_t CDC_CLI_RxBufferedBytes(void)
+{
+  if (h_usb_cli_rx_streambuf == NULL) {
+    return 0;
+  }
+
+  return (uint32_t)xStreamBufferBytesAvailable(h_usb_cli_rx_streambuf);
+}
+
+void CDC_CLI_RxResetStats(void)
+{
+  usb_cli_rx_dropped_bytes = 0;
+  usb_cli_rx_high_watermark = 0;
 }
 
 /**

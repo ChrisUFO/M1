@@ -34,6 +34,10 @@ The firmware is an STM32H573 + FreeRTOS application with menu-driven features fo
 - **Primary queues:**
   - `main_q_hdl` for system/menu events (`m1_csrc/m1_tasks.c`)
   - `button_events_q_hdl` for keypad events (`m1_csrc/m1_system.c`)
+- **Deterministic buffering in hot paths:**
+  - USB CLI RX path uses ISR-safe stream buffering before task-level CLI parsing.
+  - Sub-GHz raw capture uses TIM1 CH1 DMA block capture (HT/TC-driven) with task-context ingestion into ring buffer to avoid per-edge ISR queue flooding.
+  - IR Universal search and list workflows use pre-allocated module workspaces to avoid transient heap fragmentation.
 - **Task bootstrap path:**
   - `Core/Src/app_freertos.c` -> `m1_system_init()`
   - `m1_csrc/m1_sys_init.c` performs peripheral init, task init, and startup status handling.
@@ -78,6 +82,7 @@ Current Settings submenu:
 - Application-mode USB stack is in `m1_csrc/m1_usb_cdc_msc.c` and `USB/`.
 - Build-time mode selection supports CDC, MSC, or CDC+MSC composite.
 - USB DFU transport is provided by STM32 ROM bootloader (not by application USB class runtime).
+- In CLI mode (`CDC_MODE_LOG_CLI`), `USB/Class/CDC/Src/usbd_cdc_if.c` now queues bytes into a dedicated stream buffer and notifies `cmdLineTaskHandle` to drain in task context.
 
 ## Build System
 
@@ -116,7 +121,16 @@ Version is defined in `m1_csrc/m1_fw_update_bl.h`:
 - **Example:** `M1_v0.8.4-ChrisUFO.bin`
 - **Display:** "Version 0.8.4" on splash screen and About menu
 
+### Versioning Criteria
+
+| Type | Format | Definition | Examples |
+| :--- | :--- | :--- | :--- |
+| **MAJOR** | **X**._._ | Revolutionary changes, platform shifts, or breaking compatibility. | Hardware platform migration (e.g., STM32H5 to STM32U5), breaking changes to SD card folder structure or file formats, core UI framework replacement. |
+| **MINOR** | _.**X**._ | Significant new functionality or major feature additions within existing architecture. | New module implementation (e.g., Bluetooth Config, USB HID), major protocol family addition, significant UI overhaul. |
+| **BUILD** | _._.**X** | Incremental improvements, bug fixes, and minor refactors. | USB CDC race condition fixes, new CLI commands, performance optimizations, IR protocol updates. |
+
 ### Secure Boot Sequence
+
 
 To protect against corrupted flash banks (Issue #20), the M1 employs an early boot integrity check:
 1. `SystemInit()` in `system_stm32h5xx.c` invokes `boot_recovery_check()` before any RAM initialization.

@@ -35,6 +35,10 @@ extern USBD_CDC_ItfTypeDef  USBD_CDC_Interface_fops;
 /* Exported macro ------------------------------------------------------------*/
 /* Exported functions ------------------------------------------------------- */
 uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len);
+uint32_t CDC_CLI_RxDroppedBytes(void);
+uint32_t CDC_CLI_RxHighWatermark(void);
+uint32_t CDC_CLI_RxBufferedBytes(void);
+void CDC_CLI_RxResetStats(void);
 
 #ifdef __cplusplus
 }

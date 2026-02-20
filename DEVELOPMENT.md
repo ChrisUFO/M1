@@ -34,3 +34,4 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 - Test on hardware when possible
 - Document test scenarios and edge cases
 - Ensure NFC, RFID, and Sub-GHz functionality are verified
+- For stability hardening changes, follow `documentation/stability_phase5_validation.md`

@@ -67,6 +67,12 @@ compile_commands.json
 PLAN.md
 
 # AI Rules
+.claude/*
+CLAUDE.md
+.agent/*
+.gemini/*
+.codex/*
+.cursor/*
 changelog.md
 
 # Review artifacts
