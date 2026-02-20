@@ -17,7 +17,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-
 #define BUTTON_OK_KP_ID 0
 #define BUTTON_UP_KP_ID 1
 #define BUTTON_LEFT_KP_ID 2
@@ -109,6 +108,7 @@ typedef enum {
   DEV_OP_STATUS_FW_ROLLBACK_COMPLETE,
   DEV_OP_STATUS_REBOOT,
   DEV_OP_STATUS_USB_DFU_REQUEST,
+  DEV_OP_STATUS_FW_INTEGRITY_FAIL = 0xEF,
   DEV_OP_STATUS_UNKNOWN
 } S_M1_DEV_OP_STATUS_t;
 

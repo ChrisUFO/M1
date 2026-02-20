@@ -290,10 +290,6 @@ void SystemInit(void) {
     /* Lock the FLASH Option Control Register access */
     FLASH->OPTCR |= FLASH_OPTCR_OPTLOCK;
   }
-
-  /* Boot-time CRC Integrity Check and Fallback mechanism */
-  extern void boot_recovery_check(void);
-  boot_recovery_check();
 }
 
 /**

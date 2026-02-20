@@ -336,10 +336,17 @@ void cmd_m1_mtest_basic_system(char *pconsole, char *input_params[],
     M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: Corrupt Firmware Bank (Testing)\r\n");
     // Purposefully corrupt the Magic Number of the active firmware bank
     // to test the bootloader's CRC recovery and bank swapping fallback.
+    // Ensure the config address is quadword aligned (128-bit) as required by H5
+    // FLASH_Program
+    if (FW_CONFIG_ADDRESS % 16 != 0) {
+      strcpy(pconsole, "Error: FW_CONFIG_ADDRESS must be 128-bit aligned!\r\n");
+      break;
+    }
+
     uint32_t bad_magic[4] = {0xDEADBEEF, 0xDEADBEEF, 0xDEADBEEF,
                              0xDEADBEEF}; // 128-bit
     if (HAL_FLASH_Unlock() == HAL_OK) {
-      if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_QUADWORD, FW_CONFiG_ADDRESS,
+      if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_QUADWORD, FW_CONFIG_ADDRESS,
                             (uint32_t)bad_magic) == HAL_OK) {
         strcpy(pconsole, "Firmware corrupted! Reboot to test recovery.\r\n");
       } else {

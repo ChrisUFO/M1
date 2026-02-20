@@ -25,7 +25,6 @@
 #include <stdio.h>
 #include <string.h>
 
-
 /*************************** D E F I N E S ************************************/
 
 #define M1_LOGDB_TAG "System"
@@ -517,7 +516,7 @@ void startup_device_init(void) {
   m1_device_stat.sub_func = NULL;
 
   // Read configuration data from device flash
-  volatile uint8_t *src = (volatile uint8_t *)FW_CONFiG_ADDRESS;
+  volatile uint8_t *src = (volatile uint8_t *)FW_CONFIG_ADDRESS;
   uint8_t *dst = (uint8_t *)&m1_device_stat.config;
   for (size_t i = 0; i < sizeof(S_M1_FW_CONFIG_t); i++) {
     dst[i] = src[i];
@@ -575,7 +574,9 @@ void startup_config_handler(void) {
   } // if ( m1_device_stat.bu_regs.magic_number != SYS_CONFIG_MAGIC_NUMBER )
   else {
     if (m1_device_stat.bu_regs.device_op_status ==
-        DEV_OP_STATUS_FW_UPDATE_ACTIVE) {
+            DEV_OP_STATUS_FW_UPDATE_ACTIVE ||
+        m1_device_stat.bu_regs.device_op_status ==
+            DEV_OP_STATUS_FW_INTEGRITY_FAIL) {
       startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_NO_OP);
       startup_error_screen_display("FW Corrupted.", "Swapped Bank.");
       M1_LOG_I(M1_LOGDB_TAG,
@@ -638,10 +639,10 @@ void startup_config_handler(void) {
             M1_LOG_I(M1_LOGDB_TAG, "Update rollback requested!\r\n");
             // Display rollback confirm message here
             bu_reg_read =
-                (uint32_t *)(FW_CONFiG_ADDRESS +
+                (uint32_t *)(FW_CONFIG_ADDRESS +
                              M1_FLASH_BANK_SIZE); // Always read data from the
                                                   // other bank
-            k = FW_CONFiG_SIZE / 4 - 1; // Convert to 32-bit and exclude the
+            k = FW_CONFIG_SIZE / 4 - 1; // Convert to 32-bit and exclude the
                                         // last slot for the add-on CRC32
             for (i = 0; i < k; i++) {
               if (*bu_reg_read == FW_CONFIG_MAGIC_NUMBER_2)
@@ -664,7 +665,7 @@ void startup_config_handler(void) {
                 i++; // Move to CRC32 location which is right after the Magic
                      // Number 2
                 memcpy((uint8_t *)&old_fw_config,
-                       (uint8_t *)(FW_CONFiG_ADDRESS + M1_FLASH_BANK_SIZE),
+                       (uint8_t *)(FW_CONFIG_ADDRESS + M1_FLASH_BANK_SIZE),
                        i * 4);
                 fw_ver_new = *(uint32_t *)&m1_device_stat.config.fw_version_rc;
                 fw_ver_old = *(uint32_t *)&old_fw_config.fw_version_rc;

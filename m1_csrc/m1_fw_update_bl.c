@@ -41,6 +41,7 @@ FW_CFG_SECTION S_M1_FW_CONFIG_t m1_fw_config = {
     .user_option_1 = 0,
     .User_option_2 = 0,
     .ism_band_region = SUBGHZ_ISM_BAND_REGION,
+    .fw_image_size = 0, // Placeholder, will be patched post-build
     .magic_number_2 = FW_CONFIG_MAGIC_NUMBER_2};
 // 4 bytes CRC32 will be manually added here with the tool srec_cat
 // Example:
@@ -725,9 +726,9 @@ void boot_recovery_check(void) {
 
     // Clear any previous swap-failure flags to prevent an unexpected
     // DFU fallback later due to transient errors adding up.
-    HAL_PWR_EnableBkUpAccess();
+    PWR->DBPCR |= PWR_DBPCR_DBP; // Enable backup domain access
     __HAL_RCC_RTC_ENABLE();
-    if (TAMP->BKP1R == 0xDEADBEEF) {
+    if (TAMP->BKP1R == BOOT_FAIL_SIGNATURE) {
       TAMP->BKP1R = DEV_OP_STATUS_NO_OP;
     }
 
@@ -745,25 +746,25 @@ recovery_fallback:
   // TAMP_BKP1R is commonly used.
 
   // Enable Backup Access
-  HAL_PWR_EnableBkUpAccess();
+  PWR->DBPCR |= PWR_DBPCR_DBP; // Enable backup domain access
 
   // Enable RTC clock
   __HAL_RCC_RTC_ENABLE();
 
-  if (TAMP->BKP1R != 0xDEADBEEF) {
+  if (TAMP->BKP1R != BOOT_FAIL_SIGNATURE) {
     // Validate Backup Bank Magic Number before swapping
     uint32_t alternate_bank_magic =
-        *(volatile uint32_t *)(FW_CONFiG_ADDRESS + M1_FLASH_BANK_SIZE);
+        *(volatile uint32_t *)(FW_CONFIG_ADDRESS + M1_FLASH_BANK_SIZE);
     if (alternate_bank_magic != FW_CONFIG_MAGIC_NUMBER_1 &&
         alternate_bank_magic != FW_CONFIG_MAGIC_NUMBER_2) {
       // The alternate bank is not valid (likely empty/corrupt).
       // Skip the swap and go straight to ROM USB DFU to prevent a double-fault.
-      TAMP->BKP1R = 0xDEADBEEF;
+      TAMP->BKP1R = BOOT_FAIL_SIGNATURE;
     }
   }
 
   // Check if we already swapped and failed, or if the backup bank is invalid
-  if (TAMP->BKP1R == 0xDEADBEEF) {
+  if (TAMP->BKP1R == BOOT_FAIL_SIGNATURE) {
     // We already failed once! Both banks are corrupt.
     // Fallback to ROM USB DFU mode
 
@@ -773,16 +774,27 @@ recovery_fallback:
     // the first is magic_number. TAMP->BKP1R maps to RTC_BKP_DR1.
     TAMP->BKP1R = DEV_OP_STATUS_FW_UPDATE_ACTIVE;
 
-    // Setup bootmode to Boot from System Memory (DFU)
-    // Just looping forever to stop booting garbage that could physically damage
-    // hardware.
+    // Set boot mode to System Memory (DFU) and trigger reset
+    // On the STM32H573, System Memory starts at 0x0BF90000.
+    // Ensure interrupts are disabled and stack is reset before jumping.
+    __disable_irq();
+    SysTick->CTRL = 0;
+    SysTick->LOAD = 0;
+    SysTick->VAL = 0;
+
+    void (*SysMemBootJump)(void);
+    // Address + 4 is the reset handler in the vector table
+    SysMemBootJump = (void (*)(void))(*((uint32_t *)(0x0BF90000 + 4)));
+    __set_MSP(*(uint32_t *)0x0BF90000);
+    SysMemBootJump();
+
     while (1) {
       __NOP();
     }
   }
 
   // Mark that we are attempting a recovery swap
-  TAMP->BKP1R = 0xDEADBEEF;
+  TAMP->BKP1R = BOOT_FAIL_SIGNATURE;
 
   // Perform bank swap
   // Unlock FLASH
@@ -799,7 +811,7 @@ recovery_fallback:
   FLASH->OPTCR |= FLASH_OPTCR_OPTSTART;
 
   // Wait for BSY
-  while (FLASH->NSSR & FLASH_SR_BSY) {
+  while (FLASH->NSSR & FLASH_FLAG_BSY) {
   }
 
   // Generate System Reset to reload Option Bytes and boot from the other bank

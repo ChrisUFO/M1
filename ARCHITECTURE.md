@@ -112,9 +112,9 @@ Version is defined in `m1_csrc/m1_fw_update_bl.h`:
 
 To protect against corrupted flash banks (Issue #20), the M1 employs an early boot integrity check:
 1. `SystemInit()` in `system_stm32h5xx.c` invokes `boot_recovery_check()` before any RAM initialization.
-2. The STM32H5 Hardware CRC unit computes the CRC-32 of the active firmware bank (using sizes derived from `S_M1_FW_CONFIG_t`).
-3. If the payload is invalid, the bootloader writes `0xDEADBEEF` to `RTC->BKP1R` and securely toggles the `SWAP_BANK` option byte.
-4. A system reset safely swaps to the alternate hardware bank. If both banks fail, `RTC->BKP1R` forces a direct fallback to ROM USB DFU mode.
+2. The STM32H5 Hardware CRC unit computes the CRC-32 of the active firmware bank (using sizes derived from `S_M1_FW_CONFIG_t` quadword-aligned).
+3. If the payload is invalid, the bootloader writes `BOOT_FAIL_SIGNATURE` (0xDEADBEEF) to `TAMP->BKP1R` and securely toggles the `SWAP_BANK` option byte.
+4. A system reset safely swaps to the alternate hardware bank. If both banks fail (detected by a persistent `BOOT_FAIL_SIGNATURE`), the system performs a robust direct jump to the STM32H5 System Memory (ROM) Bootloader at `0x0BF90000` for DFU recovery.
 
 ### Changelog
 
