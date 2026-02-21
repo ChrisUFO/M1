@@ -1,20 +1,20 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2024 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : Main program body
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2024 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -22,12 +22,14 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "lfrfid.h" //+2025_1031_01_Thomas
 #include "m1_compile_cfg.h"
-#include "m1_system.h"
 #include "m1_infrared.h"
 #include "m1_rfid.h"
-#include "lfrfid.h"	//+2025_1031_01_Thomas
+#include "m1_system.h"
 #include "m1_usb_cdc_msc.h"
+#include "stm32h5xx.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -38,7 +40,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define M1_LOGDB_TAG	"Main"
+#define M1_LOGDB_TAG "Main"
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -62,7 +64,7 @@ SPI_HandleTypeDef hspi1;
 SPI_HandleTypeDef hspi2;
 
 /* USER CODE BEGIN PV */
-//uint32_t uwLsiFreq;
+// uint32_t uwLsiFreq;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -80,11 +82,11 @@ static void MX_CRC_Init(void);
 static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
 
-extern TIM_HandleTypeDef    Timerhdl_RfIdTIM3;
-extern void HAL_TIM_MspPostInit(TIM_HandleTypeDef* htim);
+extern TIM_HandleTypeDef Timerhdl_RfIdTIM3;
+extern void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
 
 #ifdef USE_FULL_ASSERT // Defined in stm32h5xx_hal_conf.h, line 196
-void assert_failed(uint8_t* file, uint32_t line);
+void assert_failed(uint8_t *file, uint32_t line);
 #endif // #ifdef USE_FULL_ASSERT
 
 /* USER CODE END PFP */
@@ -95,23 +97,96 @@ void assert_failed(uint8_t* file, uint32_t line);
 /* USER CODE END 0 */
 
 /**
-  * @brief  The application entry point.
-  * @retval int
-  */
-int main(void)
-{
+ * @brief  The application entry point.
+ * @retval int
+ */
+int main(void) {
 
   /* USER CODE BEGIN 1 */
+  /* --- EARLY BOOT DFU CHECKS --- */
 
+  /* 1. Hardware Strap: Check if the 'UP' button (GPIOE Pin 11) is held down.
+        We use raw register access because this runs before HAL_Init(). */
+
+  /* Enable GPIOE Clock (RCC_AHB2ENR bit 4) */
+  RCC->AHB2ENR |= (1 << 4);
+  __DSB(); /* Data Synchronization Barrier to ensure clock is active */
+
+  /* Configure PE11 as Input with Pull-up:
+     - MODER11 = 00 (Input)
+     - PUPDR11 = 01 (Pull-up) */
+  GPIOE->MODER &= ~(0x3U << (11 * 2));
+  GPIOE->PUPDR &= ~(0x3U << (11 * 2));
+  GPIOE->PUPDR |= (0x1U << (11 * 2));
+
+  /* Small delay to let pull-up stabilize resistor capacitance */
+  for (volatile int i = 0; i < 5000; i++) {
+    __NOP();
+  }
+
+  /* Read PE11 (IDR bit 11). 0 means button is pressed (pulled to ground). */
+  uint8_t dfu_hardware_strap = ((GPIOE->IDR & (1 << 11)) == 0);
+
+  if (dfu_hardware_strap) {
+
+    /* --- AUDIO FEEDBACK ---
+       Give the user a satisfying "tick" from the speaker to confirm
+       we caught the DFU hardware strap. SPK_CTRL is GPIOC Pin 7. */
+    RCC->AHB2ENR |= (1 << 2); /* Enable GPIOC Clock */
+    __DSB();
+
+    /* Config PC7 as Output (MODER = 01) */
+    GPIOC->MODER &= ~(0x3U << (7 * 2));
+    GPIOC->MODER |= (0x1U << (7 * 2));
+
+    /* Drive PC7 HIGH to displace the speaker membrane */
+    GPIOC->BSRR = (1 << 7);
+
+    /* Hold it high for ~100ms to allow a loud click to resonate */
+    for (volatile int i = 0; i < 300000; i++) {
+      __NOP();
+    }
+
+    /* Drive PC7 LOW to release membrane */
+    GPIOC->BSRR = (1 << (7 + 16));
+
+    /* Small delay before pulling the plug */
+    for (volatile int i = 0; i < 50000; i++) {
+      __NOP();
+    }
+
+    /* Jump directly to System Bootloader from pristine state */
+    void bl_jump_to_dfu(void);
+    bl_jump_to_dfu();
+  }
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
 
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick.
+   */
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+  /* Verify that the IWDG is configured as a Software Watchdog in Option Bytes.
+     If it is a Hardware Watchdog, the DFU bootloader will enter a reboot loop
+     natively because the ST System Bootloader does not feed the watchdog. */
+  FLASH_OBProgramInitTypeDef OBInit = {0};
+  HAL_FLASHEx_OBGetConfig(&OBInit);
 
+  if ((OBInit.USERConfig & OB_IWDG_SW) == 0) // 0 means Hardware Watchdog
+  {
+    HAL_FLASH_Unlock();
+    HAL_FLASH_OB_Unlock();
+
+    /* Preserve all existing user option bytes and only flip IWDG_SW */
+    OBInit.OptionType = OPTIONBYTE_USER;
+    OBInit.USERType = OB_USER_IWDG_SW;
+    OBInit.USERConfig |= OB_IWDG_SW; // Set to Software Watchdog
+
+    HAL_FLASHEx_OBProgram(&OBInit);
+    HAL_FLASH_OB_Launch(); // Applies changes and resets MCU automatically
+  }
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -120,8 +195,9 @@ int main(void)
   /* USER CODE BEGIN SysInit */
 
   /* MPU Configuration--------------------------------------------------------*/
-  /* By default, all the AHB memory range is cacheable. For regions where caching is not
-     practical (Read only area), MPU has to be used to disable local cacheability.
+  /* By default, all the AHB memory range is cacheable. For regions where
+     caching is not practical (Read only area), MPU has to be used to disable
+     local cacheability.
   */
   MPU_Config();
 
@@ -129,7 +205,16 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_IWDG_Init();
+
+  /* Check if USB DFU mode is requested before enabling the Independent Watchdog
+   */
+  HAL_PWR_EnableBkUpAccess();
+  __HAL_RCC_RTC_ENABLE();
+  uint8_t op_status = (uint8_t)(TAMP->BKP1R & 0xFF);
+
+  if (op_status != DEV_OP_STATUS_USB_DFU_REQUEST) {
+    MX_IWDG_Init();
+  }
   MX_SPI1_Init();
   MX_ICACHE_Init();
   MX_SPI2_Init();
@@ -154,36 +239,36 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
+  while (1) {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-//	  MX_X_CUBE_NFC6_Process();
+    //	  MX_X_CUBE_NFC6_Process();
   }
   /* USER CODE END 3 */
 }
 
 /**
-  * @brief System Clock Configuration
-  * @retval None
-  */
-void SystemClock_Config(void)
-{
+ * @brief System Clock Configuration
+ * @retval None
+ */
+void SystemClock_Config(void) {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
   /** Configure the main internal regulator output voltage
-  */
+   */
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE3);
 
-  while(!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {}
+  while (!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {
+  }
 
   /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_LSI
-                              |RCC_OSCILLATORTYPE_HSE;
+   * in the RCC_OscInitTypeDef structure.
+   */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48 |
+                                     RCC_OSCILLATORTYPE_LSI |
+                                     RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
@@ -197,39 +282,36 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1_VCIRANGE_3;
   RCC_OscInitStruct.PLL.PLLVCOSEL = RCC_PLL1_VCORANGE_WIDE;
   RCC_OscInitStruct.PLL.PLLFRACN = 0;
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
-  {
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
     Error_Handler();
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
-  */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2
-                              |RCC_CLOCKTYPE_PCLK3;
+   */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK |
+                                RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2 |
+                                RCC_CLOCKTYPE_PCLK3;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB3CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK)
-  {
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK) {
     Error_Handler();
   }
 
   /** Configure the programming delay
-  */
+   */
   __HAL_FLASH_SET_PROGRAM_DELAY(FLASH_PROGRAMMING_DELAY_1);
 }
 
 /**
-  * @brief CRC Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_CRC_Init(void)
-{
+ * @brief CRC Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_CRC_Init(void) {
 
   /* USER CODE BEGIN CRC_Init 0 */
 
@@ -244,23 +326,20 @@ static void MX_CRC_Init(void)
   hcrc.Init.InputDataInversionMode = CRC_INPUTDATA_INVERSION_NONE;
   hcrc.Init.OutputDataInversionMode = CRC_OUTPUTDATA_INVERSION_DISABLE;
   hcrc.InputDataFormat = CRC_INPUTDATA_FORMAT_WORDS;
-  if (HAL_CRC_Init(&hcrc) != HAL_OK)
-  {
+  if (HAL_CRC_Init(&hcrc) != HAL_OK) {
     Error_Handler();
   }
   /* USER CODE BEGIN CRC_Init 2 */
 
   /* USER CODE END CRC_Init 2 */
-
 }
 
 /**
-  * @brief I2C1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_I2C1_Init(void)
-{
+ * @brief I2C1 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_I2C1_Init(void) {
 
   /* USER CODE BEGIN I2C1_Init 0 */
 
@@ -278,37 +357,32 @@ static void MX_I2C1_Init(void)
   hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
   hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
   hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
-  {
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK) {
     Error_Handler();
   }
 
   /** Configure Analogue filter
-  */
-  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
-  {
+   */
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK) {
     Error_Handler();
   }
 
   /** Configure Digital filter
-  */
-  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
-  {
+   */
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK) {
     Error_Handler();
   }
   /* USER CODE BEGIN I2C1_Init 2 */
 
   /* USER CODE END I2C1_Init 2 */
-
 }
 
 /**
-  * @brief ICACHE Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_ICACHE_Init(void)
-{
+ * @brief ICACHE Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_ICACHE_Init(void) {
 
   /* USER CODE BEGIN ICACHE_Init 0 */
 
@@ -319,28 +393,24 @@ static void MX_ICACHE_Init(void)
   /* USER CODE END ICACHE_Init 1 */
 
   /** Enable instruction cache in 1-way (direct mapped cache)
-  */
-  if (HAL_ICACHE_ConfigAssociativityMode(ICACHE_1WAY) != HAL_OK)
-  {
+   */
+  if (HAL_ICACHE_ConfigAssociativityMode(ICACHE_1WAY) != HAL_OK) {
     Error_Handler();
   }
-  if (HAL_ICACHE_Enable() != HAL_OK)
-  {
+  if (HAL_ICACHE_Enable() != HAL_OK) {
     Error_Handler();
   }
   /* USER CODE BEGIN ICACHE_Init 2 */
 
   /* USER CODE END ICACHE_Init 2 */
-
 }
 
 /**
-  * @brief IWDG Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_IWDG_Init(void)
-{
+ * @brief IWDG Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_IWDG_Init(void) {
 
   /* USER CODE BEGIN IWDG_Init 0 */
 
@@ -350,27 +420,24 @@ static void MX_IWDG_Init(void)
 
   /* USER CODE END IWDG_Init 1 */
   hiwdg.Instance = IWDG;
-  hiwdg.Init.Prescaler = IWDG_PRESCALER_32;
+  hiwdg.Init.Prescaler = IWDG_PRESCALER_256;
   hiwdg.Init.Window = IWDG_WINDOW;
   hiwdg.Init.Reload = IWDG_RELOAD;
   hiwdg.Init.EWI = 0;
-  if (HAL_IWDG_Init(&hiwdg) != HAL_OK)
-  {
+  if (HAL_IWDG_Init(&hiwdg) != HAL_OK) {
     Error_Handler();
   }
   /* USER CODE BEGIN IWDG_Init 2 */
 
   /* USER CODE END IWDG_Init 2 */
-
 }
 
 /**
-  * @brief RTC Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_RTC_Init(void)
-{
+ * @brief RTC Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_RTC_Init(void) {
 
   /* USER CODE BEGIN RTC_Init 0 */
 
@@ -383,7 +450,7 @@ static void MX_RTC_Init(void)
   /* USER CODE END RTC_Init 1 */
 
   /** Initialize RTC Only
-  */
+   */
   hrtc.Instance = RTC;
   hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
   hrtc.Init.AsynchPrediv = 127;
@@ -394,38 +461,34 @@ static void MX_RTC_Init(void)
   hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
   hrtc.Init.OutPutPullUp = RTC_OUTPUT_PULLUP_NONE;
   hrtc.Init.BinMode = RTC_BINARY_NONE;
-  if (HAL_RTC_Init(&hrtc) != HAL_OK)
-  {
+  if (HAL_RTC_Init(&hrtc) != HAL_OK) {
     Error_Handler();
   }
   privilegeState.rtcPrivilegeFull = RTC_PRIVILEGE_FULL_NO;
   privilegeState.backupRegisterPrivZone = RTC_PRIVILEGE_BKUP_ZONE_NONE;
   privilegeState.backupRegisterStartZone2 = RTC_BKP_DR0;
   privilegeState.backupRegisterStartZone3 = RTC_BKP_DR0;
-  if (HAL_RTCEx_PrivilegeModeSet(&hrtc, &privilegeState) != HAL_OK)
-  {
+  if (HAL_RTCEx_PrivilegeModeSet(&hrtc, &privilegeState) != HAL_OK) {
     Error_Handler();
   }
 
   /** Enable the WakeUp
-  */
-  if (HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, 0xFFFF, RTC_WAKEUPCLOCK_RTCCLK_DIV16, 0) != HAL_OK)
-  {
+   */
+  if (HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, 0xFFFF, RTC_WAKEUPCLOCK_RTCCLK_DIV16,
+                                  0) != HAL_OK) {
     Error_Handler();
   }
   /* USER CODE BEGIN RTC_Init 2 */
 
   /* USER CODE END RTC_Init 2 */
-
 }
 
 /**
-  * @brief SDMMC1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_SDMMC1_SD_Init(void)
-{
+ * @brief SDMMC1 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_SDMMC1_SD_Init(void) {
 
   /* USER CODE BEGIN SDMMC1_Init 0 */
 
@@ -440,23 +503,20 @@ static void MX_SDMMC1_SD_Init(void)
   hsd1.Init.BusWide = SDMMC_BUS_WIDE_4B;
   hsd1.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_DISABLE;
   hsd1.Init.ClockDiv = 0;
-  if (HAL_SD_Init(&hsd1) != HAL_OK)
-  {
+  if (HAL_SD_Init(&hsd1) != HAL_OK) {
     Error_Handler();
   }
   /* USER CODE BEGIN SDMMC1_Init 2 */
 
   /* USER CODE END SDMMC1_Init 2 */
-
 }
 
 /**
-  * @brief SPI1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_SPI1_Init(void)
-{
+ * @brief SPI1 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_SPI1_Init(void) {
 
   /* USER CODE BEGIN SPI1_Init 0 */
 
@@ -488,23 +548,20 @@ static void MX_SPI1_Init(void)
   hspi1.Init.IOSwap = SPI_IO_SWAP_DISABLE;
   hspi1.Init.ReadyMasterManagement = SPI_RDY_MASTER_MANAGEMENT_INTERNALLY;
   hspi1.Init.ReadyPolarity = SPI_RDY_POLARITY_HIGH;
-  if (HAL_SPI_Init(&hspi1) != HAL_OK)
-  {
+  if (HAL_SPI_Init(&hspi1) != HAL_OK) {
     Error_Handler();
   }
   /* USER CODE BEGIN SPI1_Init 2 */
 
   /* USER CODE END SPI1_Init 2 */
-
 }
 
 /**
-  * @brief SPI2 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_SPI2_Init(void)
-{
+ * @brief SPI2 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_SPI2_Init(void) {
 
   /* USER CODE BEGIN SPI2_Init 0 */
 
@@ -536,26 +593,23 @@ static void MX_SPI2_Init(void)
   hspi2.Init.IOSwap = SPI_IO_SWAP_DISABLE;
   hspi2.Init.ReadyMasterManagement = SPI_RDY_MASTER_MANAGEMENT_INTERNALLY;
   hspi2.Init.ReadyPolarity = SPI_RDY_POLARITY_HIGH;
-  if (HAL_SPI_Init(&hspi2) != HAL_OK)
-  {
+  if (HAL_SPI_Init(&hspi2) != HAL_OK) {
     Error_Handler();
   }
   /* USER CODE BEGIN SPI2_Init 2 */
 
   /* USER CODE END SPI2_Init 2 */
-
 }
 
 /**
-  * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_GPIO_Init(void)
-{
+ * @brief GPIO Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_GPIO_Init(void) {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-/* USER CODE BEGIN MX_GPIO_Init_1 */
-/* USER CODE END MX_GPIO_Init_1 */
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+  /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
@@ -566,31 +620,39 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, NFC_CS_Pin|PC2_Pin|PC3_Pin|IR_DRV_Pin
-                          |SPK_CTRL_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC,
+                    NFC_CS_Pin | PC2_Pin | PC3_Pin | IR_DRV_Pin | SPK_CTRL_Pin,
+                    GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, RFID_PULL_Pin|Display_RST_Pin|Display_DI_Pin|ESP32_EN_Pin
-                          |UART_1_TX_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA,
+                    RFID_PULL_Pin | Display_RST_Pin | Display_DI_Pin |
+                        ESP32_EN_Pin | UART_1_TX_Pin,
+                    GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, RFID_OUT_Pin|EN_EXT_3V3_Pin|ESP32_SPI3_NSS_Pin|Display_CS_Pin
-                          |EN_EXT2_5V_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB,
+                    RFID_OUT_Pin | EN_EXT_3V3_Pin | ESP32_SPI3_NSS_Pin |
+                        Display_CS_Pin | EN_EXT2_5V_Pin,
+                    GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOE, SI4463_RFSW1_Pin|SI4463_RFSW2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, SI4463_RFSW1_Pin | SI4463_RFSW2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, SI4463_SW_V2_Pin|SI4463_SW_V1_Pin|SI4463_CS_Pin|SI4463_ENA_Pin
-                          |PD12_Pin|PD13_Pin|EN_EXT_5V_Pin|PD0_Pin
-                          |PD3_Pin|SI4463_GPIO2_Pin|BAT_OTG_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOD,
+                    SI4463_SW_V2_Pin | SI4463_SW_V1_Pin | SI4463_CS_Pin |
+                        SI4463_ENA_Pin | PD12_Pin | PD13_Pin | EN_EXT_5V_Pin |
+                        PD0_Pin | PD3_Pin | SI4463_GPIO2_Pin | BAT_OTG_Pin,
+                    GPIO_PIN_RESET);
 
   /*Configure GPIO pins : PE2_Pin PE4_Pin PE5_Pin PE6_Pin
-                           SI4463_GPIO1_Pin SI4463_GPIO0_Pin BUTTON_OK_Pin BUTTON_UP_Pin
-                           BUTTON_LEFT_Pin BUTTON_RIGHT_Pin BUTTON_DOWN_Pin */
-  GPIO_InitStruct.Pin = PE2_Pin|PE4_Pin|PE5_Pin|PE6_Pin
-                          |SI4463_GPIO1_Pin|SI4463_GPIO0_Pin|BUTTON_OK_Pin|BUTTON_UP_Pin
-                          |BUTTON_LEFT_Pin|BUTTON_RIGHT_Pin|BUTTON_DOWN_Pin;
+                           SI4463_GPIO1_Pin SI4463_GPIO0_Pin BUTTON_OK_Pin
+     BUTTON_UP_Pin BUTTON_LEFT_Pin BUTTON_RIGHT_Pin BUTTON_DOWN_Pin */
+  GPIO_InitStruct.Pin = PE2_Pin | PE4_Pin | PE5_Pin | PE6_Pin |
+                        SI4463_GPIO1_Pin | SI4463_GPIO0_Pin | BUTTON_OK_Pin |
+                        BUTTON_UP_Pin | BUTTON_LEFT_Pin | BUTTON_RIGHT_Pin |
+                        BUTTON_DOWN_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
@@ -602,44 +664,46 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(FG_INT_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : BUTTON_BACK_Pin ESP32_DATAREADY_Pin IR_RX_Pin */
-  GPIO_InitStruct.Pin = BUTTON_BACK_Pin|ESP32_DATAREADY_Pin|IR_RX_Pin;
+  GPIO_InitStruct.Pin = BUTTON_BACK_Pin | ESP32_DATAREADY_Pin | IR_RX_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pins : NFC_CS_Pin PC2_Pin PC3_Pin IR_DRV_Pin
                            SPK_CTRL_Pin */
-  GPIO_InitStruct.Pin = NFC_CS_Pin|PC2_Pin|PC3_Pin|IR_DRV_Pin
-                          |SPK_CTRL_Pin;
+  GPIO_InitStruct.Pin =
+      NFC_CS_Pin | PC2_Pin | PC3_Pin | IR_DRV_Pin | SPK_CTRL_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : RFID_PULL_Pin Display_RST_Pin Display_DI_Pin UART_1_TX_Pin */
-  GPIO_InitStruct.Pin = RFID_PULL_Pin|Display_RST_Pin|Display_DI_Pin|UART_1_TX_Pin;
+  /*Configure GPIO pins : RFID_PULL_Pin Display_RST_Pin Display_DI_Pin
+   * UART_1_TX_Pin */
+  GPIO_InitStruct.Pin =
+      RFID_PULL_Pin | Display_RST_Pin | Display_DI_Pin | UART_1_TX_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : RFID_RF_IN_Pin UART_1_RX_Pin RF_CARRIER_Pin */
-  GPIO_InitStruct.Pin = RFID_RF_IN_Pin|UART_1_RX_Pin|RF_CARRIER_Pin;
+  GPIO_InitStruct.Pin = RFID_RF_IN_Pin | UART_1_RX_Pin | RF_CARRIER_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : RFID_OUT_Pin EN_EXT_3V3_Pin ESP32_SPI3_NSS_Pin Display_CS_Pin
-                           EN_EXT2_5V_Pin */
-  GPIO_InitStruct.Pin = RFID_OUT_Pin|EN_EXT_3V3_Pin|ESP32_SPI3_NSS_Pin|Display_CS_Pin
-                          |EN_EXT2_5V_Pin;
+  /*Configure GPIO pins : RFID_OUT_Pin EN_EXT_3V3_Pin ESP32_SPI3_NSS_Pin
+     Display_CS_Pin EN_EXT2_5V_Pin */
+  GPIO_InitStruct.Pin = RFID_OUT_Pin | EN_EXT_3V3_Pin | ESP32_SPI3_NSS_Pin |
+                        Display_CS_Pin | EN_EXT2_5V_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pins : SI4463_RFSW1_Pin SI4463_RFSW2_Pin */
-  GPIO_InitStruct.Pin = SI4463_RFSW1_Pin|SI4463_RFSW2_Pin;
+  GPIO_InitStruct.Pin = SI4463_RFSW1_Pin | SI4463_RFSW2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -651,19 +715,19 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(SI4463_nINT_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : SI4463_SW_V2_Pin SI4463_SW_V1_Pin SI4463_CS_Pin SI4463_ENA_Pin
-                           PD12_Pin PD13_Pin EN_EXT_5V_Pin PD0_Pin
-                           PD3_Pin SI4463_GPIO2_Pin BAT_OTG_Pin */
-  GPIO_InitStruct.Pin = SI4463_SW_V2_Pin|SI4463_SW_V1_Pin|SI4463_CS_Pin|SI4463_ENA_Pin
-                          |PD12_Pin|PD13_Pin|EN_EXT_5V_Pin|PD0_Pin
-                          |PD3_Pin|SI4463_GPIO2_Pin|BAT_OTG_Pin;
+  /*Configure GPIO pins : SI4463_SW_V2_Pin SI4463_SW_V1_Pin SI4463_CS_Pin
+     SI4463_ENA_Pin PD12_Pin PD13_Pin EN_EXT_5V_Pin PD0_Pin PD3_Pin
+     SI4463_GPIO2_Pin BAT_OTG_Pin */
+  GPIO_InitStruct.Pin = SI4463_SW_V2_Pin | SI4463_SW_V1_Pin | SI4463_CS_Pin |
+                        SI4463_ENA_Pin | PD12_Pin | PD13_Pin | EN_EXT_5V_Pin |
+                        PD0_Pin | PD3_Pin | SI4463_GPIO2_Pin | BAT_OTG_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
   /*Configure GPIO pins : SD_DETECT_Pin PD1_Pin */
-  GPIO_InitStruct.Pin = SD_DETECT_Pin|PD1_Pin;
+  GPIO_InitStruct.Pin = SD_DETECT_Pin | PD1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
@@ -682,7 +746,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(ESP32_EN_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : SI4463_GPIO3_Pin ESP32_HANDSHAKE_Pin */
-  GPIO_InitStruct.Pin = SI4463_GPIO3_Pin|ESP32_HANDSHAKE_Pin;
+  GPIO_InitStruct.Pin = SI4463_GPIO3_Pin | ESP32_HANDSHAKE_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
@@ -699,51 +763,54 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(NFC_IRQ_GPIO_Port, &GPIO_InitStruct);
 
-/* USER CODE BEGIN MX_GPIO_Init_2 */
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
   // Battery charger external interrupt - PB8
-  HAL_NVIC_SetPriority(EXTI8_IRQn, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY, 0);
+  HAL_NVIC_SetPriority(EXTI8_IRQn, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY,
+                       0);
   HAL_NVIC_EnableIRQ(EXTI8_IRQn);
   // Fuel gauge external interrupt - PE3
-  HAL_NVIC_SetPriority(EXTI3_IRQn, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY, 0);
+  HAL_NVIC_SetPriority(EXTI3_IRQn, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY,
+                       0);
   HAL_NVIC_EnableIRQ(EXTI3_IRQn);
   // USB-C Power delivery external interrupt - PC6
-  HAL_NVIC_SetPriority(EXTI6_IRQn, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY, 0);
+  HAL_NVIC_SetPriority(EXTI6_IRQn, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY,
+                       0);
   HAL_NVIC_EnableIRQ(EXTI6_IRQn);
   // NFC external interrupt - PE0
-  HAL_NVIC_SetPriority(EXTI0_IRQn, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY, 0);
+  HAL_NVIC_SetPriority(EXTI0_IRQn, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY,
+                       0);
   HAL_NVIC_EnableIRQ(EXTI0_IRQn);
-/* USER CODE END MX_GPIO_Init_2 */
+  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
 
 /**
-  * @brief  Configure the MPU attributes as non-cacheable for Read only area
-  * @param  None
-  * @retval None
-  */
-static void MPU_Config(void)
-{
+ * @brief  Configure the MPU attributes as non-cacheable for Read only area
+ * @param  None
+ * @retval None
+ */
+static void MPU_Config(void) {
   MPU_Region_InitTypeDef MPU_InitStruct;
-  MPU_Attributes_InitTypeDef   MPU_AttributesInit;
+  MPU_Attributes_InitTypeDef MPU_AttributesInit;
 
   /* Disable MPU before perloading and config update */
   HAL_MPU_Disable();
 
   /* Define cacheable memory via MPU */
-  MPU_AttributesInit.Number             = MPU_ATTRIBUTES_NUMBER0;
-  MPU_AttributesInit.Attributes         = MPU_NOT_CACHEABLE;
+  MPU_AttributesInit.Number = MPU_ATTRIBUTES_NUMBER0;
+  MPU_AttributesInit.Attributes = MPU_NOT_CACHEABLE;
   HAL_MPU_ConfigMemoryAttributes(&MPU_AttributesInit);
 
   /* Configure FLASH region as REGION Number 0 */
-  MPU_InitStruct.Enable           = MPU_REGION_ENABLE;
-  MPU_InitStruct.Number           = MPU_REGION_NUMBER0;
-  MPU_InitStruct.AttributesIndex  = MPU_ATTRIBUTES_NUMBER0;
-  MPU_InitStruct.BaseAddress      = (uint32_t ) 0x08FFF800;
-  MPU_InitStruct.LimitAddress     = (uint32_t ) 0x08FFF80C;
+  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+  MPU_InitStruct.Number = MPU_REGION_NUMBER0;
+  MPU_InitStruct.AttributesIndex = MPU_ATTRIBUTES_NUMBER0;
+  MPU_InitStruct.BaseAddress = (uint32_t)0x08FFF800;
+  MPU_InitStruct.LimitAddress = (uint32_t)0x08FFF80C;
   MPU_InitStruct.AccessPermission = MPU_REGION_ALL_RO;
-  MPU_InitStruct.DisableExec      = MPU_INSTRUCTION_ACCESS_ENABLE;
-  MPU_InitStruct.IsShareable      = MPU_ACCESS_NOT_SHAREABLE;
+  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
 
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
@@ -754,15 +821,14 @@ static void MPU_Config(void)
 /* USER CODE END 4 */
 
 /**
-  * @brief  Period elapsed callback in non blocking mode
-  * @note   This function is called  when TIM6 interrupt took place, inside
-  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
-  * a global variable "uwTick" used as application time base.
-  * @param  htim : TIM handle
-  * @retval None
-  */
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
+ * @brief  Period elapsed callback in non blocking mode
+ * @note   This function is called  when TIM6 interrupt took place, inside
+ * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+ * a global variable "uwTick" used as application time base.
+ * @param  htim : TIM handle
+ * @retval None
+ */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
   /* USER CODE BEGIN Callback 0 */
 
   /* USER CODE END Callback 0 */
@@ -771,42 +837,40 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   }
   /* USER CODE BEGIN Callback 1 */
 
-  if ( (htim == &Timerhdl_IrRx) || (htim == &Timerhdl_IrTx) )
-	  HAL_TIM_PeriodElapsedCallback_IR(htim);
+  if ((htim == &Timerhdl_IrRx) || (htim == &Timerhdl_IrTx))
+    HAL_TIM_PeriodElapsedCallback_IR(htim);
   /* USER CODE END Callback 1 */
 }
 
 /**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
-  */
-void Error_Handler(void)
-{
+ * @brief  This function is executed in case of error occurrence.
+ * @retval None
+ */
+void Error_Handler(void) {
   /* USER CODE BEGIN Error_Handler_Debug */
-	//__BKPT(); // Causes the processor to enter Debug state.
+  //__BKPT(); // Causes the processor to enter Debug state.
   /* User can add his own implementation to report the HAL error return state */
-	//HAL_NVIC_SystemReset()
+  // HAL_NVIC_SystemReset()
   __disable_irq();
-  while (1)
-  {
+  while (1) {
   }
   /* USER CODE END Error_Handler_Debug */
 }
 
-#ifdef  USE_FULL_ASSERT
+#ifdef USE_FULL_ASSERT
 /**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
-void assert_failed(uint8_t *file, uint32_t line)
-{
+ * @brief  Reports the name of the source file and the source line number
+ *         where the assert_param error has occurred.
+ * @param  file: pointer to the source file name
+ * @param  line: assert_param error line source number
+ * @retval None
+ */
+void assert_failed(uint8_t *file, uint32_t line) {
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-	M1_LOG_I(M1_LOGDB_TAG, "-Assert_failed: file %s on line %lu", file, line);
+  /* User can add his own implementation to report the file name and line
+     number, ex: printf("Wrong parameters value: file %s on line %d\r\n", file,
+     line) */
+  M1_LOG_I(M1_LOGDB_TAG, "-Assert_failed: file %s on line %lu", file, line);
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

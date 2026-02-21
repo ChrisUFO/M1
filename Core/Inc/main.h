@@ -1,21 +1,21 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.h
-  * @brief          : Header for main.c file.
-  *                   This file contains the common defines of the application.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2024 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file           : main.h
+ * @brief          : Header for main.c file.
+ *                   This file contains the common defines of the application.
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2024 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 
 /* Define to prevent recursive inclusion -------------------------------------*/
@@ -31,23 +31,24 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <limits.h>
-#include <assert.h>
 #include "FreeRTOSConfig.h"
-#include "m1_types_def.h"
+#include "m1_buzzer.h"
 #include "m1_compile_cfg.h"
-#include "m1_system.h"
-#include "m1_lib.h"
 #include "m1_core_config.h"
 #include "m1_display.h"
 #include "m1_file_browser.h"
-#include "m1_log_debug.h"
-#include "m1_tasks.h"
-#include "m1_watchdog.h"
 #include "m1_led_indicator.h"
-#include "m1_buzzer.h"
+#include "m1_lib.h"
+#include "m1_log_debug.h"
 #include "m1_lp5814.h"
+#include "m1_system.h"
+#include "m1_tasks.h"
+#include "m1_types_def.h"
 #include "m1_usb_cdc_msc.h"
+#include "m1_watchdog.h"
+#include <assert.h>
+#include <limits.h>
+
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -231,20 +232,22 @@ void Error_Handler(void);
 #endif // #ifndef M1_APP_GPIO_OWN_DEFINES
 // Other defines should be below this line, B.N
 
-#define ST25R3916 // manually added for STM32 NFC to support X-NUCLEO-NFC06A1 (for ST25R3916) instead of X-NUCLEO-NFC08A1 (for ST25R3916B)
+#define ST25R3916 // manually added for STM32 NFC to support X-NUCLEO-NFC06A1
+                  // (for ST25R3916) instead of X-NUCLEO-NFC08A1 (for
+                  // ST25R3916B)
 
-#define IWDG_WINDOW 	IWDG_WINDOW_DISABLE
-#define IWDG_RELOAD 	4000 // 4000 x 1ms = 4,000ms /*(uwLsiFreq / 32)*/
+#define IWDG_WINDOW IWDG_WINDOW_DISABLE
+#define IWDG_RELOAD 1250 // (1250 x 256) / 32kHz = 10,000ms
 
-extern IWDG_HandleTypeDef 	hiwdg;
-extern RTC_HandleTypeDef 	hrtc;
-extern I2C_HandleTypeDef 	hi2c1;
-extern SPI_HandleTypeDef 	hspi1;
-extern SPI_HandleTypeDef 	hspi2;
-extern SPI_HandleTypeDef 	hspi4;
-extern SD_HandleTypeDef 	hsd1;
-extern TIM_HandleTypeDef	Timerhdl_IrRx;
-extern RTC_HandleTypeDef 	hrtc;
+extern IWDG_HandleTypeDef hiwdg;
+extern RTC_HandleTypeDef hrtc;
+extern I2C_HandleTypeDef hi2c1;
+extern SPI_HandleTypeDef hspi1;
+extern SPI_HandleTypeDef hspi2;
+extern SPI_HandleTypeDef hspi4;
+extern SD_HandleTypeDef hsd1;
+extern TIM_HandleTypeDef Timerhdl_IrRx;
+extern RTC_HandleTypeDef hrtc;
 
 extern EXTI_HandleTypeDef H_EXTI_0;
 

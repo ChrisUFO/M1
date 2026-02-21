@@ -258,7 +258,8 @@ volatile uint8_t subghz_rx_dma_block_q[SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN] = {0};
 volatile uint8_t subghz_rx_dma_block_head = 0;
 volatile uint8_t subghz_rx_dma_block_tail = 0;
 volatile uint8_t subghz_rx_dma_block_count = 0;
-static uint32_t subghz_rx_dma_buffer[SUBGHZ_RX_DMA_BUFFER_SAMPLES];
+static uint32_t subghz_rx_dma_buffer[SUBGHZ_RX_DMA_BUFFER_SAMPLES]
+    __attribute__((aligned(32)));
 static uint32_t subghz_rx_dma_prev_capture = 0;
 static bool subghz_rx_dma_have_prev_capture = false;
 static uint8_t subghz_uiview_gui_latest_param;
@@ -765,8 +766,8 @@ static void subghz_rx_dma_process_blocks(void) {
   while ((subghz_rx_dma_block_count > 0U) &&
          (n_blocks < SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN)) {
     blocks[n_blocks++] = subghz_rx_dma_block_q[subghz_rx_dma_block_tail];
-    subghz_rx_dma_block_tail =
-        (uint8_t)((subghz_rx_dma_block_tail + 1U) % SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN);
+    subghz_rx_dma_block_tail = (uint8_t)((subghz_rx_dma_block_tail + 1U) %
+                                         SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN);
     subghz_rx_dma_block_count--;
   }
   taskEXIT_CRITICAL();
@@ -793,9 +794,8 @@ static void subghz_rx_dma_process_blocks(void) {
       if (cur_capture >= subghz_rx_dma_prev_capture) {
         pulse_width = cur_capture - subghz_rx_dma_prev_capture;
       } else {
-        pulse_width =
-            (uint32_t)timerhdl_subghz_rx.Init.Period + 1U - subghz_rx_dma_prev_capture +
-            cur_capture;
+        pulse_width = (uint32_t)timerhdl_subghz_rx.Init.Period + 1U -
+                      subghz_rx_dma_prev_capture + cur_capture;
       }
       subghz_rx_dma_prev_capture = cur_capture;
 
@@ -855,7 +855,8 @@ static int subghz_record_gui_message(void) {
       subghz_rx_dma_process_blocks();
       rcv_samples = ringbuffer_get_data_slots(&subghz_rx_rawdata_rb);
       M1_LOG_N(M1_LOGDB_TAG, "Raw samples %lu\r\n", (unsigned long)rcv_samples);
-      if (subghz_uiview_gui_latest_param == SUBGHZ_RECORD_DISPLAY_PARAM_ACTIVE) {
+      if (subghz_uiview_gui_latest_param ==
+          SUBGHZ_RECORD_DISPLAY_PARAM_ACTIVE) {
         subghz_record_gui_update(SUBGHZ_RECORD_DISPLAY_PARAM_ACTIVE);
       }
       vTaskDelay(10);
@@ -1860,7 +1861,7 @@ static void sub_ghz_rx_init(void) {
   hdma_subghz_rx.Init.DestInc = DMA_DINC_INCREMENTED;
   hdma_subghz_rx.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_WORD;
   hdma_subghz_rx.Init.DestDataWidth = DMA_DEST_DATAWIDTH_WORD;
-  hdma_subghz_rx.Init.Priority = DMA_LOW_PRIORITY_LOW_WEIGHT;
+  hdma_subghz_rx.Init.Priority = DMA_HIGH_PRIORITY;
   hdma_subghz_rx.Init.SrcBurstLength = 1;
   hdma_subghz_rx.Init.DestBurstLength = 1;
   hdma_subghz_rx.Init.TransferAllocatedPort =
@@ -1967,8 +1968,9 @@ static void sub_ghz_rx_deinit(void) {
   HAL_NVIC_DisableIRQ(GPDMA1_Channel3_IRQn);
   if (hdma_subghz_rx.Instance != NULL) {
     HAL_DMA_DeInit(&hdma_subghz_rx);
-    __HAL_DMA_DISABLE_IT(&hdma_subghz_rx, (DMA_IT_TC | DMA_IT_HT | DMA_IT_DTE |
-                                           DMA_IT_ULE | DMA_IT_USE | DMA_IT_TO));
+    __HAL_DMA_DISABLE_IT(&hdma_subghz_rx,
+                         (DMA_IT_TC | DMA_IT_HT | DMA_IT_DTE | DMA_IT_ULE |
+                          DMA_IT_USE | DMA_IT_TO));
   }
 
   HAL_GPIO_DeInit(SUBGHZ_RX_GPIO_PORT, SUBGHZ_RX_GPIO_PIN);

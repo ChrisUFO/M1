@@ -126,9 +126,12 @@ static char *ir_trim(char *s) {
 }
 
 static bool ir_workspace_lock(void) {
+  taskENTER_CRITICAL();
   if (ir_universal_mutex == NULL) {
-    ir_universal_mutex = xSemaphoreCreateMutexStatic(&ir_universal_mutex_storage);
+    ir_universal_mutex =
+        xSemaphoreCreateMutexStatic(&ir_universal_mutex_storage);
   }
+  taskEXIT_CRITICAL();
   if (ir_universal_mutex == NULL) {
     return false;
   }
@@ -468,9 +471,9 @@ static void ir_toggle_favorite(const char *path) {
     f_close(&f);
 
     /* Feedback */
-    ir_ui_show_notice("IR Status:",
-                      already_fav ? "Removed Favorite" : "Added Favorite",
-                      IR_UI_FEEDBACK_MS_SHORT);
+    ir_ui_show_notice(
+        "IR Status:", already_fav ? "Removed Favorite" : "Added Favorite",
+        IR_UI_FEEDBACK_MS_SHORT);
   }
 }
 
@@ -491,7 +494,8 @@ static uint8_t ir_list_from_file(const char *file_path,
       continue;
 
     size_t p_len = strlen(p);
-    if (p_len >= IR_UNIVERSAL_PATH_LEN_MAX) p_len = IR_UNIVERSAL_PATH_LEN_MAX - 1;
+    if (p_len >= IR_UNIVERSAL_PATH_LEN_MAX)
+      p_len = IR_UNIVERSAL_PATH_LEN_MAX - 1;
     memcpy(paths[count], p, p_len);
     paths[count][p_len] = '\0';
 
@@ -501,9 +505,10 @@ static uint8_t ir_list_from_file(const char *file_path,
       base++;
     else
       base = p;
-    
+
     size_t base_len = strlen(base);
-    if (base_len >= IR_NAME_BUF_LEN) base_len = IR_NAME_BUF_LEN - 1;
+    if (base_len >= IR_NAME_BUF_LEN)
+      base_len = IR_NAME_BUF_LEN - 1;
     memcpy(names[count], base, base_len);
     names[count][base_len] = '\0';
 
@@ -541,8 +546,7 @@ static void ir_search_recursive(const char *path, const char *lower_query,
   full_path = ir_search_full_paths[depth];
   lower_name = ir_search_lower_names[depth];
 
-  if (f_opendir(dir, path) != FR_OK)
-  {
+  if (f_opendir(dir, path) != FR_OK) {
     ir_search_io_error = true;
     return;
   }
@@ -564,7 +568,8 @@ static void ir_search_recursive(const char *path, const char *lower_query,
       continue;
 
     if (fi->fattrib & AM_DIR) {
-      int sn_ret = snprintf(full_path, IR_UNIVERSAL_PATH_LEN_MAX, "%s/%s", path, fi->fname);
+      int sn_ret = snprintf(full_path, IR_UNIVERSAL_PATH_LEN_MAX, "%s/%s", path,
+                            fi->fname);
       if (sn_ret >= 0 && sn_ret < IR_UNIVERSAL_PATH_LEN_MAX) {
         ir_search_recursive(full_path, lower_query, names, paths, count,
                             max_entries, depth + 1);
@@ -572,7 +577,8 @@ static void ir_search_recursive(const char *path, const char *lower_query,
     } else {
       /* Case-insensitive substr search using pre-lowercased query */
       size_t fname_len = strlen(fi->fname);
-      if (fname_len >= IR_NAME_BUF_LEN) fname_len = IR_NAME_BUF_LEN - 1;
+      if (fname_len >= IR_NAME_BUF_LEN)
+        fname_len = IR_NAME_BUF_LEN - 1;
       memcpy(lower_name, fi->fname, fname_len);
       lower_name[fname_len] = '\0';
       for (int i = 0; lower_name[i]; i++)
@@ -580,13 +586,14 @@ static void ir_search_recursive(const char *path, const char *lower_query,
 
       if (strstr(lower_name, lower_query)) {
         size_t n_len = strlen(fi->fname);
-        if (n_len >= IR_NAME_BUF_LEN) n_len = IR_NAME_BUF_LEN - 1;
+        if (n_len >= IR_NAME_BUF_LEN)
+          n_len = IR_NAME_BUF_LEN - 1;
         memcpy(names[*count], fi->fname, n_len);
         names[*count][n_len] = '\0';
-        int sn_ret2 = snprintf(paths[*count], IR_UNIVERSAL_PATH_LEN_MAX, "%s/%s", path,
-                 fi->fname);
+        int sn_ret2 = snprintf(paths[*count], IR_UNIVERSAL_PATH_LEN_MAX,
+                               "%s/%s", path, fi->fname);
         if (sn_ret2 >= 0 && sn_ret2 < IR_UNIVERSAL_PATH_LEN_MAX) {
-            (*count)++;
+          (*count)++;
         }
       }
     }
@@ -812,7 +819,7 @@ static bool ir_browse_level(const char *base_path, const char *title,
                             uint8_t level) {
   uint16_t skip_count = 0;
   uint8_t items_per_page = IR_LIST_MAX_ENTRIES - 2; /* reserve for next/prev */
-  char(*names)[IR_NAME_BUF_LEN];
+  char (*names)[IR_NAME_BUF_LEN];
 
   if (level >= IR_BROWSE_LEVEL_COUNT) {
     ir_ui_show_notice("IR Error:", "Too deep", IR_UI_FEEDBACK_MS_SHORT);
@@ -841,7 +848,8 @@ static bool ir_browse_level(const char *base_path, const char *title,
                         ir_files_only, skip_count, &more_items);
 
     if (count == 0 && skip_count == 0) {
-      ir_ui_show_notice("IR Status:", "Empty folder", IR_UI_FEEDBACK_MS_DEFAULT);
+      ir_ui_show_notice("IR Status:", "Empty folder",
+                        IR_UI_FEEDBACK_MS_DEFAULT);
       return true;
     }
 

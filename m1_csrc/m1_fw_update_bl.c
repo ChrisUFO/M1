@@ -883,6 +883,33 @@ void bl_jump_to_dfu(void) {
   __DSB();
   __ISB();
 
+  /* Disable Instruction Cache (ICACHE) and Data Cache (DCACHE) before jumping.
+     On H5, BootROM entry with caches enabled can lead to silent failure/hang.
+   */
+  if (ICACHE->CR & ICACHE_CR_EN) {
+    ICACHE->CR &= ~ICACHE_CR_EN;
+    while ((ICACHE->SR & ICACHE_SR_BUSYF) != 0U)
+      ;
+  }
+  if (DCACHE1->CR & DCACHE_CR_EN) {
+    DCACHE1->CR &= ~DCACHE_CR_EN;
+    while ((DCACHE1->SR & DCACHE_SR_BUSYF) != 0U)
+      ;
+  }
+
+  /* Feed the IWDG one final time immediately before jumping.
+     The IWDG latch (0xCCCC start key) survives NVIC_SystemReset, so it
+     keeps counting through the ST BootROM with no handler to feed it.
+     This reload gives the BootROM the full ~30s timeout budget to enumerate
+     over USB. Without this, the IWDG fires, resetting the MCU. */
+  IWDG->KR =
+      0xAAAAU; /* Reload key - feeds watchdog without re-checking SW/HW mode */
+
+  /* The ST Bootloader relies on USB interrupts to enumerate. Since we globally
+     disabled interrupts with __disable_irq() earlier, we MUST re-enable
+     them before jumping to the BootROM. */
+  __enable_irq();
+
   // Reset Stack Pointer and Jump
   __set_MSP(sp_val);
   jump_to_boot();

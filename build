@@ -44,7 +44,7 @@ FW_MINOR=$(grep "FW_VERSION_MINOR" m1_csrc/m1_fw_update_bl.h | grep -o '[0-9]\+'
 FW_BUILD=$(grep "FW_VERSION_BUILD" m1_csrc/m1_fw_update_bl.h | grep -o '[0-9]\+' | head -1)
 
 # Configuration
-PROJECT_NAME="M1_v${FW_MAJOR}.${FW_MINOR}.${FW_BUILD}-ChrisUFO"
+PROJECT_NAME="M1_v${FW_MAJOR}.${FW_MINOR}.${FW_BUILD}-UFO"
 BUILD_DIR="out/build/gcc-14_2_build-release"
 DIST_DIR="distribution"
 

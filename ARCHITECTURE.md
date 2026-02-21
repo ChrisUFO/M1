@@ -147,16 +147,16 @@ Version is defined in `m1_csrc/m1_fw_update_bl.h`:
 ```c
 #define FW_VERSION_MAJOR    0
 #define FW_VERSION_MINOR    8
-#define FW_VERSION_BUILD    4
+#define FW_VERSION_BUILD    9
 #define FW_VERSION_RC       0
-#define FW_VERSION_FORK_TAG "ChrisUFO"
+#define FW_VERSION_FORK_TAG "UFO"
 ```
 
 ### Version Format
 
-- **Filename:** `M1_v{MAJOR}.{MINOR}.{BUILD}-ChrisUFO.bin`
-- **Example:** `M1_v0.8.4-ChrisUFO.bin`
-- **Display:** "Version 0.8.4" on splash screen and About menu
+- **Filename:** `M1_v{MAJOR}.{MINOR}.{BUILD}-UFO.bin`
+- **Example:** `M1_v0.8.9-UFO.bin`
+- **Display:** "Version 0.8.9" on splash screen and About menu
 
 ### Versioning Criteria
 
