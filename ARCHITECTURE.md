@@ -100,6 +100,43 @@ Current Settings submenu:
 - This ordering is required for v0.8.5+ early boot integrity checks in `boot_recovery_check()`.
 - If `.hex` is generated directly from `.elf`, flash contents can diverge from the CRC metadata and the device may fail boot integrity checks.
 
+## Naming Conventions
+
+### Filename Casing
+
+**All source and header filenames must use consistent casing.** This is critical for cross-platform compatibility:
+
+- **Linux**: Filesystem is case-sensitive (`File.h` ≠ `file.h`)
+- **Windows**: Filesystem is case-insensitive (treats both as the same)
+- **macOS**: Case-insensitive by default (HFS+/APFS)
+
+**Standards:**
+- Use **lowercase** for filenames (e.g., `m1_system.c`, `battery.h`)
+- Use **CamelCase** only when it matches an external library convention
+- `#include` statements must match the actual filename exactly
+
+**Examples:**
+```c
+// Correct - matches actual filename exactly
+#include "Res_String.h"
+#include "uiView.h"
+#include "rfal_analogConfig.h"
+
+// Wrong - case mismatch
+#include "res_string.h"    // Actual: Res_String.h
+#include "uiview.h"        // Actual: uiView.h
+#include "rfal_AnalogConfig.h"  // Actual: rfal_analogConfig.h
+```
+
+**Verification:** Run the following to check for mismatches:
+```bash
+# Find all includes
+grep -rE '#include\s+["<][^">]+[">]' --include="*.c" --include="*.h" .
+
+# Compare with actual filenames
+git ls-files | grep -E '\.h$'
+```
+
 ## Versioning
 
 This project uses **firmware versioning** (MAJOR.MINOR.BUILD.RC) rather than semantic versioning:
@@ -117,7 +154,7 @@ Version is defined in `m1_csrc/m1_fw_update_bl.h`:
 
 ### Version Format
 
-- **Filename:** `M1_v{MAJOR}.{MINOR}.{BUILD}-{FORK_TAG}.bin`
+- **Filename:** `M1_v{MAJOR}.{MINOR}.{BUILD}-ChrisUFO.bin`
 - **Example:** `M1_v0.8.4-ChrisUFO.bin`
 - **Display:** "Version 0.8.4" on splash screen and About menu
 
