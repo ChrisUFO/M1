@@ -32,9 +32,10 @@ See [HARDWARE.md](HARDWARE.md) for more details.
 ## Documentation
 
 - [Build Tool (mbt)](documentation/mbt.md) – Build with STM32CubeIDE or VS Code
+- [Stability Validation](documentation/stability_phase5_validation.md) – Reproducible validation for Issues #22/#26/#27
 - [Architecture](ARCHITECTURE.md) – Project structure
 - [Development](DEVELOPMENT.md) – Development guidelines
-- [Changelog](CHANGELOG.md) – Release history
+- [Changelog](CHANGELOG.md) – Release history (see [ARCHITECTURE.md](ARCHITECTURE.md#versioning-criteria) for versioning logic)
 
 ## Building
 
@@ -70,21 +71,21 @@ Important for v0.8.5+ boot integrity checks:
 - Do not generate your own `.hex` from `.elf` for production flashing, because it will not contain the post-build CRC/image-size metadata required by early boot verification.
 
 **STM32CubeIDE:**
-Open the project and build in the IDE. Output: `./Release/MonstaTek_M1_v0802-ChrisUFO.elf`
+Open the project and build in the IDE. Output: `./Release/MonstaTek_M1_v0809-UFO.elf`
 
 **Manual CMake build:**
 ```bash
 cmake --preset gcc-14_2_build-release
-cmake --build out/build/gcc-14_2_build-release --target M1_v0.8.5-ChrisUFO
+cmake --build out/build/gcc-14_2_build-release --target M1_v0.8.9-UFO
 ```
 
 **Output files** (in `distribution/` or `out/build/gcc-14_2_build-release/`):
 
 | File | Use |
 |------|-----|
-| `M1_v0.8.5-ChrisUFO.bin` | STM32 firmware (includes CRC32) |
-| `M1_v0.8.5-ChrisUFO.hex` | STM32CubeProgrammer / JLink |
-| `M1_v0.8.5-ChrisUFO.elf` | Debug sessions |
+| `M1_v0.8.9-UFO.bin` | STM32 firmware (includes CRC32) |
+| `M1_v0.8.9-UFO.hex` | STM32CubeProgrammer / JLink |
+| `M1_v0.8.9-UFO.elf` | Debug sessions |
 
 ## Development & Debugging
 
@@ -126,6 +127,18 @@ If the device does not boot after programming:
 - Use **Under Reset + Hardware reset** connect mode in STM32CubeProgrammer.
 - If PC reads near `0xFFFFFFFE`, the mapped boot vector is invalid (often from flashing an image that does not match post-build CRC metadata). Rebuild with `./build clean` and reflash `distribution/M1_v*.hex`.
 
+### Entering DFU Mode (Hardware Strap)
+
+If you need to flash the firmware directly via USB using STM32CubeProgrammer (without an ST-Link), you must boot the device into DFU Mode using the hardware strap. The software menu option has been removed for reliability.
+
+1. **Unplug the USB cable** from the M1.
+2. **Press and hold the UP button** on the D-pad.
+3. While holding UP, **plug the USB cable back in**.
+4. You will hear a loud **"tick"** from the speaker. This confirms the hardware strap was detected and the device is now in DFU mode.
+5. In STM32CubeProgrammer, select **USB** from the dropdown menu and click Connect.
+
+**To exit DFU mode:** Simply unplug the USB cable and plug it back in without holding any buttons to boot into normal firmware.
+
 ### Serial Console (USB CDC)
 
 The M1 exposes a USB serial console for debugging and control.
@@ -147,7 +160,7 @@ The M1 exposes a USB serial console for debugging and control.
 With USB connected and a terminal at **9600 baud**, type `help` for available commands:
 
 **System Commands:**
-- `version` - Show detailed firmware version (e.g., "0.8.2.0-ChrisUFO")
+- `version` - Show detailed firmware version (e.g., "0.8.9.0-UFO")
 - `status` - System status, active bank, and build info
 - `reboot` - Software reset (no need to disconnect battery!)
 - `memory` - Show RAM/Flash usage statistics
@@ -167,11 +180,11 @@ With USB connected and a terminal at **9600 baud**, type `help` for available co
 ```
 cli> version
 M1 Firmware Version:
-  0.8.2.0-ChrisUFO
+  0.8.9.0-UFO
 
 cli> status
 System Status:
-  Firmware: v0.8.2.0
+  Firmware: v0.8.9.0
   Active Bank: 1
 
 cli> reboot
@@ -233,7 +246,9 @@ On device:
 - Confirm entry (RIGHT/OK)
 
 Quick checklist before entering DFU:
+- **CRITICAL:** Physically disconnect any ST-Link debuggers. The STM32H5 BootROM will lock out USB enumeration if it detects active SWD lines. The ST-Link 3.3V supply will also mask the USB disconnect event from the host PC. 
 - Use a USB data cable (not charge-only)
+- Power the board via the USB cable ONLY.
 - Keep battery above 50%
 - Close serial terminal apps that may hold the USB interface
 

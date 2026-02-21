@@ -30,7 +30,7 @@ string(REGEX MATCH "[0-9]+" FW_VERSION_MINOR ${VERSION_LINE_MINOR})
 string(REGEX MATCH "[0-9]+" FW_VERSION_BUILD ${VERSION_LINE_BUILD})
 
 # Set the project name with extracted version (format: v0.8.2)
-set(CMAKE_PROJECT_NAME M1_v${FW_VERSION_MAJOR}.${FW_VERSION_MINOR}.${FW_VERSION_BUILD}-ChrisUFO)
+set(CMAKE_PROJECT_NAME M1_v${FW_VERSION_MAJOR}.${FW_VERSION_MINOR}.${FW_VERSION_BUILD}-UFO)
 message(STATUS "Building ${CMAKE_PROJECT_NAME}")
 
 # Include toolchain file

@@ -1,53 +1,44 @@
 /* See COPYING.txt for license details. */
 
 /*
-*
-* m1_file_browser.h
-*
-* Library for sd card file browsing
-*
+ *
+ * m1_file_browser.h
+ *
+ * Library for sd card file browsing
+ *
  * M1 Project
-*
-*/
+ *
+ */
 
 #ifndef M1_FILE_BROWSER_H_
 #define M1_FILE_BROWSER_H_
 
-#include "u8g2.h"
-#include "mui.h"
 #include "ff.h"
 #include "ff_gen_drv.h"
+#include "m1_system.h"
+#include "mui.h"
+#include "u8g2.h"
 
-typedef enum
-{
-	F_EXT_DATA = 0,
-	F_EXT_OTHER
-} S_M1_file_browser_ext;
 
-typedef enum
-{
-	FB_OK = 0,
-	FB_ERR_SDCARD,
-	FB_ERR_GUI
-} S_M1_file_browser_code;
+typedef enum { F_EXT_DATA = 0, F_EXT_OTHER } S_M1_file_browser_ext;
 
-typedef struct
-{
-	char *dir_name;
-	char *file_name;
-	bool file_is_selected;
-	S_M1_file_browser_code status;
+typedef enum { FB_OK = 0, FB_ERR_SDCARD, FB_ERR_GUI } S_M1_file_browser_code;
+
+typedef struct {
+  char *dir_name;
+  char *file_name;
+  bool file_is_selected;
+  S_M1_file_browser_code status;
 } S_M1_file_info;
 
-typedef struct
-{
-	S_M1_file_info info;
-	uint16_t x, y, gui_width, gui_height;
-	uint8_t font_w, font_h;
-	uint8_t font_h_spacing;
-	uint16_t *listing_index_buffer, *row_index_buffer;
-	uint16_t listing_index, row_index;
-	uint8_t dir_level;
+typedef struct {
+  S_M1_file_info info;
+  uint16_t x, y, gui_width, gui_height;
+  uint8_t font_w, font_h;
+  uint8_t font_h_spacing;
+  uint16_t *listing_index_buffer, *row_index_buffer;
+  uint16_t listing_index, row_index;
+  uint8_t dir_level;
 } S_M1_file_browser_hdl;
 
 S_M1_file_browser_hdl *m1_fb_init(u8g2_t *lcd_hdl);

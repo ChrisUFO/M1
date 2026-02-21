@@ -60,6 +60,9 @@
 #define SUB_GHZ_DATAFILE_FILETYPE_PACKET "PACKET"
 #define SUB_GHZ_DATAFILE_FILETYPE_KEYWORD SUB_GHZ_DATAFILE_FILETYPE_NOISE
 
+#define SUBGHZ_RX_DMA_BLOCK_SAMPLES (SUBGHZ_RAW_DATA_SAMPLES_TO_RW / 2)
+#define SUBGHZ_RX_DMA_BUFFER_SAMPLES (SUBGHZ_RX_DMA_BLOCK_SAMPLES * 2)
+
 #define SUB_GHZ_RAW_DATA_PARSER_ERROR_MASK 0x80
 #define SUB_GHZ_RAW_DATA_PARSER_ERROR_L1 0x81
 #define SUB_GHZ_RAW_DATA_PARSER_ERROR_L2 0x82
@@ -227,6 +230,7 @@ TIM_HandleTypeDef timerhdl_subghz_tx;
 TIM_HandleTypeDef timerhdl_subghz_rx;
 EXTI_HandleTypeDef si4463_exti_hdl;
 DMA_HandleTypeDef hdma_subghz_tx;
+DMA_HandleTypeDef hdma_subghz_rx;
 
 S_M1_RingBuffer subghz_rx_rawdata_rb;
 static uint16_t *subghz_front_buffer = NULL;
@@ -245,6 +249,19 @@ static uint16_t *double_buffer_ptr[2];
 static uint32_t sdcard_dat_file_size, sdcard_dat_buffer_end_pos;
 uint8_t subghz_tx_tc_flag;
 uint8_t subghz_record_mode_flag = 0;
+volatile uint8_t subghz_rx_queue_notify_pending = 0;
+volatile uint32_t subghz_rx_throttle_count = 0;
+volatile uint32_t subghz_rx_queue_drop_count = 0;
+volatile uint32_t subghz_rx_dma_ht_count = 0;
+volatile uint32_t subghz_rx_dma_tc_count = 0;
+volatile uint8_t subghz_rx_dma_block_q[SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN] = {0};
+volatile uint8_t subghz_rx_dma_block_head = 0;
+volatile uint8_t subghz_rx_dma_block_tail = 0;
+volatile uint8_t subghz_rx_dma_block_count = 0;
+static uint32_t subghz_rx_dma_buffer[SUBGHZ_RX_DMA_BUFFER_SAMPLES]
+    __attribute__((aligned(32)));
+static uint32_t subghz_rx_dma_prev_capture = 0;
+static bool subghz_rx_dma_have_prev_capture = false;
 static uint8_t subghz_uiview_gui_latest_param;
 static uint8_t subghz_replay_ret_code;
 static uint8_t subghz_replay_mod;
@@ -306,6 +323,8 @@ static void subghz_record_gui_destroy(uint8_t param);
 static void subghz_record_gui_update(uint8_t param);
 static int subghz_record_gui_message(void);
 static int subghz_record_kp_handler(void);
+static void subghz_rx_dma_process_blocks(void);
+static void subghz_rx_dma_invalidate_block(uint32_t start, uint32_t count);
 
 static void subghz_replay_browse_gui_init(void);
 static void subghz_replay_browse_gui_create(uint8_t param);
@@ -369,6 +388,34 @@ void menu_sub_ghz_exit(void) {
   HAL_GPIO_WritePin(SI4463_CS_GPIO_Port, SI4463_CS_Pin, GPIO_PIN_SET);
   HAL_GPIO_WritePin(SI4463_ENA_GPIO_Port, SI4463_ENA_Pin, GPIO_PIN_RESET);
 } // void menu_sub_ghz_exit(void)
+
+void subghz_rx_dma_restart_from_isr(void) {
+  uint32_t bndt;
+  uint32_t timeout = 10000U;
+
+  if (hdma_subghz_rx.Instance == NULL) {
+    return;
+  }
+
+  __HAL_DMA_DISABLE(&hdma_subghz_rx);
+  while (((hdma_subghz_rx.Instance->CCR & DMA_CCR_EN) != 0U) &&
+         (timeout > 0U)) {
+    timeout--;
+  }
+  if (timeout == 0U) {
+    subghz_rx_queue_drop_count++;
+    ;
+    return;
+  }
+
+  bndt = (uint32_t)(SUBGHZ_RX_DMA_BUFFER_SAMPLES * sizeof(uint32_t));
+  MODIFY_REG(hdma_subghz_rx.Instance->CBR1, DMA_CBR1_BNDT, bndt);
+
+  __HAL_DMA_CLEAR_FLAG(&hdma_subghz_rx,
+                       DMA_FLAG_TC | DMA_FLAG_HT | DMA_FLAG_DTE | DMA_FLAG_ULE |
+                           DMA_FLAG_USE | DMA_FLAG_SUSP | DMA_FLAG_TO);
+  __HAL_DMA_ENABLE(&hdma_subghz_rx);
+}
 
 /*============================================================================*/
 /**
@@ -610,6 +657,18 @@ static void subghz_record_gui_update(uint8_t param) {
                       M1_DISP_DRAW_COLOR_BG); // Write text in inverted color
     u8g2_DrawXBMP(&m1_u8g2, 84, 52, 10, 10, target_10x10); // draw TARGET icon
     u8g2_DrawStr(&m1_u8g2, 96, 61, "Stop ");
+
+    u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+    char status_line[24];
+    char counters_line[40];
+    snprintf(status_line, sizeof(status_line), "Capture: %s",
+             subghz_rx_queue_notify_pending ? "Flush" : "Live");
+    snprintf(counters_line, sizeof(counters_line), "H%lu T%lu D%lu",
+             (unsigned long)subghz_rx_dma_ht_count,
+             (unsigned long)subghz_rx_dma_tc_count,
+             (unsigned long)subghz_rx_queue_drop_count);
+    u8g2_DrawStr(&m1_u8g2, 2, 44, status_line);
+    u8g2_DrawStr(&m1_u8g2, 2, 51, counters_line);
     break;
 
   case SUBGHZ_RECORD_DISPLAY_PARAM_COMPLETE:
@@ -697,6 +756,90 @@ static void subghz_record_gui_update(uint8_t param) {
  * @retval
  */
 /*============================================================================*/
+static void subghz_rx_dma_process_blocks(void) {
+  uint8_t blocks[SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN];
+  uint8_t n_blocks = 0;
+  uint8_t i;
+  uint32_t rcv_samples;
+
+  taskENTER_CRITICAL();
+  while ((subghz_rx_dma_block_count > 0U) &&
+         (n_blocks < SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN)) {
+    blocks[n_blocks++] = subghz_rx_dma_block_q[subghz_rx_dma_block_tail];
+    subghz_rx_dma_block_tail = (uint8_t)((subghz_rx_dma_block_tail + 1U) %
+                                         SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN);
+    subghz_rx_dma_block_count--;
+  }
+  taskEXIT_CRITICAL();
+
+  for (i = 0; i < n_blocks; i++) {
+    uint8_t block_id = blocks[i];
+    uint32_t start = (block_id == 0U) ? 0U : SUBGHZ_RX_DMA_BLOCK_SAMPLES;
+    uint32_t end = start + SUBGHZ_RX_DMA_BLOCK_SAMPLES;
+    uint32_t idx;
+
+    subghz_rx_dma_invalidate_block(start, SUBGHZ_RX_DMA_BLOCK_SAMPLES);
+
+    for (idx = start; idx < end; idx++) {
+      uint32_t cur_capture = subghz_rx_dma_buffer[idx];
+      uint32_t pulse_width;
+      uint16_t pulse16;
+
+      if (!subghz_rx_dma_have_prev_capture) {
+        subghz_rx_dma_prev_capture = cur_capture;
+        subghz_rx_dma_have_prev_capture = true;
+        continue;
+      }
+
+      if (cur_capture >= subghz_rx_dma_prev_capture) {
+        pulse_width = cur_capture - subghz_rx_dma_prev_capture;
+      } else {
+        pulse_width = (uint32_t)timerhdl_subghz_rx.Init.Period + 1U -
+                      subghz_rx_dma_prev_capture + cur_capture;
+      }
+      subghz_rx_dma_prev_capture = cur_capture;
+
+      if (pulse_width == 0U) {
+        continue;
+      }
+
+      if (pulse_width > 0xFFFFU) {
+        pulse_width = 0xFFFFU;
+      }
+      if (ringbuffer_get_empty_slots(&subghz_rx_rawdata_rb) == 0U) {
+        subghz_rx_queue_drop_count++;
+        continue;
+      }
+      pulse16 = (uint16_t)pulse_width;
+      m1_ringbuffer_insert(&subghz_rx_rawdata_rb, (uint8_t *)&pulse16);
+    }
+  }
+
+  while (1) {
+    rcv_samples = ringbuffer_get_data_slots(&subghz_rx_rawdata_rb);
+    if (rcv_samples < SUBGHZ_RAW_DATA_SAMPLES_TO_RW) {
+      break;
+    }
+    sub_ghz_rx_raw_save(false, false);
+  }
+}
+
+static void subghz_rx_dma_invalidate_block(uint32_t start, uint32_t count) {
+#if defined(__DCACHE_PRESENT) && (__DCACHE_PRESENT == 1U)
+  if ((SCB->CCR & SCB_CCR_DC_Msk) != 0U) {
+    uintptr_t addr = (uintptr_t)&subghz_rx_dma_buffer[start];
+    uintptr_t end = addr + ((uintptr_t)count * sizeof(uint32_t));
+    uintptr_t aligned_start = addr & ~(uintptr_t)0x1FU;
+    uintptr_t aligned_end = (end + 31U) & ~(uintptr_t)0x1FU;
+    SCB_InvalidateDCache_by_Addr((uint32_t *)aligned_start,
+                                 (int32_t)(aligned_end - aligned_start));
+  }
+#else
+  (void)start;
+  (void)count;
+#endif
+}
+
 static int subghz_record_gui_message(void) {
   S_M1_Main_Q_t q_item;
   BaseType_t ret;
@@ -706,31 +849,25 @@ static int subghz_record_gui_message(void) {
   ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
   if (ret == pdTRUE) {
     if (q_item.q_evt_type == Q_EVENT_KEYPAD) {
-      // Notification is only sent to this task when there's any button
-      // activity, so it doesn't need to wait when reading the event from the
-      // queue
       ret_val = subghz_record_kp_handler();
     } else if (q_item.q_evt_type == Q_EVENT_SUBGHZ_RX) {
-      // arrpush(subghz_rx_q, q_item);
-      // m1_buzzer_notification();
+      subghz_rx_queue_notify_pending = 0;
+      subghz_rx_dma_process_blocks();
       rcv_samples = ringbuffer_get_data_slots(&subghz_rx_rawdata_rb);
-      if (rcv_samples >= SUBGHZ_RAW_DATA_SAMPLES_TO_RW) {
-        M1_LOG_N(M1_LOGDB_TAG, "Raw samples %lu\r\n",
-                 (unsigned long)rcv_samples);
-        sub_ghz_rx_raw_save(false, false);
-        vTaskDelay(10); // Give the system some time in case RF noise is
-                        // flooding the receiver
-      } // if ( rcv_samples >= SUBGHZ_RAW_DATA_SAMPLES_TO_RW )
-    } // if ( q_item.q_evt_type==Q_EVENT_SUBGHZ_RX )
-
-    else if (q_item.q_evt_type == Q_EVENT_SUBGHZ_TX) {
+      M1_LOG_N(M1_LOGDB_TAG, "Raw samples %lu\r\n", (unsigned long)rcv_samples);
+      if (subghz_uiview_gui_latest_param ==
+          SUBGHZ_RECORD_DISPLAY_PARAM_ACTIVE) {
+        subghz_record_gui_update(SUBGHZ_RECORD_DISPLAY_PARAM_ACTIVE);
+      }
+      vTaskDelay(10);
+    } else if (q_item.q_evt_type == Q_EVENT_SUBGHZ_TX) {
       subghz_replay_ret_code = sub_ghz_replay_continue(subghz_replay_ret_code);
       if (subghz_replay_ret_code == SUB_GHZ_RAW_DATA_PARSER_IDLE) {
         m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF,
-                          LED_FASTBLINK_ONTIME_OFF); // Turn off
-      } // if ( subghz_replay_ret_code==SUB_GHZ_RAW_DATA_PARSER_IDLE )
-    } // else if ( q_item.q_evt_type==Q_EVENT_SUBGHZ_TX )
-  } // if (ret==pdTRUE)
+                          LED_FASTBLINK_ONTIME_OFF);
+      }
+    }
+  }
 
   return ret_val;
 } // static int  subghz_record_gui_message(void)
@@ -836,6 +973,9 @@ static int subghz_record_kp_handler(void) {
           sub_ghz_rx_init();
           sub_ghz_rx_start();
           subghz_record_mode_flag = true;
+          subghz_rx_queue_notify_pending = 0;
+          subghz_rx_throttle_count = 0;
+          subghz_rx_queue_drop_count = 0;
           m1_uiView_display_update(SUBGHZ_RECORD_DISPLAY_PARAM_ACTIVE);
         } // if ( !ret )
         else {
@@ -1711,6 +1851,42 @@ static void sub_ghz_rx_init(void) {
     Error_Handler();
   }
 
+  __HAL_RCC_GPDMA1_CLK_ENABLE();
+
+  hdma_subghz_rx.Instance = GPDMA1_Channel3;
+  hdma_subghz_rx.Init.Request = GPDMA1_REQUEST_TIM1_CH1;
+  hdma_subghz_rx.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
+  hdma_subghz_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;
+  hdma_subghz_rx.Init.SrcInc = DMA_SINC_FIXED;
+  hdma_subghz_rx.Init.DestInc = DMA_DINC_INCREMENTED;
+  hdma_subghz_rx.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_WORD;
+  hdma_subghz_rx.Init.DestDataWidth = DMA_DEST_DATAWIDTH_WORD;
+  hdma_subghz_rx.Init.Priority = DMA_HIGH_PRIORITY;
+  hdma_subghz_rx.Init.SrcBurstLength = 1;
+  hdma_subghz_rx.Init.DestBurstLength = 1;
+  hdma_subghz_rx.Init.TransferAllocatedPort =
+      DMA_SRC_ALLOCATED_PORT0 | DMA_DEST_ALLOCATED_PORT0;
+  hdma_subghz_rx.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
+  hdma_subghz_rx.Init.Mode = DMA_NORMAL;
+
+  if (HAL_DMA_Init(&hdma_subghz_rx) != HAL_OK) {
+    Error_Handler();
+  }
+
+  __HAL_LINKDMA(&timerhdl_subghz_rx, hdma[TIM_DMA_ID_CC1], hdma_subghz_rx);
+
+  if (HAL_DMA_ConfigChannelAttributes(&hdma_subghz_rx, DMA_CHANNEL_NPRIV) !=
+      HAL_OK) {
+    Error_Handler();
+  }
+
+  __HAL_DMA_CLEAR_FLAG(&hdma_subghz_rx,
+                       DMA_FLAG_TC | DMA_FLAG_HT | DMA_FLAG_DTE | DMA_FLAG_ULE |
+                           DMA_FLAG_USE | DMA_FLAG_SUSP | DMA_FLAG_TO);
+  HAL_NVIC_SetPriority(GPDMA1_Channel3_IRQn,
+                       configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY, 5);
+  HAL_NVIC_EnableIRQ(GPDMA1_Channel3_IRQn);
+
   /* Enable the TIMx global Interrupt */
   HAL_NVIC_SetPriority(SUBGHZ_RX_TIMER_IRQn,
                        configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY, 0);
@@ -1739,9 +1915,18 @@ static void sub_ghz_rx_init(void) {
  */
 /*============================================================================*/
 static void sub_ghz_rx_start(void) {
-  if (HAL_TIM_IC_Start_IT(&timerhdl_subghz_rx, SUBGHZ_RX_TIMER_RX_CHANNEL) !=
-      HAL_OK) {
-    //_Error_Handler(__FILE__, __LINE__);
+  subghz_rx_dma_prev_capture = 0;
+  subghz_rx_dma_have_prev_capture = false;
+  subghz_rx_queue_notify_pending = 0;
+  subghz_rx_dma_ht_count = 0;
+  subghz_rx_dma_tc_count = 0;
+  subghz_rx_dma_block_head = 0;
+  subghz_rx_dma_block_tail = 0;
+  subghz_rx_dma_block_count = 0;
+
+  if (HAL_TIM_IC_Start_DMA(&timerhdl_subghz_rx, SUBGHZ_RX_TIMER_RX_CHANNEL,
+                           subghz_rx_dma_buffer,
+                           SUBGHZ_RX_DMA_BUFFER_SAMPLES) != HAL_OK) {
     Error_Handler();
   }
 } // static void sub_ghz_rx_start(void)
@@ -1754,9 +1939,8 @@ static void sub_ghz_rx_start(void) {
  */
 /*============================================================================*/
 static void sub_ghz_rx_pause(void) {
-  if (HAL_TIM_IC_Stop_IT(&timerhdl_subghz_rx, SUBGHZ_RX_TIMER_RX_CHANNEL) !=
+  if (HAL_TIM_IC_Stop_DMA(&timerhdl_subghz_rx, SUBGHZ_RX_TIMER_RX_CHANNEL) !=
       HAL_OK) {
-    //_Error_Handler(__FILE__, __LINE__);
     Error_Handler();
   }
 } // static void sub_ghz_rx_pause(void)
@@ -1781,6 +1965,13 @@ static void sub_ghz_rx_deinit(void) {
 
   SUBGHZ_RX_TIMER_CLK_DIS();
   HAL_NVIC_DisableIRQ(SUBGHZ_RX_TIMER_IRQn);
+  HAL_NVIC_DisableIRQ(GPDMA1_Channel3_IRQn);
+  if (hdma_subghz_rx.Instance != NULL) {
+    HAL_DMA_DeInit(&hdma_subghz_rx);
+    __HAL_DMA_DISABLE_IT(&hdma_subghz_rx,
+                         (DMA_IT_TC | DMA_IT_HT | DMA_IT_DTE | DMA_IT_ULE |
+                          DMA_IT_USE | DMA_IT_TO));
+  }
 
   HAL_GPIO_DeInit(SUBGHZ_RX_GPIO_PORT, SUBGHZ_RX_GPIO_PIN);
 
@@ -1991,6 +2182,15 @@ static void sub_ghz_ring_buffers_deinit(void) {
     subghz_sdcard_write_buffer = NULL;
   }
   subghz_record_mode_flag = false;
+  subghz_rx_queue_notify_pending = 0;
+  subghz_rx_throttle_count = 0;
+  subghz_rx_queue_drop_count = 0;
+  subghz_rx_dma_ht_count = 0;
+  subghz_rx_dma_tc_count = 0;
+  subghz_rx_dma_block_head = 0;
+  subghz_rx_dma_block_tail = 0;
+  subghz_rx_dma_block_count = 0;
+  subghz_rx_dma_have_prev_capture = false;
   M1_LOG_I(M1_LOGDB_TAG, "sub_ghz_ring_buffers_deinit %d\r\n",
            subghz_back_buffer_size);
 } // static void sub_ghz_ring_buffers_deinit(void)

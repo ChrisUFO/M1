@@ -46,6 +46,7 @@
 
 #define SUBGHZ_RAW_DATA_SAMPLES_TO_RW			512
 #define SUBGHZ_FORTMATTED_DATA_SAMPLES_TO_RW    3840//5120//2560//3072//3840
+#define SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN           8
 
 #define SUBGHZ_MODULATION_LIST					3
 
@@ -139,12 +140,23 @@ void sub_ghz_replay(void);
 void sub_ghz_frequency_reader(void);
 void sub_ghz_regional_information(void);
 void sub_ghz_radio_settings(void);
+void subghz_rx_dma_restart_from_isr(void);
 
 extern EXTI_HandleTypeDef 	si4463_exti_hdl;
 extern TIM_HandleTypeDef   	timerhdl_subghz_tx;
 extern TIM_HandleTypeDef   	timerhdl_subghz_rx;
 extern DMA_HandleTypeDef	hdma_subghz_tx;
+extern DMA_HandleTypeDef	hdma_subghz_rx;
 extern uint8_t subghz_tx_tc_flag;
 extern S_M1_RingBuffer subghz_rx_rawdata_rb;
 extern uint8_t subghz_record_mode_flag;
+extern volatile uint8_t subghz_rx_queue_notify_pending;
+extern volatile uint32_t subghz_rx_throttle_count;
+extern volatile uint32_t subghz_rx_queue_drop_count;
+extern volatile uint32_t subghz_rx_dma_ht_count;
+extern volatile uint32_t subghz_rx_dma_tc_count;
+extern volatile uint8_t subghz_rx_dma_block_q[SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN];
+extern volatile uint8_t subghz_rx_dma_block_head;
+extern volatile uint8_t subghz_rx_dma_block_tail;
+extern volatile uint8_t subghz_rx_dma_block_count;
 #endif /* M1_SUB_GHZ_H_ */

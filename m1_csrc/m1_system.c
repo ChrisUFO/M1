@@ -672,14 +672,6 @@ static void handle_op_status_reboot(void) {
   m1_led_fw_update_off();
 }
 
-static void handle_op_status_usb_dfu_request(void) {
-  startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_NO_OP);
-  startup_info_screen_display("USB DFU MODE...");
-  firmware_update_enter_usb_dfu();
-  startup_info_screen_display("DFU MODE FAILED!");
-  M1_LOG_I(M1_LOGDB_TAG, "Failed to enter USB DFU mode!\r\n");
-}
-
 static void handle_device_op_status(void) {
   uint32_t status = m1_device_stat.bu_regs.device_op_status;
 
@@ -692,8 +684,6 @@ static void handle_device_op_status(void) {
     handle_op_status_fw_rollback_complete();
   } else if (status == DEV_OP_STATUS_REBOOT) {
     handle_op_status_reboot();
-  } else if (status == DEV_OP_STATUS_USB_DFU_REQUEST) {
-    handle_op_status_usb_dfu_request();
   }
 }
 

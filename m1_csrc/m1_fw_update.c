@@ -58,8 +58,6 @@ void firmware_update_exit(void);
 void firmware_update_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item);
 void firmware_update_get_image_file(void);
 void firmware_update_start(void);
-static bool firmware_update_usb_dfu_confirm(void);
-static void firmware_update_usb_dfu_request_and_reset(void);
 void firmware_update_usb_dfu_mode(void);
 void firmware_update_usb_dfu_mode_cli(void);
 void firmware_update_enter_usb_dfu(void);
@@ -497,91 +495,97 @@ void firmware_update_get_image_file(void) {
  * Confirm USB DFU mode entry from keypad.
  */
 /*============================================================================*/
-static bool firmware_update_usb_dfu_confirm(void) {
-  S_M1_Main_Q_t q_item;
-  S_M1_Buttons_Status this_button_status;
-  BaseType_t ret;
-  TickType_t start_tick;
-  TickType_t elapsed;
-  char timeout_msg[24];
-
-  m1_u8g2_firstpage();
-  do {
-    u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
-    u8g2_DrawStr(&m1_u8g2, 4, 12, "Enter USB DFU mode?");
-    u8g2_DrawStr(&m1_u8g2, 4, 26, "RIGHT/OK: Yes");
-    u8g2_DrawStr(&m1_u8g2, 4, 38, "LEFT/BACK: No");
-    snprintf(timeout_msg, sizeof(timeout_msg), "Timeout in %lu sec",
-             (unsigned long)(DFU_CONFIRM_TIMEOUT_MS / 1000U));
-    u8g2_DrawStr(&m1_u8g2, 4, 52, timeout_msg);
-  } while (m1_u8g2_nextpage());
-
-  start_tick = xTaskGetTickCount();
-
-  while (1) {
-    ret = xQueueReceive(main_q_hdl, &q_item, pdMS_TO_TICKS(200));
-
-    elapsed = xTaskGetTickCount() - start_tick;
-    if (elapsed >= pdMS_TO_TICKS(DFU_CONFIRM_TIMEOUT_MS)) {
-      xQueueReset(main_q_hdl);
-      M1_LOG_I(M1_LOGDB_TAG, "USB DFU confirm timeout\r\n");
-      return false;
-    }
-
-    if (ret != pdTRUE)
-      continue;
-    if (q_item.q_evt_type != Q_EVENT_KEYPAD)
-      continue;
-
-    ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
-    if (ret != pdTRUE)
-      continue;
-
-    if ((this_button_status.event[BUTTON_RIGHT_KP_ID] == BUTTON_EVENT_CLICK) ||
-        (this_button_status.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK)) {
-      xQueueReset(main_q_hdl);
-      return true;
-    }
-
-    if ((this_button_status.event[BUTTON_LEFT_KP_ID] == BUTTON_EVENT_CLICK) ||
-        (this_button_status.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK)) {
-      xQueueReset(main_q_hdl);
-      return false;
-    }
-  }
-} // static bool firmware_update_usb_dfu_confirm(void)
-
 /*============================================================================*/
 /*
- * Persist DFU request and perform controlled reset.
+ * Show the user instructions on how to use the Hardware Strap to enter DFU
+ * mode. Because the hardware strap runs instantly on boot, we cannot jump to it
+ * from here safely.
  */
 /*============================================================================*/
-static void firmware_update_usb_dfu_request_and_reset(void) {
+static void firmware_update_show_usb_dfu_instructions(void) {
+  uint32_t current_tick, event_tick;
+  int i;
+  BaseType_t ret;
+  S_M1_Main_Q_t q_item;
+
+  // Clear pending queue items
+  while (xQueueReceive(main_q_hdl, &q_item, 0) == pdTRUE) {
+    if (q_item.q_evt_type == Q_EVENT_KEYPAD) {
+      xQueueReceive(button_events_q_hdl, &m1_buttons_status, 0);
+    }
+  }
+
   m1_u8g2_firstpage();
   do {
-    u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
-    u8g2_DrawStr(&m1_u8g2, 4, 20, "Preparing USB DFU...");
-    u8g2_DrawStr(&m1_u8g2, 4, 36, "Rebooting now");
+    u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_N);
+    u8g2_DrawStr(&m1_u8g2, 0, 15, "TO ENTER DFU MODE:");
+    u8g2_DrawStr(&m1_u8g2, 0, 30, "1. Unplug Device");
+    u8g2_DrawStr(&m1_u8g2, 0, 45, "2. Hold UP Button");
+    u8g2_DrawStr(&m1_u8g2, 0, 60, "3. Plug in USB");
+
+    // Slight pause before drawing the exit instruction on the next page/scroll?
+    // Wait, the screen is only 64 pixels tall. 15, 30, 45, 60 uses the whole
+    // screen.
   } while (m1_u8g2_nextpage());
 
-  startup_config_write(BK_REGS_SELECT_DEV_OP_STAT,
-                       DEV_OP_STATUS_USB_DFU_REQUEST);
-  M1_LOG_I(M1_LOGDB_TAG, "USB DFU mode requested. Rebooting...\r\n");
-  vTaskDelay(pdMS_TO_TICKS(150));
-  NVIC_SystemReset();
-} // static void firmware_update_usb_dfu_request_and_reset(void)
+  event_tick = HAL_GetTick();
+
+  while (1) {
+    ret = xQueueReceive(main_q_hdl, &q_item, 0);
+    if (ret == pdTRUE && q_item.q_evt_type == Q_EVENT_KEYPAD) {
+      ret = xQueueReceive(button_events_q_hdl, &m1_buttons_status, 0);
+      for (i = 0; i < NUM_BUTTONS_MAX; i++) {
+        if (m1_buttons_status.event[i] == BUTTON_EVENT_CLICK)
+          break;
+      }
+      if (i < NUM_BUTTONS_MAX)
+        break; // Exit loop on any button click
+    }
+
+    current_tick = HAL_GetTick();
+    if (current_tick - event_tick > 6000) {
+      break;
+    }
+  }
+
+  // Second page showing how to exit
+  m1_u8g2_firstpage();
+  do {
+    u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_N);
+    u8g2_DrawStr(&m1_u8g2, 0, 15, "TO EXIT DFU MODE:");
+    u8g2_DrawStr(&m1_u8g2, 0, 30, "Simply unplug and");
+    u8g2_DrawStr(&m1_u8g2, 0, 45, "replug without");
+    u8g2_DrawStr(&m1_u8g2, 0, 60, "holding any buttons.");
+  } while (m1_u8g2_nextpage());
+
+  event_tick = HAL_GetTick();
+
+  while (1) {
+    ret = xQueueReceive(main_q_hdl, &q_item, 0);
+    if (ret == pdTRUE && q_item.q_evt_type == Q_EVENT_KEYPAD) {
+      ret = xQueueReceive(button_events_q_hdl, &m1_buttons_status, 0);
+      for (i = 0; i < NUM_BUTTONS_MAX; i++) {
+        if (m1_buttons_status.event[i] == BUTTON_EVENT_CLICK)
+          break;
+      }
+      if (i < NUM_BUTTONS_MAX)
+        break; // Exit loop on any button click
+    }
+
+    current_tick = HAL_GetTick();
+    if (current_tick - event_tick > 6000) {
+      break; // Timeout
+    }
+  }
+} // static void firmware_update_show_usb_dfu_instructions(void)
 
 /*============================================================================*/
 /*
- * This function requests USB DFU mode through reboot.
+ * This function displays the USB DFU mode instructions to the user.
  */
 /*============================================================================*/
 void firmware_update_usb_dfu_mode(void) {
-  if (!firmware_update_usb_dfu_confirm()) {
-    M1_LOG_I(M1_LOGDB_TAG, "USB DFU mode canceled by user\r\n");
-    return;
-  }
-  firmware_update_usb_dfu_request_and_reset();
+  firmware_update_show_usb_dfu_instructions();
 } // void firmware_update_usb_dfu_mode(void)
 
 /*============================================================================*/
@@ -590,41 +594,8 @@ void firmware_update_usb_dfu_mode(void) {
  */
 /*============================================================================*/
 void firmware_update_usb_dfu_mode_cli(void) {
-  firmware_update_usb_dfu_request_and_reset();
+  firmware_update_show_usb_dfu_instructions();
 } // void firmware_update_usb_dfu_mode_cli(void)
-
-/*============================================================================*/
-/*
- * This function jumps to STM32 system memory bootloader (USB DFU).
- */
-/*============================================================================*/
-void firmware_update_enter_usb_dfu(void) {
-
-  M1_LOG_I(M1_LOGDB_TAG, "Entering USB DFU mode...\r\n");
-
-  if (USBD_Stop(&hUsbDeviceFS) != USBD_OK) {
-    M1_LOG_I(M1_LOGDB_TAG, "USBD_Stop failed\r\n");
-  }
-  if (USBD_DeInit(&hUsbDeviceFS) != USBD_OK) {
-    M1_LOG_I(M1_LOGDB_TAG, "USBD_DeInit failed\r\n");
-  }
-  if (HAL_PCD_DeInit(&hpcd_USB_DRD_FS) != HAL_OK) {
-    M1_LOG_I(M1_LOGDB_TAG, "HAL_PCD_DeInit failed\r\n");
-  }
-
-  /* Disable interrupts and SysTick BEFORE tearing down clocks.
-     Without this, FreeRTOS SysTick fires during HAL_RCC_DeInit(),
-     causing a HardFault -> reset -> "DFU MODE FAILED!". */
-  __disable_irq();
-  SysTick->CTRL = 0;
-  SysTick->LOAD = 0;
-  SysTick->VAL = 0;
-
-  HAL_RCC_DeInit();
-  HAL_DeInit();
-
-  bl_jump_to_dfu();
-} // void firmware_update_enter_usb_dfu(void)
 
 /*============================================================================*/
 /*
@@ -694,34 +665,3 @@ void firmware_update_JumpTo_BL(void) {
     M1_LOG_I(M1_LOGDB_TAG, "%s", "\nNo Bootloader found");
   }
 } // void firmware_update_JumpTo_BL(void)
-
-/*============================================================================*/
-/*
- * This function will disable the watchdog timer
- */
-/*============================================================================*/
-void firmware_update_IWDG_disable(void) {
-  // Disable IWDG - Start
-  HAL_FLASH_Unlock();    // Unlock the FLASH control registers access
-  HAL_FLASH_OB_Unlock(); // Unlock the FLASH Option Control Registers access
-
-  // Initialize the Option Bytes structure
-  FLASH_OBProgramInitTypeDef OBInit;
-  HAL_FLASHEx_OBGetConfig(&OBInit); // Get the Option byte configuration
-
-  // Set the IWDG_SW bit
-  OBInit.OptionType = OPTIONBYTE_USER; // USER option byte configuration
-  OBInit.USERType =
-      OB_USER_IWDG_STDBY; // Independent watchdog counter freeze in standby mode
-  OBInit.USERConfig =
-      OB_IWDG_STDBY_FREEZE; // IWDG counter frozen in STANDBY mode
-
-  // Write the Option Bytes
-  HAL_FLASHEx_OBProgram(&OBInit); // Program option bytes
-
-  HAL_FLASH_OB_Launch(); // Launch the option bytes loading.
-
-  HAL_FLASH_OB_Lock(); // Lock the FLASH Option Control Registers access.
-  HAL_FLASH_Lock();    // Locks the FLASH control registers access
-                       // Disable IWDG - End
-} // void firmware_update_IWDG_disable(void)

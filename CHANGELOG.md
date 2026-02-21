@@ -7,10 +7,31 @@ All notable changes to the M1 project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 
-## [v0.8.8] - 2026-02-20
+## [v0.8.9] - 2026-02-21
+
+### Added
+- **DFU Mode Entry Hardware Strap**: Replaced the software "Reboot to DFU" menu option with a more reliable **Hardware Strap**.
+  - Hold the **UP** button while plugging in the USB cable to enter DFU mode.
+  - Added an audible "tick" from the speaker to confirm the hardware strap was detected.
+  - Updated the "USB DFU Mode" screen in the UI to display instructions for entering and exiting DFU mode.
 
 ### Fixed
-- **Firmware Update**: Fixed a bug where SD card firmware updates would fail with "Invalid image file!" because the file browser lost the selected filename context.
+- **Stability Hardening Bundle (Issues #22, #26, #27)**:
+  - **Issue #27 (USB CDC CLI RX Race)**: Replaced direct ISR overwrite with stream-buffered handoff to CLI task.
+  - **Issue #26 (IR Universal Fragmentation Risk)**: Switched to pre-allocated workspace buffers to avoid heap churn.
+  - **Issue #22 (Sub-GHz ISR Queue Pressure)**: Migrated raw capture to DMA-based ingestion with task-context buffering.
+- **USB DFU Enumeration & Watchdog**: Fixed failures during DFU entry by extending IWDG timeout to 10s and implementing a cache-safe jump sequence.
+- **USB DFU Mode Entry**: Resolved ~5-second boot loop by switching to Option Byte Launch reset.
+- **Firmware Update**: Fixed SD card update "Invalid image file!" error caused by lost filename context.
+- **CRC Validation Scripts**: Updated `tools/test_crc.py` for UFO artifact naming.
+
+### Changed
+- **Architecture Docs**: Updated `ARCHITECTURE.md` with deterministic buffering patterns.
+- **CLI Diagnostics**: Added `cdcstats` and `cdcreset` commands.
+- **Validation Docs**: Added `documentation/stability_phase5_validation.md`.
+
+## [v0.8.8] - 2026-02-20
+- Intermediate build for DFU watchdog investigation and baseline stability fixes.
 
 ## [v0.8.7] - 2026-02-20
 
