@@ -599,47 +599,6 @@ void firmware_update_usb_dfu_mode_cli(void) {
 
 /*============================================================================*/
 /*
- * This function jumps to STM32 system memory bootloader (USB DFU).
- */
-/*============================================================================*/
-void firmware_update_enter_usb_dfu(void) {
-
-  M1_LOG_I(M1_LOGDB_TAG, "Entering USB DFU mode...\r\n");
-
-  if (USBD_Stop(&hUsbDeviceFS) != USBD_OK) {
-    M1_LOG_I(M1_LOGDB_TAG, "USBD_Stop failed\r\n");
-  }
-  if (USBD_DeInit(&hUsbDeviceFS) != USBD_OK) {
-    M1_LOG_I(M1_LOGDB_TAG, "USBD_DeInit failed\r\n");
-  }
-  if (HAL_PCD_DeInit(&hpcd_USB_DRD_FS) != HAL_OK) {
-    M1_LOG_I(M1_LOGDB_TAG, "HAL_PCD_DeInit failed\r\n");
-  }
-
-  /* CRITICAL: Force the host PC to register a USB disconnect.
-     If we jump to the BootROM too quickly, the Windows USB drivers never see
-     the D+ line drop, and they fail to re-enumerate the new Bootloader device.
-   */
-  M1_LOG_I(M1_LOGDB_TAG, "Forcing USB disconnect...\r\n");
-  vTaskDelay(
-      pdMS_TO_TICKS(150)); /* Give host ~150ms to realize the device is gone */
-
-  /* Disable interrupts and SysTick BEFORE tearing down clocks.
-     Without this, FreeRTOS SysTick fires during HAL_RCC_DeInit(),
-     causing a HardFault -> reset -> "DFU MODE FAILED!". */
-  __disable_irq();
-  SysTick->CTRL = 0;
-  SysTick->LOAD = 0;
-  SysTick->VAL = 0;
-
-  HAL_RCC_DeInit();
-  HAL_DeInit();
-
-  bl_jump_to_dfu();
-} // void firmware_update_enter_usb_dfu(void)
-
-/*============================================================================*/
-/*
  * This function will jump to the bootloader
  */
 /*============================================================================*/
@@ -706,35 +665,3 @@ void firmware_update_JumpTo_BL(void) {
     M1_LOG_I(M1_LOGDB_TAG, "%s", "\nNo Bootloader found");
   }
 } // void firmware_update_JumpTo_BL(void)
-
-/*============================================================================*/
-/*
- * This function will disable the watchdog timer
- */
-/*============================================================================*/
-void firmware_update_IWDG_disable(void) {
-  // Disable IWDG - Start
-  HAL_FLASH_Unlock();    // Unlock the FLASH control registers access
-  HAL_FLASH_OB_Unlock(); // Unlock the FLASH Option Control Registers access
-
-  // Initialize the Option Bytes structure
-  FLASH_OBProgramInitTypeDef OBInit;
-  HAL_FLASHEx_OBGetConfig(&OBInit); // Get the Option byte configuration
-
-  // Set the IWDG_SW bit so the IWDG must be started by software (disabled by
-  // default at boot)
-  OBInit.OptionType = OPTIONBYTE_USER; // USER option byte configuration
-  OBInit.USERType =
-      OB_USER_IWDG_SW; // Select the IWDG software variant Option Byte
-  OBInit.USERConfig = OB_IWDG_SW; // Configure it as Software Watchdog (NOT
-                                  // hardware, so it stays off)
-
-  // Write the Option Bytes
-  HAL_FLASHEx_OBProgram(&OBInit); // Program option bytes
-
-  HAL_FLASH_OB_Launch(); // Launch the option bytes loading.
-
-  HAL_FLASH_OB_Lock(); // Lock the FLASH Option Control Registers access.
-  HAL_FLASH_Lock();    // Locks the FLASH control registers access
-                       // Disable IWDG - End
-} // void firmware_update_IWDG_disable(void)

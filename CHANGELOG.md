@@ -20,7 +20,7 @@ and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
   - **Issue #27 (USB CDC CLI RX Race)**: Replaced direct ISR overwrite with stream-buffered handoff to CLI task.
   - **Issue #26 (IR Universal Fragmentation Risk)**: Switched to pre-allocated workspace buffers to avoid heap churn.
   - **Issue #22 (Sub-GHz ISR Queue Pressure)**: Migrated raw capture to DMA-based ingestion with task-context buffering.
-- **USB DFU Enumeration & Watchdog**: Fixed failures during DFU entry by extending IWDG timeout to 30s and implementing a cache-safe jump sequence.
+- **USB DFU Enumeration & Watchdog**: Fixed failures during DFU entry by extending IWDG timeout to 10s and implementing a cache-safe jump sequence.
 - **USB DFU Mode Entry**: Resolved ~5-second boot loop by switching to Option Byte Launch reset.
 - **Firmware Update**: Fixed SD card update "Invalid image file!" error caused by lost filename context.
 - **CRC Validation Scripts**: Updated `tools/test_crc.py` for UFO artifact naming.
