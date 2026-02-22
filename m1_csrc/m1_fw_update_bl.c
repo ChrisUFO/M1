@@ -900,10 +900,16 @@ void bl_jump_to_dfu(void) {
   /* Feed the IWDG one final time immediately before jumping.
      The IWDG latch (0xCCCC start key) survives NVIC_SystemReset, so it
      keeps counting through the ST BootROM with no handler to feed it.
-     This reload gives the BootROM the full ~30s timeout budget to enumerate
-     over USB. Without this, the IWDG fires, resetting the MCU. */
-  IWDG->KR =
-      0xAAAAU; /* Reload key - feeds watchdog without re-checking SW/HW mode */
+     By using the maximum prescaler (256) and a large reload value, we
+     give the BootROM a ~32.7s budget to enumerate or for the user to
+     unplug the device to trigger a safety reboot. */
+  IWDG->KR = 0x5555U; // Enable access to PR and RLR
+  IWDG->PR = 0x07U;   // Divider = 256
+  IWDG->RLR = 0xFFFU; // Max reload value (4095) -> ~32.7 seconds
+  while (IWDG->SR != 0)
+    ;                 // Wait for registers to update
+  IWDG->KR = 0xAAAAU; // Reload
+  IWDG->KR = 0xCCCCU; // Start the watchdog if it wasn't already running
 
   /* The ST Bootloader relies on USB interrupts to enumerate. Since we globally
      disabled interrupts with __disable_irq() earlier, we MUST re-enable

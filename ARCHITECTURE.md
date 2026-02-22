@@ -155,8 +155,8 @@ Version is defined in `m1_csrc/m1_fw_update_bl.h`:
 ### Version Format
 
 - **Filename:** `M1_v{MAJOR}.{MINOR}.{BUILD}-UFO.bin`
-- **Example:** `M1_v0.8.9-UFO.bin`
-- **Display:** "Version 0.8.9" on splash screen and About menu
+- **Example:** `M1_v0.8.10-UFO.bin`
+- **Display:** "Version 0.8.10" on splash screen and About menu
 
 ### Versioning Criteria
 

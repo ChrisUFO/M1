@@ -519,7 +519,7 @@ static void firmware_update_show_usb_dfu_instructions(void) {
   do {
     u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_N);
     u8g2_DrawStr(&m1_u8g2, 0, 15, "TO ENTER DFU MODE:");
-    u8g2_DrawStr(&m1_u8g2, 0, 30, "1. Unplug Device");
+    u8g2_DrawStr(&m1_u8g2, 0, 30, "1. Power Off Device");
     u8g2_DrawStr(&m1_u8g2, 0, 45, "2. Hold UP Button");
     u8g2_DrawStr(&m1_u8g2, 0, 60, "3. Plug in USB");
 

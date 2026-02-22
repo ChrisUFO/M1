@@ -157,6 +157,19 @@ int main(void) {
 
     /* Jump directly to System Bootloader from pristine state */
     void bl_jump_to_dfu(void);
+
+    /* Feed the IWDG one final time immediately before jumping.
+       By using the maximum prescaler (256) and a large reload value, we
+       give the BootROM a ~32.7s budget to enumerate or for the user to
+       unplug the device to trigger a safety reboot. */
+    IWDG->KR = 0x5555U; // Enable access to PR and RLR
+    IWDG->PR = 0x07U;   // Divider = 256
+    IWDG->RLR = 0xFFFU; // Max reload value (4095) -> ~32.7 seconds
+    while (IWDG->SR != 0)
+      ;                 // Wait for registers to update
+    IWDG->KR = 0xAAAAU; // Reload
+    IWDG->KR = 0xCCCCU; // Start the watchdog
+
     bl_jump_to_dfu();
   }
   /* USER CODE END 1 */
@@ -214,6 +227,17 @@ int main(void) {
 
   if (op_status != DEV_OP_STATUS_USB_DFU_REQUEST) {
     MX_IWDG_Init();
+  } else {
+    /* Software DFU mode requested.
+       Enable the watchdog with a 32s safety timeout before proceeding to DFU.
+     */
+    IWDG->KR = 0x5555U; // Enable access to PR and RLR
+    IWDG->PR = 0x07U;   // Divider = 256
+    IWDG->RLR = 0xFFFU; // Max reload value (4095) -> ~32.7 seconds
+    while (IWDG->SR != 0)
+      ;                 // Wait for registers to update
+    IWDG->KR = 0xAAAAU; // Reload
+    IWDG->KR = 0xCCCCU; // Start the watchdog
   }
   MX_SPI1_Init();
   MX_ICACHE_Init();
