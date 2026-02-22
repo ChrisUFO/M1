@@ -7,6 +7,11 @@ All notable changes to the M1 project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 
+## [v0.8.11] - 2026-02-21
+
+### Added
+- **DFU Mode Visual Indicator**: Added a visual cue (LEDs on PD12/PD13) that turn on when the hardware strap is detected or DFU mode is requested via software.
+
 ## [v0.8.10] - 2026-02-21
 
 ### Added

@@ -155,6 +155,16 @@ int main(void) {
       __NOP();
     }
 
+    /* --- VISUAL FEEDBACK (LED) ---
+       Turn on PD12 and PD13 (likely LEDs) to indicate DFU mode. */
+    RCC->AHB2ENR |= (1 << 3); /* Enable GPIOD Clock (RCC_AHB2ENR bit 3) */
+    __DSB();
+    /* Config PD12 & PD13 as Output (MODER = 01) */
+    GPIOD->MODER &= ~((0x3U << (12 * 2)) | (0x3U << (13 * 2)));
+    GPIOD->MODER |= ((0x1U << (12 * 2)) | (0x1U << (13 * 2)));
+    /* Drive PD12 & PD13 HIGH to turn on LEDs */
+    GPIOD->BSRR = (1 << 12) | (1 << 13);
+
     /* Jump directly to System Bootloader from pristine state */
     void bl_jump_to_dfu(void);
 
@@ -238,6 +248,14 @@ int main(void) {
       ;                 // Wait for registers to update
     IWDG->KR = 0xAAAAU; // Reload
     IWDG->KR = 0xCCCCU; // Start the watchdog
+
+    /* --- VISUAL FEEDBACK (LED) ---
+       Turn on PD12 and PD13 (likely LEDs) to indicate DFU mode. */
+    RCC->AHB2ENR |= (1 << 3); /* Enable GPIOD Clock */
+    __DSB();
+    GPIOD->MODER &= ~((0x3U << (12 * 2)) | (0x3U << (13 * 2)));
+    GPIOD->MODER |= ((0x1U << (12 * 2)) | (0x1U << (13 * 2)));
+    GPIOD->BSRR = (1 << 12) | (1 << 13);
   }
   MX_SPI1_Init();
   MX_ICACHE_Init();

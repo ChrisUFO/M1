@@ -76,16 +76,16 @@ Open the project and build in the IDE. Output: `./Release/MonstaTek_M1_v0809-UFO
 **Manual CMake build:**
 ```bash
 cmake --preset gcc-14_2_build-release
-cmake --build out/build/gcc-14_2_build-release --target M1_v0.8.10-UFO
+cmake --build out/build/gcc-14_2_build-release --target M1_v0.8.11-UFO
 ```
 
 **Output files** (in `distribution/` or `out/build/gcc-14_2_build-release/`):
 
 | File | Use |
 |------|-----|
-| `M1_v0.8.10-UFO.bin` | STM32 firmware (includes CRC32) |
-| `M1_v0.8.10-UFO.hex` | STM32CubeProgrammer / JLink |
-| `M1_v0.8.10-UFO.elf` | Debug sessions |
+| `M1_v0.8.11-UFO.bin` | STM32 firmware (includes CRC32) |
+| `M1_v0.8.11-UFO.hex` | STM32CubeProgrammer / JLink |
+| `M1_v0.8.11-UFO.elf` | Debug sessions |
 
 ## Development & Debugging
 
@@ -160,7 +160,7 @@ The M1 exposes a USB serial console for debugging and control.
 With USB connected and a terminal at **9600 baud**, type `help` for available commands:
 
 **System Commands:**
-- `version` - Show detailed firmware version (e.g., "0.8.10.0-UFO")
+- `version` - Show detailed firmware version (e.g., "0.8.11.0-UFO")
 - `status` - System status, active bank, and build info
 - `reboot` - Software reset (no need to disconnect battery!)
 - `memory` - Show RAM/Flash usage statistics
@@ -180,11 +180,11 @@ With USB connected and a terminal at **9600 baud**, type `help` for available co
 ```
 cli> version
 M1 Firmware Version:
-  0.8.10.0-UFO
+  0.8.11.0-UFO
 
 cli> status
 System Status:
-  Firmware: v0.8.10.0
+  Firmware: v0.8.11.0
   Active Bank: 1
 
 cli> reboot
@@ -271,6 +271,9 @@ Troubleshooting and recovery:
 
 **Automatic Exit (v0.8.10+):**
 This fork includes a **32-second watchdog safety net**. If you unplug the USB cable or lose connection while in DFU mode, the device will automatically reboot into normal firmware after 32 seconds.
+
+**Visual Indicator (v0.8.11+):**
+A discrete LED (PD12/PD13) will turn on to confirm the device has entered DFU mode.
 
 **STM32CubeProgrammer Tip:**
 To ensure the device boots into your new firmware immediately after flashing, check the **"Run after programming"** box in the "Erasing & Programming" tab before starting the transfer.
