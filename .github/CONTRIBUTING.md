@@ -59,6 +59,16 @@ This project and everyone participating in it is governed by our [Code of Conduc
    - test: adding tests
    - chore: maintenance tasks
 
+3. **Fork Divergence From Upstream**
+   Every file the fork changed relative to upstream is dispositioned in the
+   [merge ledger](../docs/merge/LEDGER.md) (`docs/merge/LEDGER.md`, issue #38):
+   what the adopted upstream base already covers, what is carried forward by a
+   follow-up patch, and what was intentionally dropped with the reason. If your
+   change touches an area the ledger marks `carried-by-patch`, coordinate with
+   the named carry issue so the work is not done twice. The gate
+   `cmake/m1_01/verify_merge_ledger.sh` keeps the ledger complete (run it after
+   editing; regenerate structure with `python tools/gen_merge_ledger.py`).
+
 ## How to Submit Changes
 
 1. Update your fork to the latest upstream version
