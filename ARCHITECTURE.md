@@ -159,7 +159,9 @@ bootloader config struct):
 
 - **Filename:** `M1_v{MAJOR}.{MINOR}.{BUILD}.{RC}-{FORK_TAG}.bin`
 - **Example:** `M1_v0.9.0.0-UFO.bin`
-- **Display:** "0.9.0.0-UFO" (splash screen, About menu, CLI `version` command)
+- **Display:** CLI `version` reports `0.9.0.0-UFO`; the About menu shows the
+  four-field version with the fork tag on a separate row; the splash screen
+  shows a three-field version (`0.9.0`) with the fork tag beneath it.
 
 The fork tag (`-UFO`) is display-only: it appears in artifact names and user
 output but is not part of the numeric version the bootloader's rollback gate

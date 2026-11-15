@@ -68,3 +68,15 @@ Workflow conventions:
   must set it right after cloning (or after a fresh `git init` from a
   bundle) so merges compare canonical LF content and never surface phantom
   EOL conflicts.
+
+## Artifact Hygiene
+
+Build outputs and local tooling state are never committed:
+
+- Build trees (`out/`, `CMakeFiles/`), packaged release artifacts
+  (`distribution/`), and build logs (`build_error.log`) stay out of Git.
+- Python bytecode (`__pycache__/`, `*.pyc`) is never tracked.
+- Review artifacts (`review_comments*.json`) and local planning docs
+  (`PLAN.md`) are working state, not repo content.
+- `.gitignore` is the authoritative list; extend it there rather than
+  deleting stray artifacts by hand.
