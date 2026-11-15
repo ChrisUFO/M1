@@ -4,6 +4,11 @@
 
 Firmware for the M1 NFC/RFID multi-protocol device, built on STM32H5.
 
+> **Fork note:** This fork is based on upstream 0.8.1.0 (pinned
+> `2af1f8a339db`, grafted — see the Merge Policy section in
+> [DEVELOPMENT.md](DEVELOPMENT.md)). Fork version namespace:
+> **0.9.0.0-UFO**.
+
 > **Responsible use:** Use this project only with systems and signals you own or
 > are authorized to test. Radio, credential, privacy, and access-control laws
 > vary by jurisdiction. See [Legal notice and responsible use](LEGAL.md) and
