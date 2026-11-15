@@ -1882,3 +1882,41 @@ $ git ls-tree upstream/main m1_csrc/ | grep -i "fusb\|power"
   (`git grep -ln "m1_crypto\|aes_" upstream/main -- m1_csrc/` empty); truly
   fork-new, carried under #42.
 
+## Upstream vendor deltas — expected base-content changes (PR-1 Phase 6 evidence)
+
+The fork kept `Drivers/` and `Middlewares/` pristine —
+`git diff --name-only 93acd751 legacy/v0.8.11 -- Drivers Middlewares` is empty
+(fork vendor purity, verified in PR-1). Upstream, however, changed **5 vendor
+files** between the fork point and the adopted pin; these are *upstream-side
+additions the fork never had*, now part of the adopted base. They are expected
+base-content changes, NOT fork content — recorded here so nobody hunts them as
+fork losses. Counts reproduce today (whitespace-ignored):
+
+```
+$ git diff -w --numstat 93acd751 upstream/main -- Drivers Middlewares
+23      0       Drivers/BSP/Components/ST25R3916/rfal_rfst25r3916.c
+12      0       Drivers/BSP/Components/ST25R3916/st25r3916_com.c
+32      0       Drivers/BSP/Components/ST25R3916/st25r3916_irq.c
+250     0       Drivers/u8g2_csrc/tools/extract_selected_fonts.py
+826     0       Drivers/u8g2_csrc/u8g2_fonts_selected.c
+```
+
+Direction note: `git diff -w --numstat 2af1f8a legacy/v0.8.11 -- Drivers
+Middlewares` shows the same five as all-zero-addition rows (0/23, 0/12, 0/32,
+0/250, 0/826) — i.e. the fork *lacks* upstream's additions relative to the pin;
+diffing the other way (as above) shows them as upstream additions. Either
+direction yields exactly this quintet and nothing else.
+
+Interpretation:
+
+| File | Upstream-side change | Nature |
+|---|---|---|
+| `rfal_rfst25r3916.c` (+23) | ST25R3916 RF-NFC driver additions | vendor bugfix/feature layer the fork never consumed |
+| `st25r3916_com.c` (+12) | com-layer additions | same |
+| `st25r3916_irq.c` (+32) | IRQ handling additions | same |
+| `Drivers/u8g2_csrc/tools/extract_selected_fonts.py` (+250) | font-selection tooling growth | build-time tool, no firmware impact |
+| `Drivers/u8g2_csrc/u8g2_fonts_selected.c` (+826) | selected-font set expanded | display font data; consumed by the new base's UI |
+
+All five arrive wholesale with the adopted base (`main` == pin `2af1f8a` content)
+— nothing for the merge to carry, nothing fork-side to restore.
+
