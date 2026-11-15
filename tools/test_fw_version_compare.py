@@ -19,15 +19,20 @@ so the u32 read starting at fw_version_rc evaluates to:
 
     version_u32 = (major << 24) | (minor << 16) | (build << 8) | rc
 
-The gate only accepts an incoming image whose packed version is strictly
-greater than the stored one; anything older or equal is rejected (rollback
-protection). This test packs versions exactly the same way and asserts the
+The gate decides whether a user-requested rollback (BACK+DOWN key combo,
+m1_csrc/m1_system.c) may swap to the stored bank-2 image: the swap happens
+only when the stored image is STRICTLY OLDER than the running one
+("Rollback is ready!"); an equal or newer stored image is declined
+("Rollback was already completed!"). The gate therefore enables falling
+back to an older image — it is not anti-downgrade protection for incoming
+updates. This test packs versions exactly the same way and asserts the
 ordering properties this fork's version namespace depends on:
 
   * 0.9.0.0 > 0.8.11    — the frozen fork namespace must exceed the last
     legacy fork release (0.8.11 packs with rc=0, i.e. as 0.8.11.0 =
-    0x00080B00), otherwise the gate would refuse every 0.9.x image as
-    "not newer" than what is already in flash.
+    0x00080B00), so a stored legacy image always compares strictly older
+    than the running fork image (a rollback from a 0.9.x build to the
+    stored 0.8.11 remains possible).
   * 0.8.11 == 0.8.11.0  — the legacy three-field notation is the same
     version as the four-field notation with rc=0; packing is deterministic.
   * 0.8.11 > 0.8.1.0    — the fork namespace must also exceed the upstream
@@ -77,14 +82,15 @@ def parse_version(text):
     return tuple(fields)
 
 
-def gate_accepts(stored, incoming):
+def gate_accepts(stored, running):
     """Mirror of the device rollback gate (m1_csrc/m1_system.c:783).
 
-    The bootloader accepts an incoming image only when its packed version is
-    STRICTLY greater than the stored one; anything older or equal is
-    rejected (rollback protection).
+    True when the device would perform the rollback swap: the stored
+    (bank-2) image must be STRICTLY OLDER than the running one. A stored
+    image that is equal or newer leaves the device on the running bank
+    ("Rollback was already completed!") — nothing is auto-updated.
     """
-    return stored < incoming
+    return stored < running
 
 
 PASS = 0
@@ -135,26 +141,27 @@ def main():
         "0x%08X vs 0x%08X" % (v_0_8_11, v_0_8_1_0),
     )
 
-    print("\nTesting rollback-gate accept/reject (gate_accepts mirrors the device)...")
+    print("\nTesting rollback permission (gate_accepts mirrors the device)...")
     check(
-        "gate accepts 0.9.0.0 over stored 0.8.11 (strictly newer)",
+        "rollback permitted: stored 0.8.11 strictly older than running 0.9.0.0",
         gate_accepts(v_0_8_11, v_0_9_0_0),
-        "gate_accepts(0x%08X, 0x%08X) was False" % (v_0_8_11, v_0_9_0_0),
+        "gate_accepts(stored=0x%08X, running=0x%08X) was False" % (v_0_8_11, v_0_9_0_0),
     )
     check(
-        "gate rejects an EQUAL version (0.8.11 incoming over stored 0.8.11)",
+        "rollback declined: stored version EQUAL to running (0.8.11 vs 0.8.11)",
         not gate_accepts(v_0_8_11, v_0_8_11),
-        "equal versions must not pass the strictly-newer gate",
+        "equal versions must not trigger the bank swap",
     )
     check(
-        "gate rejects an OLDER version (0.8.1.0 incoming over stored 0.8.11)",
+        "rollback declined: stored 0.8.11 strictly NEWER than running 0.8.1.0",
         not gate_accepts(v_0_8_11, v_0_8_1_0),
-        "rollback to 0x%08X must be refused over stored 0x%08X" % (v_0_8_1_0, v_0_8_11),
+        "swap to stored 0x%08X over running 0x%08X must be refused (bank 2 newer than current FW)"
+        % (v_0_8_11, v_0_8_1_0),
     )
     check(
-        "gate rejects a 0.9.0.0-UFO image when 0.9.0.0 is already stored (tag is not newer)",
+        "rollback declined: running 0.9.0.0-UFO over stored 0.9.0.0 (tag packs equal)",
         not gate_accepts(v_0_9_0_0, v_0_9_0_0_tagged),
-        "tagged display form packs equal, so it must be refused as not-newer",
+        "tagged display form packs equal, so the swap is declined",
     )
 
     print("\nTesting fork tag exclusion (display-only)...")

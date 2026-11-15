@@ -33,3 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manager-protocol version export (was: hardcoded `MonstaTek_M1_v0800`
   stems in CMake/`build.sh`, a hardcoded `FW_BUILD_LABEL "FW 0.8.1.0"`,
   and `0.8.1.0` macro values)
+
+### Removed
+
+- Fork: the upstream-base adoption does not yet carry the legacy fork
+  modules — this tree no longer builds the IR Universal Remote app
+  (`m1_ir_universal`, Flipper Zero-compatible `.ir` file support), the
+  Wi-Fi credential store (`m1_wifi_cred`) with its encryption helpers
+  (`m1_crypto`), the ESP32 serial-flasher assets, and the host CRC
+  tooling (`tools/append_crc32.py`, `tools/test_crc*.py`); 47 legacy
+  paths in total (plus `cmake/driver_warnings.cmake`, `ROADMAP.md`,
+  `Project_files.txt`, and the fork's USB DFU issue template). All are
+  recoverable from `legacy/v0.8.11` and pending re-land in follow-up
+  units; per-file disposition will live in `docs/merge/LEDGER.md`
+  (tracked as issue #38)

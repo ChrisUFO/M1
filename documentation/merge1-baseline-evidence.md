@@ -259,9 +259,13 @@ absent).
 ### 9.5 Re-land invariants
 
 - After 4a (and excluding branch-added files): `git diff --ignore-cr-at-eol
-  2af1f8a HEAD` → **0 bytes**; full diffstat at that point = `.gitattributes`
-  + this evidence doc only (both new files). Zero upstream-tracked files
-  modified by EOL or anything else at that commit.
+  2af1f8a HEAD` → **0 bytes**; the diffstat at that point under the same
+  `--ignore-cr-at-eol` view = `.gitattributes` + this evidence doc only
+  (both new files). Without the flag, the renormalization commit (`07a24e8`)
+  rewrites 476 upstream-tracked files by EOL alone (CRLF→LF — the 459
+  `i/crlf` + 17 `i/mixed` of the pre-4a census below) with zero content
+  change; `git show --stat 07a24e8` → 477 files changed (those 476 + the
+  new `.gitattributes`).
 - `git ls-files --eol` after 4a: **0** `i/crlf` entries (was 459 + 17 mixed).
 - Graft proofs (Phase 3): `git merge-base --is-ancestor 2af1f8a HEAD` exit 0;
   `git rev-parse legacy/v0.8.11` → `cf48ff01b4e7b9bfaba51b1308126cc52c1688af`
