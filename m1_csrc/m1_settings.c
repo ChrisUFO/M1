@@ -185,7 +185,7 @@ void settings_about(void)
 /*============================================================================*/
 static void settings_about_display_choice(uint8_t choice)
 {
-	uint8_t prn_name[20];
+	char prn_name[20];
 
 	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG); // Set background color
 	u8g2_DrawBox(&m1_u8g2, 0, 0, M1_LCD_DISPLAY_WIDTH, ABOUT_BOX_Y_POS_ROW_5 + 1); // Clear old content

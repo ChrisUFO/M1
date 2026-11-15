@@ -191,8 +191,10 @@ void menu_gpio_exit(void)
 /******************************************************************************/
 void gpio_manual_control(void)
 {
+#if 0 /* Unused local: stub for future work. May need removal later. */
 	GPIO_InitTypeDef GPIO_InitStruct = {0};
-	uint8_t prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
+#endif
+	char prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
 
     m1_ext_gpio_stat[m1_ext_gpio_id] ^= 1; // Toggle
 
@@ -216,8 +218,10 @@ void gpio_manual_control(void)
 /*============================================================================*/
 void gpio_3_3v_on_gpio(void)
 {
+#if 0 /* Unused local: stub for future work. May need removal later. */
 	GPIO_InitTypeDef GPIO_InitStruct = {0};
-	uint8_t prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
+#endif
+	char prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
 
     m1_ext_gpio_stat[0] ^= 1; // Toggle
     if ( m1_ext_gpio_stat[0] )
@@ -247,8 +251,10 @@ void gpio_3_3v_on_gpio(void)
 /*============================================================================*/
 void gpio_5v_on_gpio(void)
 {
+#if 0 /* Unused local: stub for future work. May need removal later. */
 	GPIO_InitTypeDef GPIO_InitStruct = {0};
-	uint8_t prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
+#endif
+	char prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
 
     m1_ext_gpio_stat[1] ^= 1; // Toggle
     if ( m1_ext_gpio_stat[1] )
@@ -280,7 +286,9 @@ extern volatile int esp32_reset_en;
 /*============================================================================*/
 void gpio_usb_uart_bridge(void)
 {
+#if 0 /* Unused local: stub for future work. May need removal later. */
 	GPIO_InitTypeDef GPIO_InitStruct = {0};
+#endif
     S_M1_Buttons_Status this_button_status;
     S_M1_Main_Q_t q_item;
     BaseType_t ret;
@@ -449,8 +457,10 @@ void gpio_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
 {
 	uint8_t i, n_items;
 	uint8_t menu_text_y;
-	uint8_t prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
+	char prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
+#if 0 /* Unused locals: stub for future work. May need removal later. */
 	uint16_t msg_len, msg_id;
+#endif
 
 	n_items = phmenu->num_submenu_items;
 	menu_text_y = THIS_LCD_MENU_TEXT_FIRST_ROW_Y;
@@ -539,7 +549,7 @@ void gpio_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
 /******************************************************************************/
 void gpio_xkey_handler(S_M1_Key_Event event, uint8_t button_id, uint8_t sel_item)
 {
-	uint8_t prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
+	char prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
 
     if ( event==BUTTON_EVENT_CLICK )
     {
