@@ -1473,6 +1473,113 @@ dropped->wontfix) and is documented here deliberately: the mapping's premise
 """
 )
 
+EVIDENCE_CAPTURE = """
+## Evidence re-capture (issue #38 AC — council artifacts were never committed; this ledger is the evidence home)
+
+### (a) IR protocol map — single-source claim
+
+**Claim:** on each tree, the protocol-name -> IRMP-enum mapping is defined exactly
+once at app level (no duplicated map).
+
+Commands and verbatim findings:
+
+```
+$ git grep -n "ir_proto_map\\[\\]" legacy/v0.8.11
+legacy/v0.8.11:m1_csrc/m1_ir_universal.c:83:static const S_IR_ProtoMap_t ir_proto_map[] = {
+$ git grep -c "IRMP_NEC" legacy/v0.8.11 -- m1_csrc/m1_infrared.c
+1                      # a comment line only — no second table on the fork
+$ git grep -n "ir_protocols_mapping_table\\[" main
+main:Infrared/m1_ir_remotes.c:398:const S_M1_IR_Protocol_Mapping_t ir_protocols_mapping_table[IR_PROTOCOLS_MAPPING_MAX] =
+main:Infrared/m1_ir_remotes.c:898:               (consumers — lookup in m1_ir_remotes.c itself)
+$ git grep -c "IRMP_NEC" main -- m1_csrc/m1_infrared.c
+1                      # comment only — no second table on the new base either
+```
+
+**Verdict: single-source HOLDS on both trees** — fork: `m1_ir_universal.c:83`
+(`ir_proto_map[]`, 24 entries); new base: `m1_ir_remotes.c:398`
+(`ir_protocols_mapping_table[]`). No duplicate map exists in either tree.
+
+**Substantive difference the audit surfaced** (feeds #43, not a new source): the
+two maps disagree on semantics — the fork aliases `"NECext" -> IRMP_NEC_PROTOCOL`
+(legacy m1_ir_universal.c:85) while the new base maps `"NEC" -> IRMP_NEC8_PROTOCOL`
+and `"NECext" -> IRMP_NEC_PROTOCOL` (main:Infrared/m1_ir_remotes.c:416-421). The
+fork's aliasing truncates 16-bit NECext addresses/commands — the verified
+wrong-codes defect #43 exists to fix. The consolidation keeps ONE map: upstream's.
+
+### (b) BKP (backup-register) collision claim
+
+**Claim (from #41's motivation):** the fork's failsafe writes raw `TAMP->BKP1R`,
+colliding with upstream's `bu_regs.device_op_status` slot; DR2/DR3 are held by the
+ESP version records.
+
+Commands and verbatim findings:
+
+```
+$ git grep -n "TAMP->BKP1R" legacy/v0.8.11        # the fork's raw writes
+legacy/v0.8.11:Core/Src/main.c:236:  uint8_t op_status = (uint8_t)(TAMP->BKP1R & 0xFF);
+legacy/v0.8.11:m1_csrc/m1_fw_update_bl.c:731:    if (TAMP->BKP1R == BOOT_FAIL_SIGNATURE) {
+legacy/v0.8.11:m1_csrc/m1_fw_update_bl.c:732:      TAMP->BKP1R = DEV_OP_STATUS_NO_OP;
+legacy/v0.8.11:m1_csrc/m1_fw_update_bl.c:754/759/764/767/772: (BOOT_FAIL_SIGNATURE state machine)
+
+$ git show main:m1_csrc/m1_system.h | sed -n '87,94p'   # upstream's struct
+typedef struct {
+        uint32_t magic_number;      // word 0 -> restored from RTC_BKP_DR0
+        uint8_t device_op_status;   // word 1 -> restored from RTC_BKP_DR1
+        uint8_t reserved_1..3;
+} S_M1_BK_REGS_t;
+
+$ git show main:m1_csrc/m1_system.c | sed -n '669,676p' # the restore loop
+        k = (sizeof(S_M1_BK_REGS_t) + 3)/4;
+        bu_reg_read = RTC_BKP_DR0; ... for (i=0; i<k; i++)
+        { *bu_reg_write = HAL_RTCEx_BKUPRead(&hrtc, bu_reg_read++); ... }
+
+$ git grep -n "DR0/DR1\\|RTC_BKP_DR2\\|RTC_BKP_DR3" main -- m1_csrc/m1_esp_version.c
+main:m1_csrc/m1_esp_version.c:40:/* Dedicated backup registers (not DR0/DR1, which startup_bu_registers_init uses,
+main:m1_csrc/m1_esp_version.c:42:#define ESP_VER_REG        RTC_BKP_DR2
+main:m1_csrc/m1_esp_version.c:43:#define ESP_VER_MAGIC_REG  RTC_BKP_DR3
+```
+
+**Verdict: collision CONFIRMED.** On STM32H5, HAL's `RTC_BKP_DRx` indexes map
+1:1 onto `TAMP->BKPxR` (stm32h5xx_hal_rtc_ex.h:674-675: DR0=0x00, DR1=0x01).
+Upstream's restore loop reads the struct word-by-word starting at DR0, so
+`device_op_status` lives precisely in **DR1 == TAMP->BKP1R** — the very register
+the fork's failsafe overwrites with raw 32-bit values. `BOOT_FAIL_SIGNATURE`
+(0xDEADBEEF) lands in the struct as status byte 0xEF (not any
+`S_M1_DEV_OP_STATUS_t` value) plus clobbered reserved bytes; conversely
+upstream's `startup_bu_registers_init()` (main:m1_system.c:670-679) rewrites
+DR0/DR1 on every boot and would erase a fork failsafe verdict. Upstream's own
+esp_version.c:40 documents the DR0/DR1 ownership. **#41's port must use the
+`S_M1_BK_REGS_t` struct API (as #41 already specifies) instead of raw writes.**
+
+### (c) Ours-only modules — upstream-equivalent-under-any-name search
+
+```
+$ git grep -lni "fusb302\\|usb.pd\\|power.delivery" upstream/main
+  -> only unrelated hits (usbd_desc.c string, LL/PWR headers, CMSIS device header)
+$ git ls-tree upstream/main m1_csrc/ | grep -i "fusb\\|power"
+  m1_csrc/m1_fusb302.c / m1_fusb302.h / m1_low_power.c / m1_low_power.h present
+```
+
+- **`m1_fusb302.c` (USB-PD)**: no different-name equivalent exists upstream, and
+  none is needed — upstream carries the *identical* module (unchanged since the
+  fork point; ours-only class = upstream untouched). The fork's delta is one
+  warning fix -> #39.
+- **`m1_low_power.c`**: same — module present on upstream unchanged
+  (`PreSleepProcessing`/`PostSleepProcessing` at the same sites); fork delta is
+  two `(void)` lines -> #39. (Power-management *feature* gap — STOP/STANDBY in
+  the idle hook — is open issue #24, not a carry.)
+- **`Core/Src/FreeRTOS_CLI.c`**: file shared and upstream-unchanged; the fork's
+  delta is the `pxCommandHelper` CLI extension + one init fix -> #44 (+ #39 tag).
+- **`Sub_Ghz/protocols/m1_secplus_v2_decode.c`**: upstream-unchanged module
+  (pre-fix blob b7c54e2 at the fork point == upstream's copy); fork's
+  `uint64_t code = 0;` correctness fix is absent on main -> #39.
+- **`m1_crypto.c/h`**: searched — no crypto helper exists anywhere upstream
+  (`git grep -ln "m1_crypto\\|aes_" upstream/main -- m1_csrc/` empty); truly
+  fork-new, carried under #42.
+"""
+
+EXTRA_SECTIONS = EXTRA_SECTIONS + EVIDENCE_CAPTURE
+
 
 def count_by(files, key):
     counts = {}
