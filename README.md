@@ -43,6 +43,9 @@ See [HARDWARE.md](HARDWARE.md) for more details.
 - [Build Tool (mbt)](documentation/mbt.md) – Build with STM32CubeIDE or VS Code
 - [Architecture](ARCHITECTURE.md) – Project structure
 - [Development](DEVELOPMENT.md) – Development guidelines
+- [Merge ledger](docs/merge/LEDGER.md) – Disposition of every fork-changed file
+  vs the upstream 0.8.1.0 base (issue #38): what the base already covers, what
+  follow-up patches carry, what was dropped and why
 
 ## Building
 
