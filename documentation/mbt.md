@@ -57,7 +57,7 @@ ninja --version
 ```bash
 make
 ```
-Output: `./artifacts/` (MonstaTek_M1_v0800.elf, .bin, .hex)
+Output: `./artifacts/` (M1_v0.9.0.0-UFO.elf, .bin, .hex)
 
 * For Visual Studio Code users:
 - Select build type from PROJECT STATUS - Configure (gcc-14_2_build-release, gcc-14_2_build-debug).
@@ -92,16 +92,16 @@ The **srec_cat** tool from the [SRecord](https://srecord.sourceforge.net/) packa
 From a terminal (Command Prompt or PowerShell), in the directory that contains your built binary:
 
 ```text
-srec_cat MonstaTek_M1_v0800.bin -binary -crop 0x0 0x000FFC14 -STM32_Little_Endian 0x000FFC14 -o M1_v0800_wcrc.bin -binary
+srec_cat M1_v0.9.0.0-UFO.bin -binary -crop 0x0 0x000FFC14 -STM32_Little_Endian 0x000FFC14 -o M1_v0.9.0.0-UFO_wcrc.bin -binary
 ```
 
 Where:
 
-- **MonstaTek_M1_v0800.bin** – Input binary file (e.g. produced by STM32CubeIDE or the VS Code build after a successful build).
-- **M1_v0800_wcrc.bin** – Output binary file with CRC-32 bytes appended.
+- **M1_v0.9.0.0-UFO.bin** – Input binary file (e.g. produced by STM32CubeIDE or the VS Code build after a successful build).
+- **M1_v0.9.0.0-UFO_wcrc.bin** – Output binary file with CRC-32 bytes appended.
 - **0x000FFC14** – Image size of the binary (fixed value for this firmware).
 
-After running the command, use **M1_v0800_wcrc.bin** (or the name you gave with `-o`) as the image with CRC for programming.
+After running the command, use **M1_v0.9.0.0-UFO_wcrc.bin** (or the name you gave with `-o`) as the image with CRC for programming.
 
 ---
 
@@ -119,13 +119,13 @@ These instructions are only for users with previous source code who want to gene
     srec_cat $(OBJCOPY_BIN) -binary -crop 0x0 0x000FFC14 -STM32_Little_Endian 0x000FFC14 -o $(BUILD_ARTIFACT_NAME)_wCRC.bin -binary
     ```
 
-  - After building the project, an extra binary file `MonstaTek_M1_v0800_wCRC.bin` with CRC bytes appended will be generated.
+  - After building the project, an extra binary file `M1_v0.9.0.0-UFO_wCRC.bin` with CRC bytes appended will be generated.
 
 * VSCode users:
 
   - Make sure you have installed SRecord and added `srec_cat` to your PATH (see [SRecord (srec_cat) – download, install, and use for CRC](#srecord-srec_cat--download-install-and-use-for-crc) above).
   - Download and update the file `CMakeLists.txt` in the source folder (`<source folder>/CMakeLists.txt`).
-  - After building the project, an extra binary file `MonstaTek_M1_v0800_wCRC.bin` with CRC bytes appended will be generated.
+  - After building the project, an extra binary file `M1_v0.9.0.0-UFO_wCRC.bin` with CRC bytes appended will be generated.
 
 ## Debug
 
