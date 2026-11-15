@@ -35,6 +35,7 @@ Middlewares/*.cyclo
 
 # Logs
 *.log
+build_error.log
 logs/
 
 # Temporary files
@@ -54,6 +55,9 @@ review_full.txt
 # System files
 .DS_Store
 Thumbs.db
+
+# CMake generated files (never commit local caches)
+CMakeFiles/
 
 # Build output (contains machine-specific paths)
 out/
@@ -78,5 +82,6 @@ changelog.md
 # Review artifacts
 review_*.txt
 review_*.json
+review_comments*.json
 all_comments.json
 pull_comments.json
