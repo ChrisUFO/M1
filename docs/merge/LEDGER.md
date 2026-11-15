@@ -1729,3 +1729,53 @@ evolved several of them. The restyle itself is `intentionally-dropped` everywher
 (see the nfc_storage.c / m1_sub_ghz_api.c / m1_esp_hosted_config.h entries for
 representative reasoning).
 
+## Feature verdicts — #7 / #4 / #3 / #11 (with corrected wiring status)
+
+Corrected wiring status on the legacy tree (re-verified for this ledger; the
+exploration-era claim "menu-wired" holds only for #11):
+
+| Issue | Feature | Legacy state (verified) | Menu wiring on legacy |
+|---|---|---|---|
+| #7 | System settings | `settings_system()` exists — placeholder body: draws "SYSTEM..." then busy-waits on the key queue (legacy m1_settings.c:176-229); inherited from the upstream initial upload, fork never implemented | record `menu_Settings_System` exists (legacy m1_menu.c:316); parent link **commented out** (legacy m1_menu.c:358) |
+| #4 | LCD & Notifications | `settings_lcd_and_notifications()` exists — same placeholder pattern, draws "LCD..." (legacy m1_settings.c:83-137); fork never implemented | record `menu_Settings_LCD_and_Notifications` exists (legacy m1_menu.c:280); parent link **commented out** (legacy m1_menu.c:356) |
+| #3 | Sub-GHz Radio Settings | function definition **deleted** by the fork — only the declaration remains, commented (legacy m1_sub_ghz.c:286); the pre-fork body was itself a `m1_gui_let_update_fw()` placeholder | record `menu_Sub_GHz_Radio_Settings` exists (legacy m1_menu.c:68-73) but is **absent from the Sub-GHz children list** (legacy m1_menu.c:87-89) |
+| #11 | Bluetooth Config | `bluetooth_config()` exists — placeholder: calls `m1_gui_let_update_fw()` then busy-waits (legacy m1_bt.c:327-372); fork's own docs label it "no config UI" (legacy ARCHITECTURE.md:327, README.md:467) | record `menu_Bluetooth_Config` (legacy m1_menu.c:380) **live-wired** in the Bluetooth children list (legacy m1_menu.c:398) |
+
+Upstream removed all four placeholder functions and their menu records during its
+0.8.1.0 evolution (e.g. upstream delta deleted `settings_system` /
+`settings_lcd_and_notifications` from m1_settings.c; `main` has neither; the new
+base's Bluetooth menu is Scan Devices / Signal Meter / GATT Explorer / Saved —
+main:m1_menu.c:420-447).
+
+### Verdicts (all four): `intentionally-dropped` — the placeholder code; the issues stay OPEN
+
+The fork's tree contains **no implementation** of any of the four features — only
+non-functional placeholders inherited from the upstream initial upload (text screen
++ busy-wait, or the "please update firmware" screen). Against the maintainer's
+evidentiary bar:
+
+1. **There is nothing to carry.** Carrying `settings_system()` et al. would
+   re-plant a `u8g2_DrawStr(..., "SYSTEM...")` + `while(1)` busy-loop that the fork
+   itself disabled (3 of 4 menu links commented out or the definition deleted) and
+   that upstream removed as dead code. Zero feature value survives the carry.
+2. **The issues' actual asks were never "carry the stub".** Each issue text
+   explicitly labels the current state a "stub placeholder" and specifies the real
+   implementation (e.g. #3: modulation/bandwidth/deviation/power/frequency screen
+   persisted via the config pattern; #11: advertisement payload editor with
+   AppleJuice-style presets). Those asks are new implementation work on the new
+   base, not legacy content retention.
+3. **The features remain wanted and roadmap-ranked** — all four appear in the
+   fork's ARCHITECTURE.md "Recommended Implementation Order" (priorities 2, 5, 6,
+   7; preserved above), and the new base provides equal or better substrate
+   (upstream's SI4463 API, settings persistence, BT stack).
+
+Consequently: the stub hunks are dispositioned `intentionally-dropped` inside the
+host-file entries (m1_settings.c / m1_sub_ghz.c / m1_menu.c / m1_bt.c), and **all
+four issues #3, #4, #7, #11 remain OPEN, re-targeted at fresh implementation on
+the new base** (ledger-linked comments posted at PR time). Closing them as
+wontfix would misrepresent maintainer intent: the drop applies to placeholder
+code, not to the feature requests. This deviates from the binary
+issue-resolution mapping originally sketched for this unit (carried->open /
+dropped->wontfix) and is documented here deliberately: the mapping's premise
+("fork-implemented features") is contradicted by the verified evidence above.
+
