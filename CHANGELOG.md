@@ -30,5 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fork: version namespace frozen to 0.9.0.0-UFO, single-sourced from
   `m1_csrc/m1_fw_update_bl.h` and derived into the CMake project name,
   `build.sh` artifact stem, the about-box/boot-banner label, and the
-  manager-protocol version export (was: hardcoded `MonstaTek_M1_v0800` /
-  `0.8.1.0`)
+  manager-protocol version export (was: hardcoded `MonstaTek_M1_v0800`
+  stems in CMake/`build.sh`, a hardcoded `FW_BUILD_LABEL "FW 0.8.1.0"`,
+  and `0.8.1.0` macro values)

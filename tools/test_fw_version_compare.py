@@ -62,6 +62,31 @@ def fmt(version_tuple, fork_tag=None):
     return "%s-%s" % (base, fork_tag) if fork_tag else base
 
 
+def parse_version(text):
+    """Parse the version notations this tree actually uses into a 4-tuple.
+
+    Handles '0.9.0.0-UFO' (quad + display-only fork tag), '0.8.11.0'
+    (four-field), and '0.8.11' (legacy three-field notation, rc implied 0).
+    The fork tag is display-only and never part of the packed u32, so it is
+    stripped before the numeric fields are read.
+    """
+    base = text.split("-")[0]
+    fields = [int(f) for f in base.split(".")]
+    while len(fields) < 4:
+        fields.append(0)
+    return tuple(fields)
+
+
+def gate_accepts(stored, incoming):
+    """Mirror of the device rollback gate (m1_csrc/m1_system.c:783).
+
+    The bootloader accepts an incoming image only when its packed version is
+    STRICTLY greater than the stored one; anything older or equal is
+    rejected (rollback protection).
+    """
+    return stored < incoming
+
+
 PASS = 0
 FAIL = 0
 
@@ -79,9 +104,11 @@ def check(description, condition, detail=""):
 def main():
     v_0_9_0_0 = pack_version(0, 9, 0, 0)
     v_0_8_11 = pack_version(0, 8, 11, 0)  # legacy fork release
-    v_0_8_11_0 = pack_version(0, 8, 11, 0)  # same, explicit rc field
+    # genuinely different constructions: parsed from the string notations
+    # this tree uses, not the same literal pack_version() call as above.
+    v_0_8_11_0 = pack_version(*parse_version("0.8.11"))  # 3-field, rc padded
     v_0_8_1_0 = pack_version(0, 8, 1, 0)  # upstream base version
-    v_0_9_0_0_tagged = pack_version(0, 9, 0, 0)  # fork tag not in u32
+    v_0_9_0_0_tagged = pack_version(*parse_version("0.9.0.0-UFO"))
 
     print("=" * 60)
     print("Firmware Version Comparator Test (device rollback gate)")
@@ -97,8 +124,9 @@ def main():
 
     check(
         "0.8.11 == 0.8.11.0 (three-field notation packs with rc=0)",
-        v_0_8_11 == v_0_8_11_0,
-        "0x%08X vs 0x%08X" % (v_0_8_11, v_0_8_11_0),
+        parse_version("0.8.11") == (0, 8, 11, 0) and v_0_8_11 == v_0_8_11_0,
+        "fields %r vs (0, 8, 11, 0); 0x%08X vs 0x%08X"
+        % (parse_version("0.8.11"), v_0_8_11, v_0_8_11_0),
     )
 
     check(
@@ -107,14 +135,37 @@ def main():
         "0x%08X vs 0x%08X" % (v_0_8_11, v_0_8_1_0),
     )
 
+    print("\nTesting rollback-gate accept/reject (gate_accepts mirrors the device)...")
+    check(
+        "gate accepts 0.9.0.0 over stored 0.8.11 (strictly newer)",
+        gate_accepts(v_0_8_11, v_0_9_0_0),
+        "gate_accepts(0x%08X, 0x%08X) was False" % (v_0_8_11, v_0_9_0_0),
+    )
+    check(
+        "gate rejects an EQUAL version (0.8.11 incoming over stored 0.8.11)",
+        not gate_accepts(v_0_8_11, v_0_8_11),
+        "equal versions must not pass the strictly-newer gate",
+    )
+    check(
+        "gate rejects an OLDER version (0.8.1.0 incoming over stored 0.8.11)",
+        not gate_accepts(v_0_8_11, v_0_8_1_0),
+        "rollback to 0x%08X must be refused over stored 0x%08X" % (v_0_8_1_0, v_0_8_11),
+    )
+    check(
+        "gate rejects a 0.9.0.0-UFO image when 0.9.0.0 is already stored (tag is not newer)",
+        not gate_accepts(v_0_9_0_0, v_0_9_0_0_tagged),
+        "tagged display form packs equal, so it must be refused as not-newer",
+    )
+
     print("\nTesting fork tag exclusion (display-only)...")
     print("  bare %s       = 0x%08X" % (fmt((0, 9, 0, 0)), v_0_9_0_0))
     print("  %s = 0x%08X" % (fmt((0, 9, 0, 0), "UFO"), v_0_9_0_0_tagged))
 
     check(
         'bare 0.9.0.0 == 0.9.0.0-UFO numerically ("-UFO" excluded from gate)',
-        v_0_9_0_0 == v_0_9_0_0_tagged,
-        "0x%08X vs 0x%08X" % (v_0_9_0_0, v_0_9_0_0_tagged),
+        parse_version("0.9.0.0") == (0, 9, 0, 0) and v_0_9_0_0 == v_0_9_0_0_tagged,
+        "parsed %r; 0x%08X vs 0x%08X"
+        % (parse_version("0.9.0.0"), v_0_9_0_0, v_0_9_0_0_tagged),
     )
 
     print("\nTesting gate arithmetic on worked examples...")

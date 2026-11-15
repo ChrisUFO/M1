@@ -35,14 +35,14 @@ static int bounded_contains(const char *hay, size_t hay_len, const char *needle)
     return found;
 }
 
-/* Isolate a function's body by its CRLF-anchored "...)\r\n{" definition
- * (m1_nfc.c uses CRLF throughout -- this anchors to the DEFINITION, not an
+/* Isolate a function's body by its LF-anchored "...)\n{" definition
+ * (m1_nfc.c uses LF throughout -- this anchors to the DEFINITION, not an
  * earlier forward declaration ending in ";"), up to the next top-level
- * "\r\nstatic " (the start of whatever function follows it in file order). */
+ * "\nstatic " (the start of whatever function follows it in file order). */
 static const char *bound_function(const char *src, const char *sig, size_t *out_len)
 {
     const char *start = strstr(src, sig);
-    const char *end = start ? strstr(start + 1, "\r\nstatic ") : NULL;
+    const char *end = start ? strstr(start + 1, "\nstatic ") : NULL;
     *out_len = (start != NULL && end != NULL && end > start) ? (size_t)(end - start) : 0U;
     return start;
 }
@@ -73,7 +73,7 @@ int main(void)
     /* --- Shared renderer: header truthfully names the active source ------ */
     size_t progress_len;
     const char *progress = bound_function(src,
-        "static void nfc_mfc_dict_progress_draw(void)\r\n{", &progress_len);
+        "static void nfc_mfc_dict_progress_draw(void)\n{", &progress_len);
     CHECK(progress != NULL, "nfc_mfc_dict_progress_draw() is defined");
     CHECK(progress_len > 0U, "nfc_mfc_dict_progress_draw()'s body could be bounded");
     if (progress_len > 0U) {
@@ -109,8 +109,8 @@ int main(void)
     /* --- Progress bar: current/total, clamp, zero-total-safe -------------- */
     size_t bar_len;
     const char *bar = bound_function(src,
-        "static void nfc_mfc_progress_bar_draw(uint8_t x, uint8_t y, uint8_t w, uint8_t h,\r\n"
-        "                                      uint32_t current, uint32_t total)\r\n{", &bar_len);
+        "static void nfc_mfc_progress_bar_draw(uint8_t x, uint8_t y, uint8_t w, uint8_t h,\n"
+        "                                      uint32_t current, uint32_t total)\n{", &bar_len);
     CHECK(bar != NULL, "nfc_mfc_progress_bar_draw() is defined");
     CHECK(bar_len > 0U, "nfc_mfc_progress_bar_draw()'s body could be bounded");
     if (bar_len > 0U) {
@@ -126,7 +126,7 @@ int main(void)
 
     /* --- Lost Tag: required text, Skip still offered ----------------------- */
     size_t lost_len;
-    const char *lost = bound_function(src, "static void nfc_mfc_lost_tag_draw(void)\r\n{", &lost_len);
+    const char *lost = bound_function(src, "static void nfc_mfc_lost_tag_draw(void)\n{", &lost_len);
     CHECK(lost != NULL, "nfc_mfc_lost_tag_draw() is defined");
     CHECK(lost_len > 0U, "nfc_mfc_lost_tag_draw()'s body could be bounded");
     if (lost_len > 0U) {
@@ -142,7 +142,7 @@ int main(void)
 
     /* --- Exit/Stay confirmation: required text and button placement -------- */
     size_t exit_len;
-    const char *exitc = bound_function(src, "static void nfc_mfc_exit_confirm_draw(void)\r\n{", &exit_len);
+    const char *exitc = bound_function(src, "static void nfc_mfc_exit_confirm_draw(void)\n{", &exit_len);
     CHECK(exitc != NULL, "nfc_mfc_exit_confirm_draw() is defined");
     CHECK(exit_len > 0U, "nfc_mfc_exit_confirm_draw()'s body could be bounded");
     if (exit_len > 0U) {
@@ -156,7 +156,7 @@ int main(void)
 
     /* --- Normal Read enters the dictionary display automatically ---------- */
     size_t read_update_len;
-    const char *read_update = bound_function(src, "static void nfc_read_gui_update(uint8_t param)\r\n{",
+    const char *read_update = bound_function(src, "static void nfc_read_gui_update(uint8_t param)\n{",
                                              &read_update_len);
     CHECK(read_update != NULL, "nfc_read_gui_update() is defined");
     CHECK(read_update_len > 0U, "nfc_read_gui_update()'s body could be bounded");
@@ -177,7 +177,7 @@ int main(void)
 
     /* --- BACK opens Exit/Stay (not a direct teardown) while mid-phase ------ */
     size_t kp_len;
-    const char *kp = bound_function(src, "static int nfc_read_kp_handler(void)\r\n{", &kp_len);
+    const char *kp = bound_function(src, "static int nfc_read_kp_handler(void)\n{", &kp_len);
     CHECK(kp != NULL, "nfc_read_kp_handler() is defined");
     CHECK(kp_len > 0U, "nfc_read_kp_handler()'s body could be bounded");
     if (kp_len > 0U) {
@@ -204,7 +204,7 @@ int main(void)
 
     /* --- nfc_read_gui_message(): deferred exit, never loses/misfires ------ */
     size_t msg_len;
-    const char *msg = bound_function(src, "static int nfc_read_gui_message(void)\r\n{", &msg_len);
+    const char *msg = bound_function(src, "static int nfc_read_gui_message(void)\n{", &msg_len);
     CHECK(msg != NULL, "nfc_read_gui_message() is defined");
     CHECK(msg_len > 0U, "nfc_read_gui_message()'s body could be bounded");
     if (msg_len > 0U) {
@@ -230,7 +230,7 @@ int main(void)
 
     /* --- Find Missing Keys reuses the shared renderer, not a duplicate ---- */
     size_t fk_len;
-    const char *fk = bound_function(src, "static void nfc_mfc_find_keys_draw(void)\r\n{", &fk_len);
+    const char *fk = bound_function(src, "static void nfc_mfc_find_keys_draw(void)\n{", &fk_len);
     CHECK(fk != NULL, "nfc_mfc_find_keys_draw() is defined");
     CHECK(fk_len > 0U, "nfc_mfc_find_keys_draw()'s body could be bounded");
     if (fk_len > 0U) {
@@ -244,7 +244,7 @@ int main(void)
               "no duplicated header text -- Find Missing Keys' own draw function doesn't re-implement the shared layout");
     }
     size_t fk_kp_len;
-    const char *fk_kp = bound_function(src, "static int nfc_mfc_find_keys_kp_handler(void)\r\n{", &fk_kp_len);
+    const char *fk_kp = bound_function(src, "static int nfc_mfc_find_keys_kp_handler(void)\n{", &fk_kp_len);
     CHECK(fk_kp != NULL, "nfc_mfc_find_keys_kp_handler() is defined");
     CHECK(fk_kp_len > 0U, "nfc_mfc_find_keys_kp_handler()'s body could be bounded");
     if (fk_kp_len > 0U) {
@@ -283,7 +283,7 @@ int main(void)
          * non-COMPLETE code that follows it in the same outer branch) must
          * now ALSO contain the ATQA/SAK block -- required: "Partial Info
          * includes UID/ATQA/SAK and counts". */
-        const char *partial_region = complete_start ? strstr(complete_start, "m1_u8g2_nextpage();\r\n            return;\r\n        }") : NULL;
+        const char *partial_region = complete_start ? strstr(complete_start, "m1_u8g2_nextpage();\n            return;\n        }") : NULL;
         size_t partial_len = (partial_region != NULL) ? (mfc_branch_len - (size_t)(partial_region - mfc_branch)) : 0U;
         CHECK(partial_region != NULL, "the non-COMPLETE code region (after COMPLETE's own return) could be located");
         if (partial_len > 0U) {
@@ -309,7 +309,7 @@ int main(void)
      * depending on whether it was opened from an ACTIVE live phase or a
      * FINISHED result, tracked via s_exit_confirm_from_finished_result. --- */
     size_t kp2_len;
-    const char *kp2 = bound_function(src, "static int nfc_read_kp_handler(void)\r\n{", &kp2_len);
+    const char *kp2 = bound_function(src, "static int nfc_read_kp_handler(void)\n{", &kp2_len);
     CHECK(kp2 != NULL, "nfc_read_kp_handler() is defined");
     CHECK(kp2_len > 0U, "nfc_read_kp_handler()'s body could be bounded");
     if (kp2_len > 0U) {
@@ -318,13 +318,13 @@ int main(void)
 
         /* Required: "Partial Read BACK -> Exit confirmation", scoped to
          * MFC_OUTCOME_PARTIAL specifically. */
-        const char *partial_back = strstr(kp2, "p==NFC_READ_DISPLAY_PARAM_READING_COMPLETE\r\n");
+        const char *partial_back = strstr(kp2, "p==NFC_READ_DISPLAY_PARAM_READING_COMPLETE\n");
         CHECK(partial_back != NULL && partial_back < kp2 + kp2_len,
               "BACK has an explicit branch for p==NFC_READ_DISPLAY_PARAM_READING_COMPLETE");
         size_t partial_back_len = (partial_back != NULL) ? (size_t)((kp2 + kp2_len) - partial_back) : 0U;
-        /* Bound just this branch: up to its own closing "}\r\n\t\t\telse" that
+        /* Bound just this branch: up to its own closing "}\n\t\t\telse" that
          * starts the next sibling branch (the READING_READY catchall). */
-        const char *partial_back_end = (partial_back_len > 0U) ? strstr(partial_back, "\r\n\t\t\telse\r\n\t\t\t{") : NULL;
+        const char *partial_back_end = (partial_back_len > 0U) ? strstr(partial_back, "\n\t\t\telse\n\t\t\t{") : NULL;
         size_t partial_back_body_len = (partial_back_end != NULL) ? (size_t)(partial_back_end - partial_back) : 0U;
         CHECK(partial_back_body_len > 0U, "the READING_COMPLETE BACK branch's extent could be bounded (its own catchall sibling found)");
         if (partial_back_body_len > 0U) {
@@ -380,7 +380,7 @@ int main(void)
         const char *exit_branch = strstr(kp2, "if (s_exit_confirm_from_finished_result)");
         CHECK(exit_branch != NULL, "the LEFT/Exit handler branches on the confirm origin");
         if (exit_branch != NULL) {
-            const char *exit_branch_end = strstr(exit_branch, "\r\n\t\t\t\t}\r\n");
+            const char *exit_branch_end = strstr(exit_branch, "\n\t\t\t\t}\n");
             size_t exit_branch_len = (exit_branch_end != NULL) ? (size_t)(exit_branch_end - exit_branch) : 0U;
             CHECK(exit_branch_len > 0U, "the finished-result Exit branch's extent could be bounded");
             if (exit_branch_len > 0U) {
@@ -403,13 +403,13 @@ int main(void)
     /* Origin reset points: fresh session, view destruction. (Reset on the
      * Exit branches themselves is checked above via the exit_branch bounds.) */
     size_t create_len;
-    const char *create_fn = bound_function(src, "static void nfc_read_gui_create(uint8_t param)\r\n{", &create_len);
+    const char *create_fn = bound_function(src, "static void nfc_read_gui_create(uint8_t param)\n{", &create_len);
     CHECK(create_fn != NULL && create_len > 0U &&
           bounded_contains(create_fn, create_len, "s_exit_confirm_from_finished_result = false;"),
           "the confirm origin resets on every fresh Read session");
 
     size_t destroy_len;
-    const char *destroy_fn = bound_function(src, "static void nfc_read_gui_destroy(uint8_t param)\r\n{", &destroy_len);
+    const char *destroy_fn = bound_function(src, "static void nfc_read_gui_destroy(uint8_t param)\n{", &destroy_len);
     CHECK(destroy_fn != NULL && destroy_len > 0U &&
           bounded_contains(destroy_fn, destroy_len, "s_exit_confirm_from_finished_result = false;"),
           "the confirm origin resets on view destruction -- never carried into a later session");

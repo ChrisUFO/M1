@@ -19,7 +19,7 @@ OUTPUT_DIR="artifacts"
 # Derive the artifact stem from the single source of truth
 # (m1_csrc/m1_fw_update_bl.h) -- same macros CMakeLists.txt parses -- so the
 # copied artifacts always match the embedded firmware version.
-FW_VERSION_QUAD=$(sed -n 's/^#define FW_VERSION_\(MAJOR\|MINOR\|BUILD\|RC\)[[:space:]]*\([0-9][0-9]*\).*/\2/p' m1_csrc/m1_fw_update_bl.h | tr '\n' '.')
+FW_VERSION_QUAD=$(sed -nE 's/^#define FW_VERSION_(MAJOR|MINOR|BUILD|RC)[[:space:]]+([0-9]+).*/\2/p' m1_csrc/m1_fw_update_bl.h | tr '\n' '.')
 FW_VERSION_QUAD="${FW_VERSION_QUAD%.}"
 FW_FORK_TAG=$(sed -n 's/^#define FW_VERSION_FORK_TAG[[:space:]]*"\(.*\)".*/\1/p' m1_csrc/m1_fw_update_bl.h)
 if [ -z "$FW_VERSION_QUAD" ] || [ -z "$FW_FORK_TAG" ]; then

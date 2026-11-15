@@ -340,8 +340,8 @@ static void test_source_matches_shipped(void)
      * established parameter (used elsewhere in this file to return from a
      * submenu to an already-populated result) for showing existing
      * nfc_ctx data with no new RF action. --- */
-    CHECK(contains(m1nfc, "m1_uiView_display_switch(VIEW_MODE_NFC_READ, NFC_READ_DISPLAY_PARAM_READING_COMPLETE);\r\n            return 1;\r\n        }\r\n        s_unlock_ui_mode = 0;"),
-          "m1_nfc.c: the Unlocked-result OK action jumps to the already-complete read result, not a fresh read cycle (m1_nfc.c is CRLF)");
+    CHECK(contains(m1nfc, "m1_uiView_display_switch(VIEW_MODE_NFC_READ, NFC_READ_DISPLAY_PARAM_READING_COMPLETE);\n            return 1;\n        }\n        s_unlock_ui_mode = 0;"),
+          "m1_nfc.c: the Unlocked-result OK action jumps to the already-complete read result, not a fresh read cycle");
 
     /* --- CENTER+View action hint on the Unlocked! screen. Requirements 1-7
      * below, in order. --- */
@@ -363,10 +363,10 @@ static void test_source_matches_shipped(void)
          * and nfc_ctx_clear_t2t_credential() in prose, explaining what NOT
          * to do; scanning from the comment close excludes that prose so
          * only real code is checked) through its closing "return 1; }". */
-        const char *ok_start = strstr(m1nfc, "if (uk->state == NFC_UNLOCK_UNLOCKED) {\r\n            /* Show the read result");
+        const char *ok_start = strstr(m1nfc, "if (uk->state == NFC_UNLOCK_UNLOCKED) {\n            /* Show the read result");
         const char *comment_end = ok_start ? strstr(ok_start, "nothing cleared. */") : NULL;
         const char *code_start = comment_end ? (comment_end + strlen("nothing cleared. */")) : NULL;
-        const char *branch_end = code_start ? strstr(code_start, "return 1;\r\n        }") : NULL;
+        const char *branch_end = code_start ? strstr(code_start, "return 1;\n        }") : NULL;
         size_t branch_len = (code_start && branch_end) ? (size_t)(branch_end - code_start) : 0;
         ok_start = code_start;   /* subsequent memcpy uses the code-only range */
         char *br = NULL;
@@ -396,11 +396,11 @@ static void test_source_matches_shipped(void)
     /* 5. BACK on the result screen returns to the Unlock landing menu
      * (s_unlock_ui_mode = 0), unconditionally -- not gated on which
      * terminal state is showing. */
-    CHECK(contains(m1nfc, "if (b.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK) {\r\n        s_unlock_ui_mode = 0;\r\n        m1_uiView_display_update(0);\r\n        return 1;\r\n    }"),
+    CHECK(contains(m1nfc, "if (b.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK) {\n        s_unlock_ui_mode = 0;\n        m1_uiView_display_update(0);\n        return 1;\n    }"),
           "m1_nfc.c: 5. BACK on the result screen returns to the Unlock landing menu");
     /* 7. Unsuccessful-unlock states are completely unchanged: still the
      * plain "BACK to return" line, no footer, no icon. */
-    CHECK(contains(m1nfc, "} else {\r\n        u8g2_DrawStr(&m1_u8g2, 2, 42, \"BACK to return\");\r\n    }\r\n}"),
+    CHECK(contains(m1nfc, "} else {\n        u8g2_DrawStr(&m1_u8g2, 2, 42, \"BACK to return\");\n    }\n}"),
           "m1_nfc.c: 7. unsuccessful-unlock states keep the unchanged plain \"BACK to return\" text, no new footer");
 
     free(poller); free(listener); free(m1nfc);

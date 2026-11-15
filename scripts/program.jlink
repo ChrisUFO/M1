@@ -3,7 +3,7 @@ speed auto
 device STM32H573VI
 connect 
 erase
-loadbin ./out/build/gcc-14_2_build-release/MonstaTek_M1_v0800.bin, 0x08000000
+loadbin ./out/build/gcc-14_2_build-release/M1_v0.9.0.0-UFO.bin, 0x08000000
 r
 g
 exit

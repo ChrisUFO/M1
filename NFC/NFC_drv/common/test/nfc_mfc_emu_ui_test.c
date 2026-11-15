@@ -70,11 +70,11 @@ int main(void)
     CHECK(src != NULL, "m1_nfc.c readable");
     if (src != NULL) {
         const char *helper  = strstr(src, "static void nfc_mfc_draw_refusal");
-        /* "...)\r\n{" anchors to the DEFINITION, not the earlier forward
+        /* "...)\n{" anchors to the DEFINITION, not the earlier forward
          * declaration ("...);") -- both share the same leading text.
-         * m1_nfc.c uses CRLF line endings throughout. */
-        const char *update  = strstr(src, "static void nfc_mfc_emu_gui_update(uint8_t param)\r\n{");
-        const char *msg_fn  = strstr(src, "static int nfc_mfc_emu_gui_message(void)\r\n{");
+         * m1_nfc.c uses LF line endings throughout. */
+        const char *update  = strstr(src, "static void nfc_mfc_emu_gui_update(uint8_t param)\n{");
+        const char *msg_fn  = strstr(src, "static int nfc_mfc_emu_gui_message(void)\n{");
         size_t      update_len = (update != NULL && msg_fn != NULL && msg_fn > update)
                                   ? (size_t)(msg_fn - update) : 0U;
         CHECK(helper != NULL, "dedicated MFC refusal renderer exists");

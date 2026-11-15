@@ -29,3 +29,9 @@
 *.gz -text
 *.db -text
 *.pyc -text
+# Binary test/release fixtures: never normalize, never treat as text. These
+# survive git's NUL-based content heuristic today, but a future ASCII-only
+# fixture (e.g. a crafted invalid *.m1pkg) would be EOL-normalized or
+# text-merged without this explicit rule.
+*.m1pkg -text
+*.ods -text

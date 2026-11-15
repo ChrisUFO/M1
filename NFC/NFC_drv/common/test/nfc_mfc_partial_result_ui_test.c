@@ -127,13 +127,13 @@ int main(void)
     }
 
     /* --- 2. Action menu: Find Missing Keys -------------------------------- */
-    /* Anchored on "...)\r\n{" (m1_nfc.c uses CRLF throughout) to find the
+    /* Anchored on "...)\n{" (m1_nfc.c uses LF throughout) to find the
      * DEFINITION, not the earlier forward declaration (which ends in ";"
      * instead) -- both share the same multi-line signature text otherwise. */
     const char *menu_fn = strstr(src,
-        "static uint8_t nfc_build_action_menu(const char *labels[NFC_MENU_MAX_ITEMS],\r\n"
-        "                                     uint8_t      actions[NFC_MENU_MAX_ITEMS])\r\n{");
-    const char *menu_fn_end = menu_fn ? strstr(menu_fn + 1, "\r\nstatic ") : NULL;
+        "static uint8_t nfc_build_action_menu(const char *labels[NFC_MENU_MAX_ITEMS],\n"
+        "                                     uint8_t      actions[NFC_MENU_MAX_ITEMS])\n{");
+    const char *menu_fn_end = menu_fn ? strstr(menu_fn + 1, "\nstatic ") : NULL;
     size_t menu_fn_len = (menu_fn != NULL && menu_fn_end != NULL && menu_fn_end > menu_fn)
                          ? (size_t)(menu_fn_end - menu_fn) : 0U;
     CHECK(menu_fn != NULL, "nfc_build_action_menu() is defined");

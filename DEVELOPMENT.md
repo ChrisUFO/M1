@@ -40,7 +40,8 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 This fork tracks `upstream` (MonstaTek/M1). The fork's history was attached to
 the upstream line with a one-time **ancestry graft** (`git merge -s ours`):
 the tree at the graft is byte-identical to the pinned upstream base
-`2af1f8a339dbe629f36a0551de4293b161179b71` (upstream 0.8.1.0), while the
+`2af1f8a339dbe629f36a0551de4293b161179b71` (upstream 0.8.1.0) except
+branch-added files (`.gitattributes`, the merge evidence doc), while the
 entire legacy fork history (tagged `legacy/v0.8.11`, immutable) is recorded
 as already merged. Consequences:
 

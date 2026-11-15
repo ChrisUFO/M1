@@ -69,8 +69,8 @@ static char *read_all(const char *path)
     return s;
 }
 
-/* Brace-matched body bounding, anchored at a literal "...)\r\n{" (or
- * "...)\r\n\t\t\t{" for a nested block) signature -- same technique as
+/* Brace-matched body bounding, anchored at a literal "...)\n{" (or
+ * "...)\n\t\t\t{" for a nested block) signature -- same technique as
  * nfc_saved_stack_test.c, robust to nested braces inside the body. */
 static const char *bound_block(const char *src, const char *sig, size_t *out_len)
 {
@@ -121,13 +121,13 @@ int main(void)
      * be satisfied by an unrelated return/switch call elsewhere in the same
      * handler. */
     size_t fn_len;
-    const char *fn = bound_block(src, "static int nfc_read_more_kp_handler(void)\r\n{", &fn_len);
+    const char *fn = bound_block(src, "static int nfc_read_more_kp_handler(void)\n{", &fn_len);
     CHECK(fn != NULL, "nfc_read_more_kp_handler(void) is defined");
     CHECK(fn_len > 0U, "nfc_read_more_kp_handler()'s body could be brace-bounded");
 
     if (fn_len > 0U) {
         size_t load_len;
-        const char *load_block = bound_block(fn, "\t\t\tif (is_load_file)\r\n", &load_len);
+        const char *load_block = bound_block(fn, "\t\t\tif (is_load_file)\n", &load_len);
         CHECK(load_block != NULL && load_len > 0U,
               "the LOAD_FILE BACK sub-block inside nfc_read_more_kp_handler() could be brace-bounded");
 
@@ -151,7 +151,7 @@ int main(void)
         size_t live_len = 0U;
         const char *live_block = NULL;
         if (else_anchor != NULL) {
-            live_block = bound_block(else_anchor, "\r\n\t\t\telse\r\n", &live_len);
+            live_block = bound_block(else_anchor, "\n\t\t\telse\n", &live_len);
         }
         CHECK(live_block != NULL && live_len > 0U,
               "the LIVE_CARD (else) BACK sub-block could be brace-bounded");
@@ -175,7 +175,7 @@ int main(void)
      * (a distinct function/view, not touched by this fix) still returns to
      * the action/submenu screen, "the Saved context". */
     size_t rename_len;
-    const char *rename_fn = bound_block(src, "static int nfc_rename_kp_handler(void)\r\n{", &rename_len);
+    const char *rename_fn = bound_block(src, "static int nfc_rename_kp_handler(void)\n{", &rename_len);
     CHECK(rename_fn != NULL && rename_len > 0U, "nfc_rename_kp_handler(void) is defined and bounded");
     if (rename_fn != NULL && rename_len > 0U) {
         CHECK(bounded_contains(rename_fn, rename_len,
@@ -189,7 +189,7 @@ int main(void)
      * DIFFERENT from the LOAD_FILE action-screen fix above: the list is the
      * top of the Saved workflow, so its own BACK legitimately leaves it. */
     size_t msg_len;
-    const char *msg_fn = bound_block(src, "static int nfc_saved_browse_gui_message(void)\r\n{", &msg_len);
+    const char *msg_fn = bound_block(src, "static int nfc_saved_browse_gui_message(void)\n{", &msg_len);
     CHECK(msg_fn != NULL && msg_len > 0U, "nfc_saved_browse_gui_message(void) is defined and bounded");
     if (msg_fn != NULL && msg_len > 0U) {
         CHECK(bounded_contains(msg_fn, msg_len, "Q_EVENT_MENU_EXIT"),
@@ -213,7 +213,7 @@ int main(void)
         CHECK(uiview_src != NULL, "m1_csrc/uiView.c readable");
         if (uiview_src != NULL) {
             size_t switch_len;
-            /* uiView.c uses plain LF line endings, unlike m1_nfc.c's CRLF. */
+            /* uiView.c, like every tracked text file, uses LF line endings. */
             const char *switch_fn = bound_block(uiview_src,
                 "void m1_uiView_display_switch(uint8_t mode, uint32_t lParam)\n{", &switch_len);
             CHECK(switch_fn != NULL && switch_len > 0U,

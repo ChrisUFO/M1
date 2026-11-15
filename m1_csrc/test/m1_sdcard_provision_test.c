@@ -273,7 +273,7 @@ static void test_source_wiring(void)
     CHECK(contains(sdcard_c, "sdcard_ctl.status = SD_access_OK;") &&
           contains(sdcard_c, "m1_sdcard_provision_canonical();"),
           "provisioning call site sits in the SD_access_OK success branch of m1_sdcard_mount()");
-    CHECK(!contains(sdcard_c, "SD_access_NoFS;\r\n\t\t\tm1_sdcard_provision_canonical"),
+    CHECK(!contains(sdcard_c, "SD_access_NoFS;\n\t\t\tm1_sdcard_provision_canonical"),
           "provisioning is not reachable from the NoFS branch");
 
     /* req 8: USB MSC ownership suppresses provisioning. */
@@ -284,14 +284,14 @@ static void test_source_wiring(void)
     /* req 9: returning ownership from USB MSC triggers provisioning --
      * both m1_storage.c reclaim paths still call m1_sdcard_mount() (which
      * now provisions internally) immediately after dropping MSC ownership. */
-    CHECK(contains(storage_c, "usbmsc_sd_enable = false;\r\n            m1_sdcard_mount();") ||
-          contains(storage_c, "usbmsc_sd_enable = false;   /* drop ownership before remount */\r\n                m1_sdcard_mount();"),
+    CHECK(contains(storage_c, "usbmsc_sd_enable = false;\n            m1_sdcard_mount();") ||
+          contains(storage_c, "usbmsc_sd_enable = false;   /* drop ownership before remount */\n                m1_sdcard_mount();"),
           "at least one USB-MSC-reclaim path drops ownership then calls m1_sdcard_mount() immediately");
 
     /* req 10: card insertion/remount triggers provisioning -- unchanged,
      * pre-existing wiring: the CONNECTED-event handler's remount path
      * still calls m1_sdcard_mount(), which now provisions on success. */
-    CHECK(contains(sdcard_c, "m1_sdcard_unmount();\r\n\t\t\t\t\t\t\tm1_sdcard_mount();") ||
+    CHECK(contains(sdcard_c, "m1_sdcard_unmount();\n\t\t\t\t\t\t\tm1_sdcard_mount();") ||
           contains(sdcard_c, "m1_sdcard_mount();"),
           "card insertion/remount handling still calls m1_sdcard_mount()");
 

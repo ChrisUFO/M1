@@ -80,9 +80,9 @@ int main(void)
     }
 
     /* --- storage_mount()/storage_unmount(): no definition, no prototype, no live dispatch --- */
-    CHECK(!contains(storage, "storage_mount(void);") && !contains(storage, "storage_mount(void)\r\n"),
+    CHECK(!contains(storage, "storage_mount(void);") && !contains(storage, "storage_mount(void)\n"),
           "no storage_mount() prototype or function-signature line remains in m1_storage.c");
-    CHECK(!contains(storage, "storage_unmount(void);") && !contains(storage, "storage_unmount(void)\r\n"),
+    CHECK(!contains(storage, "storage_unmount(void);") && !contains(storage, "storage_unmount(void)\n"),
           "no storage_unmount() prototype or function-signature line remains in m1_storage.c");
     CHECK(!contains(storage_h, "storage_mount(void);"), "storage_mount() prototype is removed from m1_storage.h");
     CHECK(!contains(storage_h, "storage_unmount(void);"), "storage_unmount() prototype is removed from m1_storage.h");
@@ -94,7 +94,7 @@ int main(void)
 
     /* --- What must survive untouched --- */
     CHECK(contains(storage, "void storage_explore(void);"), "storage_explore() prototype survives (still called by boot/home LEFT)");
-    CHECK(contains(storage, "storage_explore(void)\r\n{"), "storage_explore() function body survives intact");
+    CHECK(contains(storage, "storage_explore(void)\n{"), "storage_explore() function body survives intact");
     CHECK(contains(menu, "m1_device_stat.sub_func = storage_explore;"), "boot/home LEFT still dispatches storage_explore() directly");
     CHECK(contains(storage, "void  menu_setting_storage_exit(void)") || contains(storage, "void menu_setting_storage_exit(void)"),
           "menu_setting_storage_exit() (still used by the surviving About/Format items) survives");
