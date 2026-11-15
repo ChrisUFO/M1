@@ -22,9 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fork: virgin-baseline evidence archive for the adopted base
   (`documentation/merge1-baseline-evidence.md`)
 - Fork: merge ledger (`docs/merge/LEDGER.md`, issue #38) dispositioning all 113
-  fork-changed files against the adopted base — 10 retained, 83 carried by named
-  follow-up patches, 4 upstream-equivalent, 16 intentionally dropped with reasons,
-  and 33 tagged warning-fix recovery sites for the scoped -Werror work — with
+  fork-changed files against the adopted base — 10 retained, 84 carried by named
+  follow-up patches, 4 upstream-equivalent, 15 intentionally dropped with reasons,
+  and 34 tagged warning-fix recovery sites for the scoped -Werror work — with
   re-captured IR-map/BKP-collision evidence and a zero-unknown gate
   (`cmake/m1_01/verify_merge_ledger.sh`); the `### Removed` entry below now
   resolves through it

@@ -20,7 +20,7 @@ Disposition vocabulary (exactly one per file):
 | Disposition | Meaning |
 |---|---|
 | `retained-by-upstream` | The fork-relevant content is already present in the new base — written by upstream, or re-landed onto it by the PR-1/PR-2 foundation work. Evidence: `main` file:line. |
-| `carried-by-patch` | Content the new base lacks and worth keeping; names the P4 carry issue (#39–#44/#46) and cites fork origin SHAs. |
+| `carried-by-patch` | Content the new base lacks and worth keeping; names the P4 carry issue (#39–#44/#46/#52) and cites fork origin SHAs. |
 | `upstream-equivalent` | The file differs, but upstream achieves the fork's intent differently/better on the new base; evidence cited on both sides. |
 | `intentionally-dropped` | Not carried; written reason below against the maintainer's evidentiary bar. |
 
@@ -39,11 +39,11 @@ mines exactly this tag.
 | Both-changed (also touched upstream since fork point) | 83 |
 | Ours-only (upstream untouched since fork point) | 30 |
 | retained-by-upstream | 10 |
-| carried-by-patch | 83 |
+| carried-by-patch | 84 |
 | upstream-equivalent | 4 |
-| intentionally-dropped | 16 |
+| intentionally-dropped | 15 |
 | unknown (must be 0 — gate) | 0 |
-| Entries tagged `recovered-warning-fix` (feed for #39) | 33 |
+| Entries tagged `recovered-warning-fix` (feed for #39) | 34 |
 
 *Regenerate deterministically with `python tools/gen_merge_ledger.py`; the DISPOSITIONS table in that script is the single source of truth. Gate: `bash cmake/m1_01/verify_merge_ledger.sh`.*
 
@@ -396,14 +396,19 @@ resolves via the #46 rename.
 
 - Status: M (both-changed; -w delta +102/-111; 23 hunks)
 - Disposition: **intentionally-dropped**
+- Tags: recovered-warning-fix
 - Fork origin: a55968b Infrared Universal Remote: Dashboard, Pagination, Search & Favorites (#18)
 - Hunk summary (-w): `@@ -1,16 +1,16 @@`; `@@ -20,7 +20,6 @@ typedef struct {`; `@@ -28,9 +27,9 @@ typedef struct {`; *+20 more hunks*
 
-Fork delta = clang-format pass only: include sort + brace/indent reformat of
-unchanged logic (101 added vs 106 removed -w lines are all reformat; verified by
-hunk inspection — str_ltrim/str_rtrim/hex_nibble/parse_* bodies are identical modulo
-formatting). Restyle residue; upstream evolved the file on the new base
-(+846/-122 vs legacy) and that is the maintained shape.
+Fork delta = clang-format pass (include sort + brace/indent reformat of
+unchanged logic) PLUS two genuine pointer-sign casts the restyle swept in:
+`parse_device_type((char *)data.buf, faminfo)` and
+`platformLog(..., (char *)data.buf)` (legacy nfc_storage.c:275-276; the
+fork point passes the raw `uint8_t data.buf` at :280-281). Both still
+apply on the new base: main:NFC/NFC_drv/common/nfc_storage.c:519-520 has
+the uncast calls — tagged `recovered-warning-fix` for #39 to re-apply.
+The restyle residue itself is dropped: upstream evolved the file on the
+new base (+846/-122 vs legacy) and that is the maintained shape.
 
 
 ### `NFC/NFC_drv/legacy/nfc_listener.c`
@@ -465,15 +470,31 @@ ranking preserved in Phase 3 below.
 ### `Sub_Ghz/m1_sub_ghz_api.c`
 
 - Status: M (both-changed; -w delta +174/-342; 48 hunks)
-- Disposition: **intentionally-dropped**
+- Disposition: **carried-by-patch**
+- Carry patch: #52
 - Fork origin: d10a6f9 refactor: remove FCC test placeholders and associated dead code (#28), 811b346 build: complete Zero-Warning Core initiative (Phases 1-5) (#19)
 - Hunk summary (-w): `@@ -12,30 +12,31 @@`; `@@ -45,7 +46,6 @@`; `@@ -62,48 +62,53 @@ static union si446x_cmd_reply_union si446x_cmd;`; *+45 more hunks*
 
-Fork delta = clang-format restyle (brace style, line wraps) plus removal of
-`SI446x_Start_Tx_CW` (FCC test helper, origin d10a6f9 #28). Upstream retains
-Start_Tx_CW on the new base (`git grep -c Start_Tx_CW main -- Sub_Ghz/` = 4 hits
-across api.c/h). Same dead-code-cleanup-not-worth-churn reasoning as m1_lib.c;
-the SI4463 command wrappers themselves are unchanged semantically.
+Fork delta is NOT pure restyle (hunk-verified). Two genuine functional
+hunks, both still applicable on main: (a) `SI446x_Wait_CTS()` bounds the
+CTS busy-wait — `for (uint32_t timeout = 0xFFFF; timeout > 0 && ...; timeout--)`
+replacing the unbounded `while (HAL_GPIO_ReadPin(...))` (legacy :179-182;
+main:Sub_Ghz/m1_sub_ghz_api.c:164-170 still unbounded); (b) an `assert(0)`
+unreachable-guard in `SI446x_Change_Radio_Setting()`'s `default:` case
+(legacy :791; main:...:860 has a bare `break`). Both hang-proof the radio
+SPI path — carried under #52 (port stability hardening carry). Dropped
+hunks: the FCC-test-helper removal family (origin d10a6f9 #28) —
+`SI446x_Start_Tx_CW`, `SI446x_GPIO_Config`, the `Radio_Test_Configuration_
+Data_Array`/`RadioConfiguration_Test` defines and the
+`m1_sub_ghz_xxx_tx_test.h` include; main retains them all (main api.c:138,
+:148, :673) and the same dead-code-cleanup-not-worth-churn reasoning as
+m1_lib.c applies. Non-finding recorded for fidelity: the `(uint8_t *)
+Radio_IRcal_Sequence_*` and `(uint16_t)si446x_cmd_buffer[6/7]` cast lines
+are inherited from the fork point (93acd751:667-668/:404-405), rewrapped
+only — NOT fork additions, hence no `recovered-warning-fix` tag here. The
+RadioConfigList pointer table itself keeps the same 9 band entries on both
+sides (reformat only; the adjacent Test-config defines are the dropped
+d10a6f9 hunks above).
 
 
 ### `Sub_Ghz/m1_sub_ghz_api.h`
@@ -483,8 +504,11 @@ the SI4463 command wrappers themselves are unchanged semantically.
 - Fork origin: d10a6f9 refactor: remove FCC test placeholders and associated dead code (#28)
 - Hunk summary (-w): `@@ -13,12 +13,15 @@`; `@@ -39,7 +42,8 @@`; `@@ -57,8 +61,7 @@`; *+3 more hunks*
 
-Companion header of the above: restyle + `SI446x_Start_Tx_CW` proto removal.
-Upstream keeps the proto (main:Sub_Ghz/m1_sub_ghz_api.h). Not carried.
+Companion header: clang-format rewrap, added `#include <stdbool.h>` /
+`<stdint.h>`, and the `SI446x_Start_Tx_CW` proto commented out with a v0.8.6
+hygiene note. Upstream keeps the proto (main:Sub_Ghz/m1_sub_ghz_api.h). The
+.c's two carried hunks (bounded Wait_CTS, assert(0) guard under #52) change
+no signature — the header needs nothing. Not carried.
 
 
 ### `Sub_Ghz/protocols/m1_secplus_v2_decode.c`
@@ -608,13 +632,13 @@ merge of this file for no behavioral gain.
 
 - Status: A (ours-only; -w delta +97/-0; 1 hunks)
 - Disposition: **carried-by-patch**
-- Carry patch: follow-up carry (issue TBD - see Ledger summary; recommend one 'port stability hardening + small fixes' issue)
+- Carry patch: #52
 - Fork origin: d3a0208 fix: harden stability paths for issues #22, #26, #27 (#34)
 - Hunk summary (-w): `@@ -0,0 +1,97 @@`
 
 Fork's validation record for the d3a0208 stability hardening (97 lines): test
 matrix and results for #22/#26/#27. Evidence companion of the stability carry —
-re-landed (re-run) when that carry lands on the new base.
+re-landed (re-run) when the #52 carry lands on the new base.
 
 
 ### `lfrfid/lfrfid.c`
@@ -904,10 +928,18 @@ unused-variable; plus one genuine overflow-safe copy fix.
 - Fork origin: d10a6f9 refactor: remove FCC test placeholders and associated dead code (#28), 811b346 build: complete Zero-Warning Core initiative (Phases 1-5) (#19)
 - Hunk summary (-w): `@@ -34,42 +34,49 @@`
 
-Fork delta = pure clang-format line rewrapping of esp-hosted Kconfig defines
-(backslash continuations) plus include sort. Zero semantic change
-(`git diff -w 93acd751 legacy/v0.8.11 -- m1_csrc/m1_esp_hosted_config.h` hunks are
-all rewrap). Restyle residue; not carried.
+Fork delta = clang-format rewrap of the esp-hosted Kconfig defines PLUS two
+genuine hunks (hunk-verified): `#ifndef/#endif` guards around both
+`CONFIG_WIFI_PROV_SCAN_MAX_ENTRIES` and `CONFIG_WIFI_PROV_AUTOSTOP_TIMEOUT`
+(legacy :71-73, :77-79), and deletion of the `void test_get_available_wifi(void);`
+prototype (present at fork point :72). Disposition: the guards are genuine
+include hygiene still absent on main (main:m1_csrc/m1_esp_hosted_config.h:74-77
+unguarded) — but nothing else in-tree defines `CONFIG_WIFI_PROV_*`, so no
+redefinition warning can fire today; not tagged `recovered-warning-fix` (no
+warning class is actually recovered). Re-add the guards only if real
+esp-hosted SDK headers ever land. The proto deletion is not applicable: main
+still declares it (main:...:80) with a live definition and call site
+(main:m1_esp_hosted_dummy.c:51, main:m1_cli.c:1107). Dropped.
 
 
 ### `m1_csrc/m1_esp_hosted_dummy.c`
@@ -917,9 +949,15 @@ all rewrap). Restyle residue; not carried.
 - Fork origin: d10a6f9 refactor: remove FCC test placeholders and associated dead code (#28)
 - Hunk summary (-w): `@@ -10,9 +10,9 @@`; `@@ -20,14 +20,11 @@`; `@@ -35,32 +32,9 @@ void esp32_app_init(void);`
 
-Fork delta = include reorder and whitespace only
-(`git diff -w legacy/v0.8.11 main -- m1_csrc/m1_esp_hosted_dummy.c` shows the same
-lines in different order). Restyle residue; not carried.
+Fork delta (`git diff -w 93acd751 legacy/v0.8.11 -- m1_csrc/m1_esp_hosted_dummy.c`,
+hunk-verified) = include/whitespace churn PLUS deletions: the
+`test_get_available_wifi()` stub definition (fork point :51) with its
+prototype (:29), one of the two duplicate `esp32_app_init` protos (fork
+point :30), and `esp32_app_init()` reduced to a `{ ; }` stub (legacy :40).
+Drop stands on the new base, honestly stated: main actively defines and
+calls the removed function (main:m1_esp_hosted_dummy.c:51 definition,
+main:m1_cli.c:1107 caller) and keeps the protos (main:...:28-30) — the
+fork's deletion was its own dead-code choice, not a fix the base lacks.
 
 
 ### `m1_csrc/m1_file_browser.c`
@@ -1062,7 +1100,7 @@ infrared menu on main is the per-device-class browser (main:m1_menu.c:180-195).
 
 - Status: M (both-changed; -w delta +99/-10; 6 hunks)
 - Disposition: **carried-by-patch**
-- Carry patch: follow-up carry (issue TBD - see Ledger summary; recommend one 'port stability hardening + small fixes' issue)
+- Carry patch: #52
 - Fork origin: d3a0208 fix: harden stability paths for issues #22, #26, #27 (#34), 811b346 build: complete Zero-Warning Core initiative (Phases 1-5) (#19)
 - Hunk summary (-w): `@@ -129,7 +129,7 @@ void EXTI15_IRQHandler(void)`; `@@ -271,7 +271,10 @@ void USART1_IRQHandler(void)`; `@@ -323,6 +326,79 @@ void GPDMA1_Channel2_IRQHandler(void)`; *+3 more hunks*
 
@@ -1070,8 +1108,8 @@ Carried hunks: (a) `GPDMA1_Channel3_IRQHandler` — the Sub-GHz Rx DMA ISR
 (79 new lines, origin d3a0208 #22: deferred-RTOS-context-switching under heavy
 Sub-GHz load); (b) USART1 ISR notify-value packing fix (task id in high byte).
 Upstream's int_hdl on main has neither (grep GPDMA1_Channel3 on main = no Ch3
-handler). Belongs with the Sub-GHz Rx DMA carry (m1_sub_ghz.c entry) — no dedicated
-P4 issue exists yet; flagged for the Follow-ups milestone.
+handler). Belongs with the Sub-GHz Rx DMA carry (m1_sub_ghz.c entry) — carried
+under #52 (port stability hardening + small fixes).
 
 
 ### `m1_csrc/m1_ir_universal.c`
@@ -1328,13 +1366,14 @@ separate carry, see above.) Applicability re-checked at carry time.
 
 - Status: M (ours-only; -w delta +4/-7; 1 hunks)
 - Disposition: **carried-by-patch**
-- Carry patch: follow-up carry (issue TBD - see Ledger summary; recommend one 'port stability hardening + small fixes' issue)
+- Carry patch: #52
 - Fork origin: 811b346 build: complete Zero-Warning Core initiative (Phases 1-5) (#19), 78d6b86 Fix buffer overflow build errors in m1_sub_ghz.c and m1_sdcard_man.h
 - Hunk summary (-w): `@@ -42,25 +42,22 @@`
 
 Fork widens `dat_filename[64] -> [256]` in S_M1_SDM_DatFileInfo_t (origin 78d6b86:
 buffer-overflow fix in the SD log-manager filename buffer). Main's struct still has
-64. Genuine bug fix; belongs to the small-fix carry sweep (flagged, no P4 vehicle).
+64 (main:m1_csrc/m1_sdcard_man.h:52) — genuine bug fix still broken on the new
+base; carried under #52 (port stability hardening + small fixes).
 Typedef reformat hunks dropped.
 
 
@@ -1376,15 +1415,15 @@ pointer-sign.
 
 - Status: M (both-changed; -w delta +991/-842; 123 hunks)
 - Disposition: **carried-by-patch**
-- Carry patch: follow-up carry (issue TBD - see Ledger summary; recommend one 'port stability hardening + small fixes' issue)
+- Carry patch: #52
 - Fork origin: d3a0208 fix: harden stability paths for issues #22, #26, #27 (#34), d10a6f9 refactor: remove FCC test placeholders and associated dead code (#28), 811b346 build: complete Zero-Warning Core initiative (Phases 1-5) (#19), a55968b Infrared Universal Remote: Dashboard, Pagination, Search & Favorites (#18), 78d6b86 Fix buffer overflow build errors in m1_sub_ghz.c and m1_sdcard_man.h
 - Hunk summary (-w): `@@ -12,27 +12,29 @@`; `@@ -42,7 +44,8 @@`; `@@ -57,6 +60,9 @@`; *+120 more hunks*
 
 Carried hunks: Sub-GHz Rx DMA double-buffering — SUBGHZ_RX_DMA_BLOCK_SAMPLES/
 BUFFER_SAMPLES, subghz_rx_dma_buffer, restart-from-ISR plumbing, throttle/drop/
 half/total counters (origin d3a0208 #22). All absent on main. This is the ISR-load
-stability work behind closed fork issues #22/#26/#27; no P4 vehicle yet — flagged
-for the Follow-ups milestone. Dropped hunks: the `sub_ghz_radio_settings` stub
+stability work behind closed fork issues #22/#26/#27 — carried under #52
+(port stability hardening + small fixes). Dropped hunks: the `sub_ghz_radio_settings` stub
 deletion is moot (Phase 3 — the stub itself is dropped), clang-format hunks not
 carried.
 
@@ -1393,13 +1432,13 @@ carried.
 
 - Status: M (both-changed; -w delta +12/-0; 2 hunks)
 - Disposition: **carried-by-patch**
-- Carry patch: follow-up carry (issue TBD - see Ledger summary; recommend one 'port stability hardening + small fixes' issue)
+- Carry patch: #52
 - Fork origin: d3a0208 fix: harden stability paths for issues #22, #26, #27 (#34)
 - Hunk summary (-w): `@@ -46,6 +46,7 @@`; `@@ -139,12 +140,23 @@ void sub_ghz_replay(void);`
 
 Fork adds the Rx DMA surface: SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN,
 `subghz_rx_dma_restart_from_isr()`, hdma_subghz_rx + counter externs. Carried with
-m1_sub_ghz.c (follow-up stability carry).
+m1_sub_ghz.c under #52 (port stability hardening carry).
 
 
 ### `m1_csrc/m1_sys_init.c`
@@ -1700,7 +1739,8 @@ carried with #40.
   in lfrfid.c task init -> #39. No functional LF-RFID behavior change existed.
 - NFC: fork deltas are the `nfc_*`->`m1_nfc_*` renames + hygiene on code upstream
   has since rewritten wholesale (m1_nfc.c +6652/-692 vs legacy; nfc_storage.c
-  restyle-only) -> `upstream-equivalent`; the case fixes in nfc_file.c /
+  restyle + two `(char *)` pointer-sign casts, tagged in its entry below) ->
+  `upstream-equivalent`; the case fixes in nfc_file.c /
   nfc_listener.c / nfc_poller.c -> carried under #46. **Nothing functional
   dies**: upstream's NFC stack supersedes, and the genuine small fixes have
   carry vehicles.
@@ -1722,12 +1762,13 @@ it where needed.
 
 The Zero-Warning Core initiative (811b346) mixed clang-format sweeps with genuine
 fixes. Every genuine fix found in this audit is tagged `recovered-warning-fix`
-above (33 file entries; per-entry hunks cite the warning class and the fix
+above (34 file entries; per-entry hunks cite the warning class and the fix
 summary). PR-4 (#39) mines exactly this tag and re-applies the fixes as isolated
 commits against the new base, re-verifying applicability per file since upstream
 evolved several of them. The restyle itself is `intentionally-dropped` everywhere
-(see the nfc_storage.c / m1_sub_ghz_api.c / m1_esp_hosted_config.h entries for
-representative reasoning).
+(see the nfc_storage.c / m1_esp_hosted_config.h entries for representative
+reasoning); the non-restyle hunks found in the restyle family are either tagged
+(nfc_storage.c) or explicitly carried (m1_sub_ghz_api.c -> #52).
 
 ## Feature verdicts — #7 / #4 / #3 / #11 (with corrected wiring status)
 
@@ -1801,7 +1842,7 @@ $ git grep -c "IRMP_NEC" main -- m1_csrc/m1_infrared.c
 ```
 
 **Verdict: single-source HOLDS on both trees** — fork: `m1_ir_universal.c:83`
-(`ir_proto_map[]`, 24 entries); new base: `m1_ir_remotes.c:398`
+(`ir_proto_map[]`, 21 entries); new base: `m1_ir_remotes.c:398`
 (`ir_protocols_mapping_table[]`). No duplicate map exists in either tree.
 
 **Substantive difference the audit surfaced** (feeds #43, not a new source): the
