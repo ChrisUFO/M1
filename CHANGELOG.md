@@ -7,6 +7,20 @@ All notable changes to the M1 project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to firmware versioning (MAJOR.MINOR.BUILD.RC).
 
+## [v0.9.0] - 2026-11-15
+
+### Added
+
+- **Firmware Version Comparator Test**: `tools/test_fw_version_compare.py` models the bootloader rollback-gate u32 packing; asserts `0.9.0.0 > 0.8.11 == 0.8.11.0 > 0.8.1.0` and that the `-UFO` fork tag is display-only (excluded from numeric comparison).
+- **Line-Ending Policy**: `.gitattributes` normalizes text files to LF in-repo (`* text=auto`), pins `*.sh` to LF and `*.bat` to CRLF, and marks binary types — including `*.hex` — as `-text`. Repository renormalization verified as a content no-op.
+
+### Changed
+
+- **Version Namespace Freeze**: Fork line frozen at `0.9.0.0-UFO`; the legacy `0.8.11` line is archived under the immutable tag `legacy/v0.8.11` (see `DEVELOPMENT.md` tag policy).
+- **Artifact Naming**: CMake derives the project/artifact stem from all four version fields plus the fork tag — `M1_v0.9.0.0-UFO.bin/.hex/.elf` (the RC field was previously dropped from the name).
+- **Flashing Script**: `scripts/program.jlink` now loads `M1_v0.9.0.0-UFO.bin` (was a stale pre-fork artifact name).
+- **Artifact Hygiene**: `.gitignore` extended (`CMakeFiles/`, `__pycache__/`, `build_error.log`, `review_comments*.json`).
+
 ## [v0.8.11] - 2026-02-21
 
 ### Added

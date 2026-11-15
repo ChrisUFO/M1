@@ -143,20 +143,35 @@ This project uses **firmware versioning** (MAJOR.MINOR.BUILD.RC) rather than sem
 
 ### Version Definition
 
-Version is defined in `m1_csrc/m1_fw_update_bl.h`:
+Version is defined in a single place — `m1_csrc/m1_fw_update_bl.h` — and all
+consumers derive from these macros (CMake artifact naming, CLI output, the
+bootloader config struct):
+
 ```c
 #define FW_VERSION_MAJOR    0
-#define FW_VERSION_MINOR    8
-#define FW_VERSION_BUILD    9
+#define FW_VERSION_MINOR    9
+#define FW_VERSION_BUILD    0
 #define FW_VERSION_RC       0
 #define FW_VERSION_FORK_TAG "UFO"
 ```
 
 ### Version Format
 
-- **Filename:** `M1_v{MAJOR}.{MINOR}.{BUILD}-UFO.bin`
-- **Example:** `M1_v0.8.11-UFO.bin`
-- **Display:** "Version 0.8.11" on splash screen and About menu
+- **Filename:** `M1_v{MAJOR}.{MINOR}.{BUILD}.{RC}-{FORK_TAG}.bin`
+- **Example:** `M1_v0.9.0.0-UFO.bin`
+- **Display:** CLI `version` reports `0.9.0.0-UFO`; the About menu shows the
+  four-field version with the fork tag on a separate row; the splash screen
+  shows a three-field version (`0.9.0`) with the fork tag beneath it.
+
+The fork tag (`-UFO`) is display-only: it appears in artifact names and user
+output but is not part of the numeric version the bootloader's rollback gate
+compares. (That gate's strict-greater comparison lands with the upstream
+base adoption — PR-2/#37; in the current tree only the u32 packing exists,
+stubbed at `m1_csrc/m1_fw_update.c:470-473`.) Ordering guarantees of the
+four numeric fields are locked by
+`tools/test_fw_version_compare.py`, which models the device gate's u32
+packing (`rc | build<<8 | minor<<16 | major<<24`) and asserts
+`0.9.0.0 > 0.8.11 == 0.8.11.0 > 0.8.1.0`.
 
 ### Versioning Criteria
 

@@ -47,8 +47,8 @@ def stm32_hal_crc32_bytes(data):
 
 def _find_default_bin(repo_root):
     patterns = [
-        os.path.join(repo_root, "distribution", "M1_v*-ChrisUFO.bin"),
-        os.path.join(repo_root, "out", "build", "*", "M1_v*-ChrisUFO.bin"),
+        os.path.join(repo_root, "distribution", "M1_v*.bin"),
+        os.path.join(repo_root, "out", "build", "*", "M1_v*.bin"),
     ]
 
     candidates = []
