@@ -1235,9 +1235,12 @@ DISPOSITIONS = {
         "tags": ["recovered-warning-fix"],
         "evidence": (
             'Fork: the libc-compat format fixes `"%uGB" -> "%luGB"` + `(unsigned long)` casts\n'
-            "x2 (newlib's FATFS size types are unsigned long on arm-none-eabi — format/argument\n"
-            "mismatch), `uint8_t -> char prn_name` + casts in browse_gui_update (pointer-sign).\n"
-            "Main:150-155 still has %u against the wide types. Classes: -Wformat,\n"
+            "x2, `uint8_t -> char prn_name` + casts in browse_gui_update (pointer-sign). The\n"
+            "sprintf args are the uint32_t capacity fields of S_M1_SDCard_Info\n"
+            "(m1_sdcard.h:65-66, identical in all three trees); uint32_t is unsigned long on\n"
+            "arm-none-eabi (verified __UINT32_TYPE__ = long unsigned int), so Main's %u at\n"
+            "m1_storage.c:161,:164 is a genuine -Wformat mismatch; Main:843 uint8_t prn_name\n"
+            "into char *print_ptr still unfixed (pointer-sign). Classes: -Wformat,\n"
             "pointer-sign.\n"
         ),
     },
@@ -1449,7 +1452,9 @@ MUST_ADJUDICATE = """
 
 The fork's libc-compat work is the newlib/arm-none-eabi type-width family, all
 verified still-open on the new base and tagged for #39:
-`%u`->`%lu` + `(unsigned long)` casts (m1_storage.c:150-155 on main unfixed),
+`%u`->`%lu` + `(unsigned long)` casts (m1_storage.c:161,:164 on main: the uint32_t
+S_M1_SDCard_Info args are unsigned long on arm-none-eabi — genuine -Wformat
+mismatch),
 `(int)strlen` sign-compare guards (privateprofilestring.c:524,:881 on main
 unfixed), `(char*)`/`(uint8_t*)` pointer-sign casts (m1_rf_spi.c:266,
 m1_gpio.c, m1_esp32_fw_update.c), `uint64_t code = 0` (m1_secplus_v2_decode.c:64

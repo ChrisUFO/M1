@@ -37,7 +37,7 @@ sed -n 's/^### `\(.*\)`$/\1/p' "$LEDGER" | LC_ALL=C sort > "$ROOT/.ledger_gate_m
 
 if ! cmp -s "$ROOT/.ledger_gate_git.$$" "$ROOT/.ledger_gate_md.$$"; then
     echo "verify_merge_ledger: FAIL -- ledger file set differs from git enumeration:" >&2
-    diff "$ROOT/.ledger_gate_git.$$" "$ROOT/.ledger_gate_md.$$" >&2 | \
+    diff "$ROOT/.ledger_gate_git.$$" "$ROOT/.ledger_gate_md.$$" | \
         sed 's/^/  /' >&2
     fail=1
 else
