@@ -6,6 +6,11 @@ version bytes into a single u32 and compares:
 
     fw_ver_old = *(uint32_t *)&cfg.fw_version_rc;
 
+In the current fork tree the verifiable packing site is
+m1_csrc/m1_fw_update.c:470-473; `fwver_old` there is an explicit unused
+stub, so the strict-greater comparison itself arrives only with the
+upstream base adoption (PR-2/#37).
+
 The struct layout (documented in tools/append_crc32.py:123-126,
 S_M1_FW_CONFIG_t) is little-endian on the STM32 target:
 

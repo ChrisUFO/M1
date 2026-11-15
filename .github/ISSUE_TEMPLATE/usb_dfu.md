@@ -54,7 +54,7 @@ cli> dfu
 Entering DFU mode...
 
 # On PC
-dfu-util -D M1_v0.8.3-ChrisUFO.bin
+dfu-util -D M1_v0.9.0.0-UFO.bin
 ```
 
 ## References

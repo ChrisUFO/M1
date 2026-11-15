@@ -165,7 +165,10 @@ bootloader config struct):
 
 The fork tag (`-UFO`) is display-only: it appears in artifact names and user
 output but is not part of the numeric version the bootloader's rollback gate
-compares. Ordering guarantees of the four numeric fields are locked by
+compares. (That gate's strict-greater comparison lands with the upstream
+base adoption — PR-2/#37; in the current tree only the u32 packing exists,
+stubbed at `m1_csrc/m1_fw_update.c:470-473`.) Ordering guarantees of the
+four numeric fields are locked by
 `tools/test_fw_version_compare.py`, which models the device gate's u32
 packing (`rc | build<<8 | minor<<16 | major<<24`) and asserts
 `0.9.0.0 > 0.8.11 == 0.8.11.0 > 0.8.1.0`.

@@ -45,6 +45,14 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 - The tag is the reference point for merge-audit evidence (fork-changed-file
   ledger); rewriting it would invalidate that history.
 
+## Version Bumps
+
+`FW_VERSION_*` in `m1_csrc/m1_fw_update_bl.h` is the single source for the
+CMake-derived artifact name (`M1_v<MAJOR>.<MINOR>.<BUILD>.<RC>-<FORK_TAG>`).
+Two tracked files hardcode the versioned artifact name and must be swept on
+every bump: `.vscode/launch.json` (debug-launch `executable` and
+`projectName`) and `scripts/program.jlink` (`loadbin` path).
+
 ## Line-Ending Normalization (EOL)
 
 `.gitattributes` defines the policy:
