@@ -35,13 +35,21 @@
 #define FW_IMAGE_CRC_SIZE				4 // 4 bytes = 32 bits
 
 #define FW_VERSION_MAJOR   			0
-#define FW_VERSION_MINOR   			8
-#define FW_VERSION_BUILD   			1
+#define FW_VERSION_MINOR   			9
+#define FW_VERSION_BUILD   			0
 #define FW_VERSION_RC   			0
+/* Fork tag: display-only suffix (UI label, artifact stems). Excluded from the
+ * 4-field numeric compare in the rollback gate and the FW_CONFIG struct. */
+#define FW_VERSION_FORK_TAG			"UFO"
 
 /* About-box/version-log label, drawn directly with u8g2_DrawStr().
- * The label must fit the display width at ABOUT_BOX_Y_POS_ROW_4. */
-#define FW_BUILD_LABEL				"FW 0.8.1.0"
+ * The label must fit the display width at ABOUT_BOX_Y_POS_ROW_4.
+ * Derived from the macros above so it cannot drift from them. */
+#define FW_VERSION_STR_(x)			#x
+#define FW_VERSION_STR(x)			FW_VERSION_STR_(x)
+#define FW_BUILD_LABEL				"FW " FW_VERSION_STR(FW_VERSION_MAJOR) "." \
+	FW_VERSION_STR(FW_VERSION_MINOR) "." FW_VERSION_STR(FW_VERSION_BUILD) "." \
+	FW_VERSION_STR(FW_VERSION_RC) "-" FW_VERSION_FORK_TAG
 
 #define FW_CONFIG_MAGIC_NUMBER_1	((uint32_t)0x4D493235)
 #define FW_CONFIG_MAGIC_NUMBER_2    ((uint32_t)0x534A1F41)

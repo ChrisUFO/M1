@@ -20,8 +20,25 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release")
 endif()
 
-# Set the project name
-set(CMAKE_PROJECT_NAME MonstaTek_M1_v0800)
+# Set the project name (artifacts inherit it). Extracted from
+# m1_csrc/m1_fw_update_bl.h -- the single source of truth for the firmware
+# version -- so the binary/hex/bin artifact stems always match the embedded
+# version (format: M1_v<major>.<minor>.<build>.<rc>-<fork_tag>).
+file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/m1_csrc/m1_fw_update_bl.h VERSION_LINE_MAJOR REGEX "^#define FW_VERSION_MAJOR")
+file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/m1_csrc/m1_fw_update_bl.h VERSION_LINE_MINOR REGEX "^#define FW_VERSION_MINOR")
+file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/m1_csrc/m1_fw_update_bl.h VERSION_LINE_BUILD REGEX "^#define FW_VERSION_BUILD")
+file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/m1_csrc/m1_fw_update_bl.h VERSION_LINE_RC REGEX "^#define FW_VERSION_RC")
+file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/m1_csrc/m1_fw_update_bl.h VERSION_LINE_FORK_TAG REGEX "^#define FW_VERSION_FORK_TAG")
+
+string(REGEX MATCH "[0-9]+" FW_VERSION_MAJOR ${VERSION_LINE_MAJOR})
+string(REGEX MATCH "[0-9]+" FW_VERSION_MINOR ${VERSION_LINE_MINOR})
+string(REGEX MATCH "[0-9]+" FW_VERSION_BUILD ${VERSION_LINE_BUILD})
+string(REGEX MATCH "[0-9]+" FW_VERSION_RC ${VERSION_LINE_RC})
+string(REGEX MATCH "\"[^\"]+\"" FW_VERSION_FORK_TAG_QUOTED ${VERSION_LINE_FORK_TAG})
+string(REGEX REPLACE "\"" "" FW_VERSION_FORK_TAG ${FW_VERSION_FORK_TAG_QUOTED})
+
+set(CMAKE_PROJECT_NAME M1_v${FW_VERSION_MAJOR}.${FW_VERSION_MINOR}.${FW_VERSION_BUILD}.${FW_VERSION_RC}-${FW_VERSION_FORK_TAG})
+message(STATUS "Project name: ${CMAKE_PROJECT_NAME} (version single-sourced from m1_csrc/m1_fw_update_bl.h)")
 
 # Include toolchain file
 include("cmake/gcc-arm-none-eabi.cmake")
