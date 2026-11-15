@@ -1,0 +1,28 @@
+# Normalize line endings: LF in the repository for all text files.
+# Working-tree checkout still follows core.autocrlf/core.eol per platform.
+* text=auto
+
+# Shell scripts must always check out with LF (CRLF breaks bash).
+*.sh text eol=lf
+
+# Windows batch scripts must always check out with CRLF.
+*.bat text eol=crlf
+
+# Binary files: never normalize, never treat as text.
+*.bin -text
+*.elf -text
+# Intel HEX is ASCII but MUST NOT be EOL-normalized (record payloads).
+*.hex -text
+*.dfu -text
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.ico -text
+*.pdf -text
+*.zip -text
+*.7z -text
+*.tar -text
+*.gz -text
+*.db -text
+*.pyc -text
