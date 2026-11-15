@@ -94,7 +94,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 #arm-none-eabi-objcopy  -O binary MonstaTek_M1_v0800.elf  "MonstaTek_M1_v0800.bin"
 # Specify the output ELF file
 set(TARGET_ELF "${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.elf")
-# Note: Optional post-build steps (size, objdump, md5) are handled by the build script
+# Note: Optional post-build steps (size, objdump) are handled by the build script
 
 set(OBJCOPY_TOOL "${CMAKE_OBJCOPY}")
 if(NOT IS_ABSOLUTE "${OBJCOPY_TOOL}")

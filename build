@@ -130,7 +130,6 @@ echo "----------------------------------------"
 cp "$BUILD_DIR/$PROJECT_NAME.bin" "$DIST_DIR/"
 cp "$BUILD_DIR/$PROJECT_NAME.hex" "$DIST_DIR/"
 cp "$BUILD_DIR/$PROJECT_NAME.elf" "$DIST_DIR/"
-cp "$BUILD_DIR/$PROJECT_NAME.md5" "$DIST_DIR/" 2>/dev/null || true
 
 # Display results
 echo ""
@@ -145,7 +144,6 @@ echo "Files:"
 echo "  - $PROJECT_NAME.bin  : STM32 firmware (with CRC32)"
 echo "  - $PROJECT_NAME.hex   : HEX format for programmers"
 echo "  - $PROJECT_NAME.elf   : Debug symbols"
-echo "  - $PROJECT_NAME.md5   : MD5 checksum"
 echo ""
 echo "Location: $DIST_DIR/"
 echo ""
