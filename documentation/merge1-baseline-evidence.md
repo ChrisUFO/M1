@@ -200,6 +200,70 @@ gcc); it is evidence tooling, not a repo artifact.
 
 ## 9. Phase 5 — new-base verification results (post re-land)
 
-_To be appended with measured results after Phase 4 completes (Windows build +
-artifact names, bash path, host tests incl. ported comparator, CRC vectors vs
-§3, re-land invariants)._
+Measured on the final branch tip (post 4a/4b/4c/4d), same host, same run
+adaptations as §5 (`CC`=gcc-nosan shim, PATH `cc`, `PYTHONUTF8=1`).
+
+### 9.1 Windows build (preset `gcc-14_2_build-release`)
+
+Configure: `-- Project name: M1_v0.9.0.0-UFO (version single-sourced from
+m1_csrc/m1_fw_update_bl.h)`, compiler identification GNU 15.2.1. Compile +
+link green (all steps; upstream's pre-existing warnings unchanged — warning
+hygiene is the PR-4 unit). Artifacts: `M1_v0.9.0.0-UFO.elf/.bin/.hex/.list/.map`.
+The `srec_cat` POST_BUILD step still fails (srecord absent — the §3 Windows
+emitter issue, unchanged); it remains the only failing step.
+
+**Reproducibility:** two independent clean full rebuilds → **byte-identical**
+`M1_v0.9.0.0-UFO.bin` (sha256 `f077f06e94f70adaa35bcb126d817238fb23af42566abfd84a10f63924c266e2`).
+
+### 9.2 Bash path
+
+`sh build.sh` (fresh `build/`): derives `ARTIFACT_STEM=M1_v0.9.0.0-UFO` from
+the header, configures, compiles, links — `build/M1_v0.9.0.0-UFO.*` produced —
+and aborts (set -e) at the same in-`cmake --build` srec_cat emission step
+(rc=1, unchanged). Note (erratum vs §4's wording): the failure fires inside
+`cmake --build`, i.e. **before** build.sh's artifact-copy loop; the artifacts
+nevertheless exist in `build/` from POST_BUILD. `make` remains unavailable in
+git-bash; its `check_env` still requires `srec_cat`.
+
+### 9.3 Host tests
+
+| Suite | Result |
+|---|---|
+| `m1_csrc/test/*.py` (11) | 10 **PASS**; `m1_pass4_api_test.py` PARTIAL as in §5/§7 — 4/5 subtests PASS, `uart()` blocked by the unreachable `a41fdeaa…` pin (unchanged, expected) |
+| `tools/test_fw_version_compare.py` (4c port) | **PASS** — all 6 checks (0.9.0.0 > 0.8.11 ≡ 0.8.11.0 > 0.8.1.0; `-UFO` display-only; packing vectors) |
+| `NFC/.../run_mfc_suite.sh` | **ALL PASS** (rc=0) — including `ce_dev_type_test` now 27/27 **as checked out**: the 4a `.gitattributes` (`* text=auto eol=lf`) gives an LF working tree on this clone, eliminating the §6 CRLF artifact |
+| `lfrfid/test/extract_wave_builders.py` | **PASS** |
+| `lfrfid/test/result_render_test.py` | FAIL — unchanged; genuinely broken at the pin (§5: missing `m1_lcd_wake_restart_timer` stub in generated test → undefined reference on any toolchain). Not touched in PR-2; candidate for a follow-up upstream/test fix, out of this unit's scope. |
+| `cmake/m1_01/verify_mfc_raw_hwpass.sh` | **PASS** (9/9 symbols, new ELF) |
+| `cmake/m1_01/verify_mfc_arch.sh` | **PASS as checked out** (no LF conversion needed anymore) |
+| `cmake/m1_01/verify_no_forbidden_symbols.sh` | **PASS** |
+
+### 9.4 CRC pipeline vs Phase-2 vectors
+
+Same emulated srec_cat flow (§3), same crop semantics (bin size 1,047,572 =
+`0xFFC14`, CRC appended at `0xFFC14` → `0xFFC18`-byte image):
+
+| Artifact | Value |
+|---|---|
+| `M1_v0.9.0.0-UFO.bin` sha256 | `f077f06e94f70adaa35bcb126d817238fb23af42566abfd84a10f63924c266e2` |
+| STM32 CRC-32 over crop | **`0x9F14BA11`** |
+| emulated `_wCRC.bin` sha256 | `1beb1ec53a489ce84c45409bcc62016d07ed0795cb0054a96fc8c2cfeb6fe814` |
+| repeat emission | byte-identical |
+
+The value differs from §3 by design (new version macros + renormalized
+sources → different image bytes). Pipeline behavior — crop length, algorithm,
+word packing, append offset, determinism — is unchanged and reproducible;
+emission on this host still requires the documented Python emulation (srecord
+absent).
+
+### 9.5 Re-land invariants
+
+- After 4a (and excluding branch-added files): `git diff --ignore-cr-at-eol
+  2af1f8a HEAD` → **0 bytes**; full diffstat at that point = `.gitattributes`
+  + this evidence doc only (both new files). Zero upstream-tracked files
+  modified by EOL or anything else at that commit.
+- `git ls-files --eol` after 4a: **0** `i/crlf` entries (was 459 + 17 mixed).
+- Graft proofs (Phase 3): `git merge-base --is-ancestor 2af1f8a HEAD` exit 0;
+  `git rev-parse legacy/v0.8.11` → `cf48ff01b4e7b9bfaba51b1308126cc52c1688af`
+  before and after the graft (unmodified); `git diff c211a9b c20a3fe` empty
+  (graft changed no tree content).
