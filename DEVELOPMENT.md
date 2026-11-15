@@ -35,3 +35,36 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 - Document test scenarios and edge cases
 - Ensure NFC, RFID, and Sub-GHz functionality are verified
 - For stability hardening changes, follow `documentation/stability_phase5_validation.md`
+
+## Tag Policy
+
+- `legacy/v0.8.11` is an **immutable archive tag** marking the final release
+  of the fork's own 0.8.x line before upstream base adoption.
+- Never rewrite, delete, move, or force-push this tag, and never reuse its
+  name. If it points at the wrong commit, cut a new tag instead.
+- The tag is the reference point for merge-audit evidence (fork-changed-file
+  ledger); rewriting it would invalidate that history.
+
+## Line-Ending Normalization (EOL)
+
+`.gitattributes` defines the policy:
+
+- `* text=auto` — LF is canonical in the repository; checkouts follow the
+  platform's `core.autocrlf`/`core.eol`.
+- `*.sh text eol=lf` and `*.bat text eol=crlf` — scripts always check out
+  with the line endings their interpreters require, on every platform.
+- Binary types (including `*.bin`, `*.elf`, `*.dfu`, and `*.hex` — ASCII
+  records that must not be touched) are marked `-text` and never normalized.
+
+Workflow conventions:
+
+- After any `.gitattributes` (or line-ending config) change, run
+  `git add --renormalize .` and commit the result as **one standalone
+  commit** containing only the renormalization — no feature changes mixed in.
+- Prove the renormalization is content-neutral:
+  `git diff --ignore-cr-at-eol <pre-normalize-SHA> HEAD` must be empty.
+- **Required per clone:** `git config merge.renormalize true`. This setting
+  is clone-local and cannot be committed — every contributor and CI runner
+  must set it right after cloning (or after a fresh `git init` from a
+  bundle) so merges compare canonical LF content and never surface phantom
+  EOL conflicts.
