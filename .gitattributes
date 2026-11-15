@@ -1,0 +1,31 @@
+# Normalize line endings: LF in the repository AND on checkout for all text
+# files. The eol=lf pin is deliberate: this repo's own verification tooling
+# (host tests reading sources in binary mode with LF needles, e.g.
+# NFC/NFC_drv/common/test/ce_dev_type_test.c, and cmake/m1_01/verify_mfc_arch.sh
+# parsing mfc_authoritative_manifest.txt) requires LF working copies on every
+# platform -- see documentation/merge1-baseline-evidence.md section 6. With a
+# platform-following policy (core.autocrlf=true on Windows) those suites fail
+# purely from CRLF checkouts.
+* text=auto eol=lf
+
+# Windows batch scripts must always check out with CRLF.
+*.bat text eol=crlf
+
+# Binary files: never normalize, never treat as text.
+*.bin -text
+*.elf -text
+# Intel HEX is ASCII but MUST NOT be EOL-normalized (record payloads).
+*.hex -text
+*.dfu -text
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.ico -text
+*.pdf -text
+*.zip -text
+*.7z -text
+*.tar -text
+*.gz -text
+*.db -text
+*.pyc -text
