@@ -20,6 +20,7 @@
 #include "lfrfid.h"
 //#include "m1_nfc.h"
 #include "nfc_driver.h"
+#include "m1_feedback_task.h"
 
 /*************************** D E F I N E S ************************************/
 
@@ -69,6 +70,13 @@ void m1_tasks_init(void)
 	BaseType_t ret;
 	size_t free_heap;
 
+	/* M1-FB-STD-001 v1.1 feedback manager: started first so every other
+	 * task/module created below can safely call fb_request()/fb_release()
+	 * (and the fb_net_..., fb_pwr_..., fb_alert_... orchestration wrappers)
+	 * from the moment it starts running. See
+	 * documentation/M1_FEEDBACK_RECONCILIATION.md. */
+	m1_feedback_task_init();
+
 	main_q_hdl = xQueueCreate(MAIN_QUEUE_ITEMS_MAX_N, sizeof(S_M1_Main_Q_t));
 	assert(main_q_hdl != NULL);
 
@@ -78,39 +86,30 @@ void m1_tasks_init(void)
 	dummyTimerHandle = osTimerNew(m1_dummytimer_task, osTimerOnce, NULL, &dumyTimer_attributes);
 
 	ret = xTaskCreate(system_periodic_task, "system_periodic_task_n", M1_TASK_STACK_SIZE_DEFAULT, NULL, TASK_PRIORITY_SYSTEM_TASK_HANDLER, &system_task_hdl);
-	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
 	assert(system_task_hdl!=NULL);
 	free_heap = xPortGetFreeHeapSize(); // xPortGetMinimumEverFreeHeapSize()
-	(void)free_heap; /* Unused: result checked via assert. May need removal later. */
 	assert(free_heap >= M1_LOW_FREE_HEAP_WARNING_SIZE);
 
 	ret = xTaskCreate(sdcard_detection_task, "sdcard_detection_task_n", M1_TASK_STACK_SIZE_DEFAULT, NULL, TASK_PRIORITY_SDCARD_HANDLER, &sdcard_task_hdl);
-	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
-	assert(system_task_hdl!=NULL);
+	assert(sdcard_task_hdl!=NULL);
 	free_heap = xPortGetFreeHeapSize();
-	(void)free_heap; /* Unused: result checked via assert. May need removal later. */
 	assert(free_heap >= M1_LOW_FREE_HEAP_WARNING_SIZE);
 
 	ret = xTaskCreate(menu_main_handler_task, "menu_main_handler_task_n", M1_TASK_STACK_SIZE_1024/*M1_TASK_STACK_SIZE_DEFAULT*/, NULL, TASK_PRIORITY_MENU_MAIN_HANDLER, &menu_main_handler_task_hdl);
-	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
 	assert(menu_main_handler_task_hdl!=NULL);
 	free_heap = xPortGetFreeHeapSize();
-	(void)free_heap; /* Unused: result checked via assert. May need removal later. */
 	assert(free_heap >= M1_LOW_FREE_HEAP_WARNING_SIZE);
 
 	ret = xTaskCreate(subfunc_handler_task, "subfunc_handler_task_n", M1_TASK_STACK_SIZE_4096, NULL, TASK_PRIORITY_SUBFUNC_HANDLER, &subfunc_handler_task_hdl);
-	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
 	assert(subfunc_handler_task_hdl!=NULL);
 	free_heap = xPortGetFreeHeapSize();
-	(void)free_heap; /* Unused: result checked via assert. May need removal later. */
 	assert(free_heap >= M1_LOW_FREE_HEAP_WARNING_SIZE);
 
 	ret = xTaskCreate(log_db_handler_task, "log_db_handler_task_n", M1_TASK_STACK_SIZE_1024, NULL, TASK_PRIORITY_LOG_DB_HANDLER, &log_db_task_hdl);
-	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
 	assert(log_db_task_hdl!=NULL);
 	free_heap = xPortGetFreeHeapSize();
@@ -169,10 +168,13 @@ void vApplicationIdleHook(void)
 
 void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 {
-    (void)xTask; /* Unused: stub for future work. May need removal later. */
-    (void)pcTaskName; /* Unused: stub for future work. May need removal later. */
-	M1_LOG_E(M1_LOGDB_TAG, "Task %s caused stack overflow!\r\n", pcTaskName);
-	Error_Handler();
+	UNUSED(xTask);
+	UNUSED(pcTaskName);
+	taskDISABLE_INTERRUPTS();
+	for(;;)
+	{
+		__asm("nop");
+	}
 } // void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 
 
@@ -186,7 +188,11 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 /*============================================================================*/
 void vApplicationMallocFailedHook(void)
 {
-	M1_LOG_E(M1_LOGDB_TAG, "Heap allocation failed!\r\n");
+	taskDISABLE_INTERRUPTS();
+	for(;;)
+	{
+		__asm("nop");
+	}
 	//Error_Handler();
 	// These return the available heap space and the least amount of free heap space ever recorded
 	//xPortGetFreeHeapSize();
@@ -205,7 +211,6 @@ void vApplicationMallocFailedHook(void)
 /*============================================================================*/
 void m1_dummy_task(void *argument)
 {
-    (void)argument; /* Unused: stub for future work. May need removal later. */
   /* USER CODE BEGIN defaultTask */
   /* Infinite loop */
   for(;;)
@@ -225,7 +230,6 @@ void m1_dummy_task(void *argument)
 /*============================================================================*/
 void m1_dummytimer_task(void *argument)
 {
-    (void)argument; /* Unused: stub for future work. May need removal later. */
   /* USER CODE BEGIN m1_dummytimer_task */
 	/* Infinite loop */
 	for(;;)
@@ -245,7 +249,6 @@ void m1_dummytimer_task(void *argument)
 /*============================================================================*/
 void m1_runonce_task_handler(void *param)
 {
-    (void)param; /* Unused: stub for future work. May need removal later. */
 	//m1_led_indicator_on(NULL);
 	vTaskDelete(NULL); // Delete this task
 } // void m1_runonce_task_handler(void *param)

@@ -1,15 +1,20 @@
 /* See COPYING.txt for license details. */
 
 /*
-*
-* m1_bq25896.h
-*
-* Driver for BQ25896
-*
-* M1 Project
-*
-* Reference: https://github.com/VRaktion/mbed-BQ25896
-*/
+ * m1_bq25896.h
+ *
+ * Driver for Texas Instruments BQ25896
+ *
+ * Portions of this implementation were developed with reference to:
+ * https://github.com/VRaktion/mbed-BQ25896
+ *
+ * Copyright (c) the respective authors of the original project.
+ *
+ * Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
+ *
+ * Modifications and hardware adaptation:
+ * Copyright (C) 2026 MonstaTek
+ */
 #ifndef M1_BQ25896_H_
 #define M1_BQ25896_H_
 
@@ -97,7 +102,7 @@
 
 #define REG09_ADDR 			0x09
 #define REG09_BATFET_DIS 	(1<<5)
-#define REG09_BATFET_DLY 	(1<<3)
+#define REG09_BATFET_DLY 	(0<<3)
 #define REG09_BATFET_RST_EN (1<<2)
 #define REG09_BATFET_MASK	(REG09_BATFET_DIS|REG09_BATFET_DLY|REG09_BATFET_RST_EN)
 

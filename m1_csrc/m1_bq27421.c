@@ -1,24 +1,40 @@
 /* See COPYING.txt for license details. */
 
 /*
-*
-* m1_bq27421.c
-*
-* bq27421, Fuel Gauge library
-* refrence : https://github.com/svcguy/lib-BQ27421/tree/master
-*
-* M1 Project
-*
-*/
+ * m1_bq27421.c
+ *
+ * Driver for Texas Instruments BQ27421
+ * 
+ * Portions of this implementation are based on:
+ * https://github.com/svcguy/lib-BQ27421
+ *
+ * Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
+ *
+ * Modifications:
+ * Copyright (C) 2026 Monstatek
+ */
 
 /*************************** I N C L U D E S **********************************/
 #include <string.h>
 #include "m1_bq27421.h"
 #include "m1_i2c.h"
+#include "battery.h"
+#include "golden_image_0420.h"
+#include "m1_power_ctl.h"
+#include "m1_log_debug.h"
+#include "m1_watchdog.h"
+#include "m1_bq27421_boot_guard.h"
 
 /*************************** D E F I N E S ************************************/
 
+#define M1_LOGDB_TAG	"BQ27421"
+
 #define BQ27241_I2C_TIMEOUT	(2000)
+/* 500 attempts * 10ms = 5000ms: a generous but FINITE window for the
+ * gauge's average-current reading to leave its dead zone after a golden-
+ * image update (real calibration settling, not indefinite). See
+ * m1_bq27421_boot_guard.h for why this must be bounded. */
+#define BQ27421_CURRENT_STABILIZE_MAX_ATTEMPTS	(500)
 
 // ==== BlockData offsets (Extended Data - "Gas Gauging" subclass ???? ????) ====
 #define OFFS_DESIGN_CAP_MSB      10
@@ -32,6 +48,8 @@
 
 //************************** C O N S T A N T **********************************/
 
+const uint32_t bq27421_golden_image_count = sizeof(bq27421_golden_image) / sizeof(bq27421_golden_image[0]);
+
 //************************** S T R U C T U R E S *******************************
 
 /***************************** V A R I A B L E S ******************************/
@@ -43,10 +61,11 @@ bool _userConfigControl; // Global to identify that user has control over
 static uint8_t Blockdata[32];
 
 
+
 /********************* F U N C T I O N   P R O T O T Y P E S ******************/
 
-static bool bq27421_i2c_command_read1( uint8_t command, uint8_t *data );
-
+static bool bq27421_i2c_read8(uint8_t command, uint8_t *data);
+static bool bq27421_i2c_read16(uint8_t command, uint16_t *data);
 static uint16_t bq27421_flags(void);
 static uint16_t bq27421_status(void);
 static bool bq27421_sealed(void);
@@ -56,35 +75,388 @@ static bool bq27421_itporFlag(void);
 //static bool Bbq27421_executeControlWord(uint16_t function);
 static bool bq27421_softReset(void);
 
-//static bool bq27421_reset(void);
-#if 0 /* Unused: stub for future work. May need removal later. */
-static bool bq27421_enterConfig(bool userControl);
-#endif
-#if 0 /* Unused: stub for future work. May need removal later. */
-static bool bq27421_exitConfig(bool userControl);
-#endif
+static bool bq27421_reset(void);
+static bool bq27421_enter_config(bool userControl);
+static bool bq27421_exit_config(bool userControl);
 static bool bq27421_blockDataControl(void);
 static bool bq27421_blockDataClass(uint8_t id);
 static bool bq27421_blockDataOffset(uint8_t offset);
 static uint8_t bq27421_blockDataChecksum(void);
-#if 0 /* Unused: stub for future work. May need removal later. */
-static uint8_t bq27421_readBlockData(uint8_t offset);
-#endif
+static uint16_t bq27421_readBlockData(uint8_t offset);
 static uint8_t bq27421_computeBlockChecksum(void);
 //static bool bq27421_writeBlockChecksum(uint8_t csum);
-#if 0 /* Unused: stub for future work. May need removal later. */
-static uint8_t bq27421_readExtendedData(uint8_t classID, uint8_t offset);
-#endif
-//static bool bq27421_writeExtendedData(uint8_t classID, uint8_t offset, uint8_t * data, uint8_t len);
-static uint8_t bq27421_checkExtendedData(uint8_t offset);
-static bool bq27421_checkSohStatus(void);
+static uint16_t bq27421_read_x_data(uint8_t class_id, uint8_t offset);
+//static bool bq27421_writeExtendedData(uint8_t class_id, uint8_t offset, uint8_t * data, uint8_t len);
+static uint8_t bq27421_check_x_data(uint8_t offset);
+//static bool bq27421_checkSohStatus(void);
 static bool bq27421_wdreseted(void);
-bool bq27421_applyConfigIfMatches(uint16_t designCapacity_mAh,
-                                  uint16_t designEnergy_mWh,
-                                  uint16_t terminateVoltage_mV,
-                                  uint16_t taperRate);
+//bool bq27421_applyConfigIfMatches(uint16_t designCapacity_mAh,
+//                                  uint16_t designEnergy_mWh,
+//                                  uint16_t terminateVoltage_mV,
+//                                  uint16_t taperRate);
+static uint8_t bq27421_calcBlockChecksum(const uint8_t *block, uint8_t len);
+static void bq27421_controlNop(void);
+static void bq27421_exit_config_update(void);
+static bool bq27421_enter_config_update(void);
+static bool bq27421_selectSubclassBlock(uint8_t subclass, uint8_t block);
+static bool bq27421_BlockData(const uint8_t *block, uint8_t len);
+static uint8_t bq27421_writeBlockChecksum(const uint8_t *block,uint8_t len);
+static bool bq27421_verifyChecksumRegister(uint8_t expected);
+//static bool bq27421_updateDataMemoryBlock(uint8_t classID,uint8_t blockID, uint8_t *block, uint8_t len);
+static bool bq27421_updateDataMemoryBlock(const BQ27421_DataBlock *blk);
+static bool bq27421_updateDataMemoryBlockReadTest(void);
+static uint8_t bq27421_golden_image_update(void);
+
+bool bq27421_init(void);
+bool bq27421_update(bq27421_info *battery);
+bool bq27421_readDeviceType( uint16_t *deviceType );
+bool bq27421_readDeviceFWver( uint16_t *deviceFWver );
+bool bq27421_readDesignCapacity_mAh( uint16_t *capacity_mAh );
+bool bq27421_readVoltage_mV( uint16_t *voltage_mV );
+bool bq27421_readTemp_degK( uint16_t *temp_degKbyTen );
+bool bq27421_readAvgCurrent_mA( int16_t *avgCurrent_mA );
+//bool bq27421_readStateofCharge_percent( uint16_t *soc_percent );
+bool bq27421_readControlReg( uint16_t *control );
+bool bq27421_readFlagsReg( uint16_t *flags );
+bool bq27421_readopConfig( uint16_t *opConfig );
+bool bq27421_readRemainingCapacity_mAh( uint16_t *capacity_mAh );
+bool bq27421_readFullChargeCapacity_mAh( uint16_t *capacity_mAh );
+//bool bq27421_readStateofHealth_percent( uint16_t *soh_percent );
+bool bq27421_setHiberate(void);
+bool bq27421_clearHiberate(void);
 
 /*************** F U N C T I O N   I M P L E M E N T A T I O N ****************/
+bool bq27421_user_reset(void)
+{
+	bq27421_unseal();
+	HAL_Delay(10);
+	bq27421_softReset();
+	HAL_Delay(10);
+	bq27421_sealed();
+}
+
+/* Hardware-backed ops for bq27421_wait_for_itpor()/bq27421_wait_for_current_stable()
+ * (m1_bq27421_boot_guard.c) -- the real I2C/HAL calls the pure, host-tested
+ * control flow is parameterized over. */
+static void bq27421_guard_delay_ms(uint32_t ms) { HAL_Delay(ms); }
+static void bq27421_guard_wdt_kick(void) { m1_wdt_reset(); }
+static bool bq27421_guard_itpor_ready(void) { return bq27421_itporFlag(); }
+static int16_t bq27421_guard_read_current_mA(void)
+{
+    int16_t current_mA = 0;
+    /* A failed I2C read is treated as "not yet stable" -- the bounded loop
+     * simply retries within its own budget rather than misreading garbage
+     * or a stale value as a stability result. */
+    (void)bq27421_readAvgCurrent_mA(&current_mA);
+    return current_mA;
+}
+static const bq27421_boot_guard_ops_t s_bq27421_guard_ops = {
+    bq27421_guard_itpor_ready,
+    bq27421_guard_read_current_mA,
+    bq27421_guard_delay_ms,
+    bq27421_guard_wdt_kick,
+};
+
+/*============================================================================*/
+/**
+  * @brief  Initializes the BQ27421 fuel gauge, forcing a golden-image
+  *         reload if the design capacity or taper rate don't match this
+  *         product's expected configuration (factory/new-unit path).
+  * @param  None
+  * @retval true if the gauge is in a known-good state (no reload needed,
+  *         or reload completed and current stabilized); false if the
+  *         gauge could not be brought up within its bounded wait windows
+  *         (reset never confirmed, or post-update current never
+  *         stabilized) -- boot continues regardless, in a degraded
+  *         gauge state, rather than hanging.
+  */
+/*============================================================================*/
+bool bq27421_init(void)
+{
+	uint8_t flags; //designcap_valid, qmax_cell_valid;
+	uint16_t device_type, bat_design_cap, qmax_cell, taper_rate;
+	bool reset_confirmed;
+	bool need_update;
+	bool gauge_ok = true;   /* overall status for the return value; only the
+	                         * update path below can set this false */
+
+	battery_access_disable();
+
+	//+ADD
+	while(1)
+	{
+		HAL_Delay(10);
+		bq27421_readDeviceType(&device_type);
+		if (device_type==0x0421)
+			break;
+	}
+
+	if ( bq27421_sealed() )
+	{
+		_sealFlag = true;
+		bq27421_unseal(); // Must be unsealed before making changes
+	}
+
+	flags = bq27421_itporFlag(); // Read reset status
+	// Read design capacity
+	// "most useful for system level debug to quickly determine device configuration"
+    bq27421_readDesignCapacity_mAh(&bat_design_cap);
+    //designcap_valid = (bat_design_cap==M1_BATT_DESIGN_CAPACITY); // Golden image loaded or not?
+    //qmax_cell = bq27421_read_x_data(BQ27421_ID_STATE, BQ27421_STATE_OFFSET_QMAXCELL0);
+    //qmax_cell_valid = (qmax_cell != M1_STATE_QMAX_CELL_DEFAULT);
+
+    taper_rate = bq27421_read_x_data(BQ27421_ID_STATE, BQ27421_STATE_OFFSET_TAPER_RATE);
+
+    need_update = (bat_design_cap!=M1_BATT_DESIGN_CAPACITY)
+    		//|| (qmax_cell == M1_STATE_QMAX_CELL_DEFAULT)
+			|| (taper_rate != M1_STATE_TAPER_RATE);
+
+	reset_confirmed = flags ? true : false;   /* already reset -> nothing to wait for */
+    //if ( (flags) || (!designcap_valid) || (!qmax_cell_valid) )
+	if ( (flags) || (need_update) )
+    {
+    	if ( !flags ) // BQ27421 not reset?
+    	{
+        	bq27421_reset(); // Let reset it
+        	HAL_Delay(100);
+
+        	if ( bq27421_sealed() )
+        	{
+        		_sealFlag = true;
+        		bq27421_unseal(); // Must be unsealed before making changes
+        	}
+
+        	/* Bounded wait for the gauge's own ITPOR (reset-complete) flag.
+        	 * reset_confirmed is a plain bool -- no wraparound is possible,
+        	 * unlike the previous `while(timeout--)` uint16_t post-decrement,
+        	 * which wrapped a full timeout to 0xFFFF and made the subsequent
+        	 * `if(timeout)` read that as success. */
+        	reset_confirmed = bq27421_wait_for_itpor(&s_bq27421_guard_ops, BQ27241_I2C_TIMEOUT);
+        	HAL_Delay(10);
+        	if (!reset_confirmed) {
+        		M1_LOG_I(M1_LOGDB_TAG, "Fuel gauge reset not confirmed within %u ms -- continuing boot degraded.\r\n",
+        		         (unsigned)BQ27241_I2C_TIMEOUT);
+        		gauge_ok = false;
+        	}
+    	} // if ( !flags )
+
+    	if ( reset_confirmed )
+    	{
+    		bool current_stable;
+
+    		M1_LOG_I(M1_LOGDB_TAG, "Fuel gauge golden image being loaded!\r\n");
+    		u8g2_SetPowerSave(&m1_u8g2, false);
+    		m1_image_message(battery_meter_46_36, 46, 36, "Battery gauge updating...");
+    		lp5814_backlight_on(M1_BACKLIGHT_BRIGHTNESS); // Turn on backlight
+    		m1_led_fw_update_on(NULL);
+    		bq27421_golden_image_update();
+
+    		/* Bounded wait for the average-current reading to leave its dead
+    		 * zone -- the watchdog is only kicked WITHIN this fixed budget
+    		 * (BQ27421_CURRENT_STABILIZE_MAX_ATTEMPTS), never unconditionally.
+    		 * An unresponsive gauge here now falls through to a clearly
+    		 * logged degraded state and boot continues, instead of an
+    		 * unbounded loop that fed the watchdog forever and defeated the
+    		 * one failsafe that would otherwise have recovered the device. */
+    		current_stable = bq27421_wait_for_current_stable(&s_bq27421_guard_ops,
+    		                                                  BQ27421_CURRENT_STABILIZE_MAX_ATTEMPTS);
+    		m1_led_fw_update_off();
+    		if (!current_stable) {
+    			M1_LOG_I(M1_LOGDB_TAG, "Fuel gauge current did not stabilize within %u attempts -- continuing boot degraded.\r\n",
+    			         (unsigned)BQ27421_CURRENT_STABILIZE_MAX_ATTEMPTS);
+    			gauge_ok = false;
+    		}
+    	} // if ( reset_confirmed )
+    	else
+    	{
+    		gauge_ok = false;   /* reset never confirmed above -- golden image was not even attempted */
+    	}
+    } // if ( (flags) || (!designcap_valid) || (!qmax_cell_valid) )
+    else
+    {
+    	//bq27421_updateDataMemoryBlockReadTest();
+    }
+
+   	// optional: wait a little for gauge to process
+    bq27421_i2c_control_write(BQ27421_CONTROL_BAT_INSERT);
+    HAL_Delay(10);
+
+    // Seal gauge
+    bq27421_i2c_control_write(BQ27421_CONTROL_SEALED);
+    HAL_Delay(10);
+
+    battery_access_enable();
+#if 0 //-2026_0508_01
+    if ( timeout ) // Golden image has been flashed?
+    {
+
+		if ( m1_device_stat.bu_regs.device_op_status==DEV_OP_STATUS_NO_OP )
+		{
+			//Set boot mode in backup registers, if any
+			startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_REBOOT);
+		}
+
+		//Set registers in RTC, if any
+		//Close SD card, if any; // Do other things for this task, if needed
+		vTaskDelay(pdMS_TO_TICKS(DELAY_BEFORE_POWER_REBOOT)); // Without this delay, the reboot won't work properly!
+		m1_pre_power_down();
+		//vTaskEndScheduler();
+		NVIC_SystemReset();
+    } // if ( timeout )
+#endif
+    return gauge_ok;
+} // bool bq27421_init(void)
+
+
+
+/*============================================================================*/
+/**
+  * @brief
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+bool bq27421_update(bq27421_info *battery)
+{
+    uint16_t temp;
+
+    if( !bq27421_readVoltage_mV( &(battery->voltage_mV) ) )
+    {
+        return false;
+    }
+    if( !bq27421_readAvgCurrent_mA( &(battery->current_mA) ) )
+    {
+        return false;
+    }
+    if( !bq27421_readTemp_degK( &temp ) )
+    {
+        return false;
+    }
+    battery->temp_degC = ( (double)temp / 10 ) - 273.15;
+
+#if 0
+    if( !bq27421_readStateofCharge_percent( &(battery->soc_percent) ) )
+    {
+        return false;
+    }
+#endif
+
+    battery->soc_percent = bq27421_soc(FILTERED);
+    battery->soh_state = bq27421_soh(SOH_STAT);
+    battery->soh_percent = bq27421_soh(PERCENT);
+#if 0
+    if(battery->soh_state)
+    {
+    	battery->soc_percent = bq27421_soc(FILTERED);
+
+    	if(battery->soh_state == 3)
+    		battery->soh_percent = bq27421_soh(PERCENT);
+    }
+#endif
+    //if( !bq27421_readStateofHealth_percent( &(battery->soh_percent) ) )
+    //{
+    //    return false;
+    //}
+    if( !bq27421_readDesignCapacity_mAh( &(battery->designCapacity_mAh) ) )
+    {
+        return false;
+    }
+    if( !bq27421_readRemainingCapacity_mAh( &(battery->remainingCapacity_mAh) ) )
+    {
+        return false;
+    }
+    if( !bq27421_readFullChargeCapacity_mAh( &(battery->fullChargeCapacity_mAh) ) )
+    {
+        return false;
+    }
+    if( !bq27421_readFlagsReg( &temp ) )
+    {
+        return false;
+    }
+
+    battery->flags = temp;
+    bq27421_readControlReg(&battery->status);
+
+    battery->isCritical = temp & 0x0002;
+    battery->isLow = temp & 0x0004;
+    battery->isFull = temp & 0x0200;
+    if( battery->current_mA <= 0 )
+    {
+        battery->isDischarging = 1;
+        battery->isCharging = 0;
+    }
+    else
+    {
+        battery->isDischarging = 0;
+        battery->isCharging = 1;
+    }
+
+    return true;
+}
+
+
+
+/*============================================================================*/
+/**
+  * @brief
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+static uint8_t bq27421_golden_image_update(void)
+{
+    uint16_t fm_ver;
+
+//    battery_access_disable();
+    //--------------------------------------------------------
+    //Verify Existing Firmware Version
+    //--------------------------------------------------------
+    bq27421_readDeviceFWver(&fm_ver);
+    HAL_Delay(10);
+#if 0
+    if(fm_ver < 0x109)
+    	return false;
+#endif
+    //--------------------------------------------------------
+    //SET_CFGUPDATE
+    //--------------------------------------------------------
+    bq27421_enter_config_update();
+    m1_wdt_reset(); // Reset watchdog
+    HAL_Delay(1100);
+
+    //--------------------------------------------------------
+    //Data Block
+    //--------------------------------------------------------
+    bool status;
+
+    for(int i=0;i<bq27421_golden_image_count;i++)
+    {
+        status = false;
+
+        for(int n=0; n<3; n++) // retry
+        {
+        	status = bq27421_updateDataMemoryBlock(&bq27421_golden_image[i]);
+
+        	if(status)
+        		break;
+        }
+
+        if(status == false)
+        	break;
+    }
+
+    //--------------------------------------------------------
+    //Exit CFGUPDATE
+    //--------------------------------------------------------
+    bq27421_exit_config_update();
+    m1_wdt_reset(); // Reset watchdog
+    HAL_Delay(2000);
+    m1_wdt_reset(); // Reset watchdog
+
+//    battery_access_enable();
+    return status;
+} // static uint8_t bq27421_golden_image_update(void)
+
 
 /*============================================================================*/
 /**
@@ -162,7 +534,7 @@ bool bq27421_i2c_command_write( uint8_t command, uint8_t data )
   * @retval
   */
 /*============================================================================*/
-bool bq27421_i2c_command_read( uint8_t command, uint16_t *data )
+static bool bq27421_i2c_read16(uint8_t command, uint16_t *data)
 {
     uint8_t i2c_data[2];
 
@@ -182,7 +554,7 @@ bool bq27421_i2c_command_read( uint8_t command, uint16_t *data )
   * @retval
   */
 /*============================================================================*/
-bool bq27421_i2c_command_read1( uint8_t command, uint8_t *data )
+bool bq27421_i2c_read8(uint8_t command, uint8_t *data)
 {
     uint8_t i2c_data;
 
@@ -311,345 +683,13 @@ bool bq27421_i2c_read_data_block( uint8_t offset, uint8_t *data, uint8_t bytes )
   * @retval
   */
 /*============================================================================*/
-bool bq27421_init( uint16_t designCapacity_mAh, uint16_t terminateVoltage_mV, uint16_t taperCurrent_mA )
-{
-    uint16_t designEnergy_mWh = 0, taperRate = 0, flags = 0, checksumOld = 0, checksumRead = 0;
-    uint8_t checksumNew = 0;
-    //bool result = false;
-    //if(!(bq27421_itporFlag() == 1 && bq27421_soh(SOH_STAT) != 3))
-    //	return false;
-
-    designEnergy_mWh = 3.7 * designCapacity_mAh;
-    //taperRate = designCapacity_mAh / ( 0.1 * taperCurrent_mA );
-    taperRate = 10 *designCapacity_mAh / taperCurrent_mA;
-
-
-    // Unseal gauge
-	if (bq27421_sealed())
-	{
-		_sealFlag = true;
-		bq27421_unseal(); // Must be unsealed before making changes
-	}
-
-	//bq27421_clearHiberate();
-
-    if(bq27421_applyConfigIfMatches(designCapacity_mAh,designEnergy_mWh,terminateVoltage_mV,taperRate))
-    {
-    	return true;
-    }
-    /*****************************************************************************
-     ************************ bq27421 initial Functions **************************
-     *****************************************************************************/
-    // Send CFG_UPDATE
-    bq27421_i2c_control_write( BQ27421_CONTROL_SET_CFGUPDATE );
-
-    // Poll flags
-    do
-    {
-        bq27421_i2c_command_read( BQ27421_FLAGS_LOW, &flags );
-        if( !(flags & BQ27421_FLAG_CFGUPMODE) )	// CFGUPMODE ?
-        {
-            HAL_Delay( 1 );
-        }
-    }
-    while( !(flags & BQ27421_FLAG_CFGUPMODE) );
-
-    //
-    // read 0x52
-    //
-    // Enable Block Data Memory Control
-    bq27421_i2c_command_write( BQ27421_BLOCK_DATA_CONTROL, 0x00 );
-
-    HAL_Delay( BQ27421_DELAY );
-
-    // Access State subclass
-    bq27421_i2c_command_write( BQ27421_DATA_CLASS, 0x52 );
-
-    // Write the block offset
-    bq27421_i2c_command_write( BQ27421_DATA_BLOCK, 0x00 );
-
-    // Read block checksum
-    bq27421_i2c_command_read( BQ27421_BLOCK_DATA_CHECKSUM, &checksumOld );
-
-    // Read 32-byte block of data
-    uint8_t block[32];
-    for(uint8_t i = 0; i < 32; i++ )
-    {
-        block[i] = 0x00;
-    }
-
-    bq27421_i2c_read_data_block( 0x00, block, 32 );
-
-    // Calculate checksum
-    uint8_t checksumCalc = 0x00;
-
-    for(uint8_t i = 0; i < 32; i++ )
-    {
-        checksumCalc += block[i];
-    }
-    checksumCalc = 0xFF - checksumCalc;
-
-    //
-    // write 0x52
-    //
-    // Update design capacity
-    block[BQ27421_STATE_OFFSET_DESIGN_CAPACITY] = (uint8_t)( designCapacity_mAh >> 8 );
-    block[BQ27421_STATE_OFFSET_DESIGN_CAPACITY+1] = (uint8_t)( designCapacity_mAh & 0x00FF );
-    // Update design energy
-    block[BQ27421_STATE_OFFSET_DESIGN_ENERGY] = (uint8_t)( designEnergy_mWh >> 8 );
-    block[BQ27421_STATE_OFFSET_DESIGN_ENERGY+1] = (uint8_t)( designEnergy_mWh & 0x00FF );
-    // Update terminate voltage
-    block[BQ27421_STATE_OFFSET_TERMINATE_VOLTAGE] = (uint8_t)( terminateVoltage_mV >> 8 );
-    block[BQ27421_STATE_OFFSET_TERMINATE_VOLTAGE+1] = (uint8_t)( terminateVoltage_mV & 0x00FF );
-    // Update taper rate
-    block[BQ27421_STATE_OFFSET_TAPER_RATE] = (uint8_t)( taperRate >> 8 );
-    block[BQ27421_STATE_OFFSET_TAPER_RATE+1] = (uint8_t)( taperRate & 0x00FF );
-
-    // Calculate new checksum
-    checksumNew = 0x00;
-    for(int i = 0; i < 32; i++ )
-    {
-        checksumNew += block[i];
-    }
-    checksumNew = 0xFF - checksumNew;
-
-    // Enable Block Data Memory Control
-    bq27421_i2c_command_write( BQ27421_BLOCK_DATA_CONTROL, 0x00 );
-
-    HAL_Delay( BQ27421_DELAY );
-
-    // Access State subclass
-    bq27421_i2c_command_write( BQ27421_DATA_CLASS, 0x52 );
-
-    // Write the block offset
-    bq27421_i2c_command_write( BQ27421_DATA_BLOCK, 0x00 );
-
-    // Write 32-byte block of updated data
-    bq27421_i2c_write_data_block( 0x00, block, 32 );
-
-    // Write new checksum
-    bq27421_i2c_command_write( BQ27421_BLOCK_DATA_CHECKSUM, checksumNew );
-
-    // Access State subclass
-    bq27421_i2c_command_write( BQ27421_DATA_CLASS, 0x52 );
-
-    // Write the block offset
-    bq27421_i2c_command_write( BQ27421_DATA_BLOCK, 0x00 );
-
-    // Read block checksum
-    bq27421_i2c_command_read( BQ27421_BLOCK_DATA_CHECKSUM, &checksumRead );
-
-    // Verify
-    if( checksumRead != (uint8_t)checksumNew )
-    {
-        return false;
-    }
-
-    //
-    // read 0x40
-    //
-    // Enable Block Data Memory Control
-    bq27421_i2c_command_write( BQ27421_BLOCK_DATA_CONTROL, 0x00 );
-
-    HAL_Delay( BQ27421_DELAY );
-
-    // Access Registers subclass
-    bq27421_i2c_command_write( BQ27421_DATA_CLASS, 0x40 );
-
-    // Write the block offset
-    bq27421_i2c_command_write( BQ27421_DATA_BLOCK, 0x00 );
-
-    // Read block checksum
-    bq27421_i2c_command_read( BQ27421_BLOCK_DATA_CHECKSUM, &checksumOld );
-
-    // Read 32-byte block of data
-    for(uint8_t i = 0; i < 32; i++ )
-    {
-        block[i] = 0x00;
-    }
-
-    bq27421_i2c_read_data_block( 0x00, block, 32 );
-
-    // Calculate checksum
-    checksumCalc = 0x00;
-
-    for(uint8_t i = 0; i < 32; i++ )
-    {
-        checksumCalc += block[i];
-    }
-    checksumCalc = 0xFF - checksumCalc;
-
-    // Update OpConfig
-    block[BQ27421_REGISTERS_OFFSET_OPCONFIG] = (BQ27421_OPCONFIG_BATLOWEN | BQ27421_OPCONFIG_TEMPS); //  0x05;
-
-    // Calculate new checksum
-    checksumNew = 0x00;
-    for(int i = 0; i < 32; i++ )
-    {
-        checksumNew += block[i];
-    }
-    checksumNew = 0xFF - checksumNew;
-
-    //
-    // write 0x40
-    //
-    // Enable Block Data Memory Control
-    bq27421_i2c_command_write( BQ27421_BLOCK_DATA_CONTROL, 0x00 );
-
-    HAL_Delay( BQ27421_DELAY );
-
-    // Access Registers subclass
-    bq27421_i2c_command_write( BQ27421_DATA_CLASS, 0x40 );
-
-    // Write the block offset
-    bq27421_i2c_command_write( BQ27421_DATA_BLOCK, 0x00 );
-
-    // Write 32-byte block of updated data
-    bq27421_i2c_write_data_block( 0x00, block, 32 );
-
-    // Write new checksum
-    bq27421_i2c_command_write( BQ27421_BLOCK_DATA_CHECKSUM, checksumNew );
-
-    // Access Registers subclass
-    bq27421_i2c_command_write( BQ27421_DATA_CLASS, 0x40 );
-
-    // Write the block offset
-    bq27421_i2c_command_write( BQ27421_DATA_BLOCK, 0x00 );
-
-    // Read block checksum
-    bq27421_i2c_command_read( BQ27421_BLOCK_DATA_CHECKSUM, &checksumRead );
-
-    // Verify
-    if( checksumRead != (uint8_t)checksumNew )
-    {
-        return false;
-    }
-
-    //
-    // Configure BAT_DET
-    bq27421_i2c_control_write( BQ27421_CONTROL_BAT_INSERT );
-
-    // Send Soft Reset
-    bq27421_i2c_control_write( BQ27421_CONTROL_SOFT_RESET );
-
-    // Poll flags
-    do
-    {
-        bq27421_i2c_command_read( BQ27421_FLAGS_LOW, &flags );
-        if( !(flags & BQ27421_FLAG_CFGUPMODE) )
-        {
-            HAL_Delay( 1 );
-        }
-    }
-    while( (flags & BQ27421_FLAG_CFGUPMODE) );
-
-    // Seal gauge
-    bq27421_i2c_control_write( BQ27421_CONTROL_SEALED );
-
-    return true;
-}
-
-
-/*============================================================================*/
-/**
-  * @brief
-  * @param
-  * @retval
-  */
-/*============================================================================*/
-bool bq27421_update( bq27421_info *battery )
-{
-    uint16_t temp;
-
-    if( !bq27421_readVoltage_mV( &(battery->voltage_mV) ) )
-    {
-        return false;
-    }
-    if( !bq27421_readAvgCurrent_mA( &(battery->current_mA) ) )
-    {
-        return false;
-    }
-    if( !bq27421_readTemp_degK( &temp ) )
-    {
-        return false;
-    }
-    battery->temp_degC = ( (double)temp / 10 ) - 273.15;
-
-#if 0
-    if( !bq27421_readStateofCharge_percent( &(battery->soc_percent) ) )
-    {
-        return false;
-    }
-#endif
-
-    battery->soc_percent = bq27421_soc(FILTERED);
-    battery->soh_state = bq27421_soh(SOH_STAT);
-    battery->soh_percent = bq27421_soh(PERCENT);
-#if 0
-    if(battery->soh_state)
-    {
-    	battery->soc_percent = bq27421_soc(FILTERED);
-
-    	if(battery->soh_state == 3)
-    		battery->soh_percent = bq27421_soh(PERCENT);
-    }
-#endif
-    //if( !bq27421_readStateofHealth_percent( &(battery->soh_percent) ) )
-    //{
-    //    return false;
-    //}
-    if( !bq27421_readDesignCapacity_mAh( &(battery->designCapacity_mAh) ) )
-    {
-        return false;
-    }
-    if( !bq27421_readRemainingCapacity_mAh( &(battery->remainingCapacity_mAh) ) )
-    {
-        return false;
-    }
-    if( !bq27421_readFullChargeCapacity_mAh( &(battery->fullChargeCapacity_mAh) ) )
-    {
-        return false;
-    }
-    if( !bq27421_readFlagsReg( &temp ) )
-    {
-        return false;
-    }
-
-    battery->flags = temp;
-    bq27421_readControlReg(&battery->status);
-
-    battery->isCritical = temp & 0x0002;
-    battery->isLow = temp & 0x0004;
-    battery->isFull = temp & 0x0200;
-    if( battery->current_mA <= 0 )
-    {
-        battery->isDischarging = 1;
-        battery->isCharging = 0;
-    }
-    else
-    {
-        battery->isDischarging = 0;
-        battery->isCharging = 1;
-    }
-
-    return true;
-}
-
-
-/*============================================================================*/
-/**
-  * @brief
-  * @param
-  * @retval
-  */
-/*============================================================================*/
 bool bq27421_readDeviceType( uint16_t *deviceType )
 {
     if( !bq27421_i2c_control_write( BQ27421_CONTROL_DEVICE_TYPE ) )
     {
         return false;
     }
-    if( !bq27421_i2c_command_read( BQ27421_CONTROL_LOW, deviceType ) )
+    if( !bq27421_i2c_read16( BQ27421_CONTROL_LOW, deviceType ) )
     {
         return false;
     }
@@ -671,7 +711,7 @@ bool bq27421_readDeviceFWver( uint16_t *deviceFWver )
     {
         return false;
     }
-    if( !bq27421_i2c_command_read( BQ27421_CONTROL_LOW, deviceFWver ) )
+    if( !bq27421_i2c_read16( BQ27421_CONTROL_LOW, deviceFWver ) )
     {
         return false;
     }
@@ -689,7 +729,7 @@ bool bq27421_readDeviceFWver( uint16_t *deviceFWver )
 /*============================================================================*/
 bool bq27421_readDesignCapacity_mAh( uint16_t *capacity_mAh )
 {
-    if( !bq27421_i2c_command_read( BQ27421_DESIGN_CAP_LOW, capacity_mAh ) )
+    if( !bq27421_i2c_read16( BQ27421_DESIGN_CAP_LOW, capacity_mAh ) )
     {
         return false;
     }
@@ -707,7 +747,7 @@ bool bq27421_readDesignCapacity_mAh( uint16_t *capacity_mAh )
 /*============================================================================*/
 bool bq27421_readVoltage_mV( uint16_t *voltage_mV )
 {
-    if( !bq27421_i2c_command_read( BQ27421_VOLTAGE_LOW, voltage_mV ) )
+    if( !bq27421_i2c_read16( BQ27421_VOLTAGE_LOW, voltage_mV ) )
     {
         return false;
     }
@@ -725,7 +765,7 @@ bool bq27421_readVoltage_mV( uint16_t *voltage_mV )
 /*============================================================================*/
 bool bq27421_readTemp_degK( uint16_t *temp_degKbyTen )
 {
-    if( !bq27421_i2c_command_read( BQ27421_TEMP_LOW, temp_degKbyTen ) )
+    if( !bq27421_i2c_read16( BQ27421_TEMP_LOW, temp_degKbyTen ) )
     {
         return false;
     }
@@ -743,7 +783,7 @@ bool bq27421_readTemp_degK( uint16_t *temp_degKbyTen )
 /*============================================================================*/
 bool bq27421_readAvgCurrent_mA( int16_t *avgCurrent_mA )
 {
-    if( !bq27421_i2c_command_read( BQ27421_AVG_CURRENT_LOW, (uint16_t *)avgCurrent_mA ) )
+    if( !bq27421_i2c_read16( BQ27421_AVG_CURRENT_LOW, (uint16_t *)avgCurrent_mA ) )
     {
         return false;
     }
@@ -765,7 +805,7 @@ bool bq27421_readControlReg( uint16_t *control )
     {
         return false;
     }
-    if( !bq27421_i2c_command_read( BQ27421_CONTROL_LOW, control ) )
+    if( !bq27421_i2c_read16( BQ27421_CONTROL_LOW, control ) )
     {
         return false;
     }
@@ -783,7 +823,7 @@ bool bq27421_readControlReg( uint16_t *control )
 /*============================================================================*/
 bool bq27421_readFlagsReg( uint16_t *flags )
 {
-    if( !bq27421_i2c_command_read( BQ27421_FLAGS_LOW, flags ) )
+    if( !bq27421_i2c_read16( BQ27421_FLAGS_LOW, flags ) )
     {
         return false;
     }
@@ -801,7 +841,7 @@ bool bq27421_readFlagsReg( uint16_t *flags )
 /*============================================================================*/
 bool bq27421_readopConfig( uint16_t *opConfig )
 {
-    if( !bq27421_i2c_command_read( BQ27421_OPCONFIG_LOW, opConfig ) )
+    if( !bq27421_i2c_read16( BQ27421_OPCONFIG_LOW, opConfig ) )
     {
         return false;
     }
@@ -819,7 +859,7 @@ bool bq27421_readopConfig( uint16_t *opConfig )
 /*============================================================================*/
 bool bq27421_readRemainingCapacity_mAh( uint16_t *capacity_mAh )
 {
-    if( !bq27421_i2c_command_read( BQ27421_REMAINING_CAP_LOW, capacity_mAh ) )
+    if( !bq27421_i2c_read16( BQ27421_REMAINING_CAP_LOW, capacity_mAh ) )
     {
         return false;
     }
@@ -837,7 +877,7 @@ bool bq27421_readRemainingCapacity_mAh( uint16_t *capacity_mAh )
 /*============================================================================*/
 bool bq27421_readFullChargeCapacity_mAh( uint16_t *capacity_mAh )
 {
-    if( !bq27421_i2c_command_read( BQ27421_FULL_CHARGE_CAP_LOW, capacity_mAh ) )
+    if( !bq27421_i2c_read16( BQ27421_FULL_CHARGE_CAP_LOW, capacity_mAh ) )
     {
         return false;
     }
@@ -890,7 +930,7 @@ bool bq27421_clearHiberate(void)
 /*============================================================================*/
 bool bq27421_readStateofCharge_percent( uint16_t *soc_percent )
 {
-    if( !bq27421_i2c_command_read( BQ27421_STATE_OF_CHARGE_LOW, soc_percent ) )
+    if( !bq27421_i2c_read16( BQ27421_STATE_OF_CHARGE_LOW, soc_percent ) )
     {
         return false;
     }
@@ -914,10 +954,10 @@ uint16_t bq27421_soc(soc_measure type)
 	switch (type)
 	{
 	case FILTERED:
-		bq27421_i2c_command_read(BQ27421_STATE_OF_CHARGE_LOW, &socRet);
+		bq27421_i2c_read16(BQ27421_STATE_OF_CHARGE_LOW, &socRet);
 		break;
 	case UNFILTERED:
-		bq27421_i2c_command_read(BQ27421_STATE_OF_CHARGE_UNFILT_LOW, &socRet);
+		bq27421_i2c_read16(BQ27421_STATE_OF_CHARGE_UNFILT_LOW, &socRet);
 		break;
 	}
 
@@ -938,7 +978,7 @@ uint8_t bq27421_soh(soh_measure type)
 	uint8_t sohPercent;
 	uint16_t sohRaw;
 
-    if( !bq27421_i2c_command_read( BQ27421_STATE_OF_HEALTH_LOW, &sohRaw ) )
+    if( !bq27421_i2c_read16( BQ27421_STATE_OF_HEALTH_LOW, &sohRaw ) )
     {
         return false;
     }
@@ -952,7 +992,7 @@ uint8_t bq27421_soh(soh_measure type)
 		return sohStatus;
 }
 
-
+#if 0
 /*============================================================================*/
 /**
   * @brief
@@ -1015,22 +1055,16 @@ static inline uint16_t rd16_be(const uint8_t *buf, int msb_offs, int lsb_offs)
   * @retval
   */
 /*============================================================================*/
-// -----------------------------------------------------------------------------
-// ???? ????: ???????? ?????? BAT_INSERT + SoftReset + CFGUPMODE ????? ???
-// - ???: true  ?? ??? u?/??o?? ???? ???
-//         false ?? SOH/ExtendedData/???????/???��?? ???? ??
-// -----------------------------------------------------------------------------
+
 bool bq27421_applyConfigIfMatches(uint16_t designCapacity_mAh,
                                   uint16_t designEnergy_mWh,
                                   uint16_t terminateVoltage_mV,
                                   uint16_t taperRate)
 {
-    // 1) SOH ???? ???
     if (!bq27421_checkSohStatus()) {
         return false;
     }
 
-    // 2) Seal ???? ??? ?? ???? Unseal
     const bool wasSealed = bq27421_sealed();
     if (wasSealed) {
         bq27421_unseal();
@@ -1039,7 +1073,7 @@ bool bq27421_applyConfigIfMatches(uint16_t designCapacity_mAh,
     bool ok = false;
 
     // 3) Extended Data ???
-    if (bq27421_checkExtendedData(0)) {
+    if (bq27421_check_x_data(0)) {
         // Blockdata
         const uint16_t tmp_designCapacity_mAh  = rd16_be(Blockdata, OFFS_DESIGN_CAP_MSB,  OFFS_DESIGN_CAP_LSB);
         const uint16_t tmp_designEnergy_mWh    = rd16_be(Blockdata, OFFS_DESIGN_EN_MSB,   OFFS_DESIGN_EN_LSB);
@@ -1084,7 +1118,7 @@ bool bq27421_applyConfigIfMatches(uint16_t designCapacity_mAh,
 
     return ok;
 }
-
+#endif
 
 /*============================================================================*/
 /**
@@ -1095,9 +1129,9 @@ bool bq27421_applyConfigIfMatches(uint16_t designCapacity_mAh,
 /*============================================================================*/
 static uint16_t bq27421_flags(void)
 {
-	uint16_t flags = 0;
+	uint16_t flags;
 
-	bq27421_i2c_command_read( BQ27421_FLAGS_LOW, &flags );
+	bq27421_i2c_read16( BQ27421_FLAGS_LOW, &flags );
 
 	return flags;
 }
@@ -1112,7 +1146,7 @@ static uint16_t bq27421_flags(void)
 /*============================================================================*/
 static uint16_t bq27421_status(void)
 {
-	uint16_t status = 0;
+	uint16_t status;
 
 	bq27421_readControlReg(&status);
 
@@ -1224,10 +1258,10 @@ static bool bq27421_itporFlag(void)
 {
 	uint16_t flagState = bq27421_flags();
 
-	return flagState & BQ27421_FLAG_ITPOR;
+	return ((flagState & BQ27421_FLAG_ITPOR) !=0 );
 }
 
-#if 0
+#if 1
 /*============================================================================*/
 /**
   * @brief Issue a factory reset to the BQ27427
@@ -1237,17 +1271,20 @@ static bool bq27421_itporFlag(void)
 /*============================================================================*/
 bool bq27421_reset(void)
 {
-	if (!_userConfigControl) bq27421_enterConfig(false); // Enter config mode if not already in it
+	return bq27421_executeControlWord(BQ27421_CONTROL_RESET);
+#if 0
+	if (!_userConfigControl) bq27421_enter_config(false); // Enter config mode if not already in it
 
 	if (bq27421_executeControlWord(BQ27421_CONTROL_RESET))
 	{
-		if (!_userConfigControl) bq27421_exitConfig(false);
+		if (!_userConfigControl) bq27421_exit_config(false);
 		return true;
 	}
 	else
 	{
 		return false;
 	}
+#endif
 }
 #endif
 
@@ -1273,10 +1310,10 @@ bool bq27421_softReset(void)
   * @retval
   */
 /*============================================================================*/
-#if 0 /* Unused: stub for future work. May need removal later. */
-bool bq27421_enterConfig(bool userControl)
+bool bq27421_enter_config(bool userControl)
 {
-	if (userControl) _userConfigControl = true;
+	if (userControl)
+		_userConfigControl = true;
 
 	if (bq27421_sealed())
 	{
@@ -1296,7 +1333,6 @@ bool bq27421_enterConfig(bool userControl)
 
 	return false;
 }
-#endif
 
 
 /*============================================================================*/
@@ -1306,10 +1342,10 @@ bool bq27421_enterConfig(bool userControl)
   * @retval
   */
 /*============================================================================*/
-#if 0 /* Unused: stub for future work. May need removal later. */
-bool bq27421_exitConfig(bool userControl)
+bool bq27421_exit_config(bool userControl)
 {
-	if (userControl) _userConfigControl = false;
+	if (userControl)
+		_userConfigControl = false;
 
 	if (bq27421_softReset())
 	{
@@ -1324,7 +1360,6 @@ bool bq27421_exitConfig(bool userControl)
 	}
 	return false;
 }
-#endif
 
 /*****************************************************************************
  ************************** Extended Data Commands ***************************
@@ -1383,8 +1418,8 @@ bool bq27421_blockDataOffset(uint8_t offset)
 /*============================================================================*/
 uint8_t bq27421_blockDataChecksum(void)
 {
-	uint8_t csum = 0;
-	bq27421_i2c_command_read1( BQ27421_EXTENDED_CHECKSUM, &csum );
+	uint8_t csum;
+	bq27421_i2c_read8( BQ27421_EXTENDED_CHECKSUM, &csum );
 	//i2cReadBytes(BQ27421_EXTENDED_CHECKSUM, &csum, 1);
 	return csum;
 }
@@ -1392,20 +1427,21 @@ uint8_t bq27421_blockDataChecksum(void)
 
 /*============================================================================*/
 /**
-  * @brief Use BlockData() to read a byte from the loaded extended data
+  * @brief Use BlockData() to read 2 bytes from the loaded extended data
   * @param
   * @retval
   */
 /*============================================================================*/
-#if 0 /* Unused: stub for future work. May need removal later. */
-uint8_t bq27421_readBlockData(uint8_t offset)
+uint16_t bq27421_readBlockData(uint8_t offset)
 {
-	uint8_t ret;
+	uint16_t ret;
 	uint8_t address = offset + BQ27421_EXTENDED_BLOCKDATA;
-	bq27421_i2c_command_read1(address, &ret);
+	bq27421_i2c_read16(address, &ret);
+
+	ret = (ret<<8) | (ret>>8); // Correct value for little endian format
+
 	return ret;
 }
-#endif
 
 
 /*============================================================================*/
@@ -1486,7 +1522,7 @@ bool bq27421_writeBlockChecksum(uint8_t csum)
   * @retval
   */
 /*============================================================================*/
-uint8_t bq27421_checkExtendedData(uint8_t offset)
+uint8_t bq27421_check_x_data(uint8_t offset)
 {
 	uint8_t chksum = 0;
 	uint8_t classID = 0x52;
@@ -1502,8 +1538,7 @@ uint8_t bq27421_checkExtendedData(uint8_t offset)
 	bq27421_blockDataOffset(offset / 32); // Write 32-bit block offset (usually 0)
 
 	chksum = bq27421_computeBlockChecksum(); // Compute checksum going in
-	uint8_t oldCsum = 0;
-    oldCsum = bq27421_blockDataChecksum();
+	uint8_t oldCsum = bq27421_blockDataChecksum();
 
 	if(chksum == oldCsum)
 	{
@@ -1514,7 +1549,6 @@ uint8_t bq27421_checkExtendedData(uint8_t offset)
 }
 
 
-#if 0 /* Unused: stub for future work. May need removal later. */
 /*============================================================================*/
 /**
   * @brief
@@ -1522,82 +1556,248 @@ uint8_t bq27421_checkExtendedData(uint8_t offset)
   * @retval
   */
 /*============================================================================*/
-uint8_t bq27421_readExtendedData(uint8_t classID, uint8_t offset)
+uint16_t bq27421_read_x_data(uint8_t class_id, uint8_t offset)
 {
-	uint8_t retData = 0;
-	if (!_userConfigControl) bq27421_enterConfig(false);
-
+	uint16_t retData = 0;
+/*
+	if (!_userConfigControl)
+		bq27421_enter_config(false);
+*/
 	if (!bq27421_blockDataControl()) // // enable block data memory control
 		return false; // Return false if enable fails
-	if (!bq27421_blockDataClass(classID)) // Write class ID using DataBlockClass()
+	if (!bq27421_blockDataClass(class_id)) // Write class ID using DataBlockClass()
 		return false;
 
 	bq27421_blockDataOffset(offset / 32); // Write 32-bit block offset (usually 0)
-
+/*
 	bq27421_computeBlockChecksum(); // Compute checksum going in
 	uint8_t oldCsum = bq27421_blockDataChecksum();
-    (void)oldCsum; /* Unused: stub for future work. May need removal later. */
-	/*for (int i=0; i<32; i++)
-		Serial.print(String(readBlockData(i)) + " ");*/
+*/
 	retData = bq27421_readBlockData(offset % 32); // Read from offset (limit to 0-31)
-
-	if (!_userConfigControl) bq27421_exitConfig(false);
-
+/*
+	if (!_userConfigControl)
+		bq27421_exit_config(false);
+*/
 	return retData;
 }
-#endif
 
 
-#if 0
 /*============================================================================*/
 /**
-  * @brief Write a specified number of bytes to extended data specifying a
-  * class ID, position offset.
+  * @brief
   * @param
   * @retval
   */
 /*============================================================================*/
-bool bq27421_writeExtendedData(uint8_t classID, uint8_t offset, uint8_t * data, uint8_t len)
+uint8_t bq27421_calcBlockChecksum(const uint8_t *block, uint8_t len)
 {
-	if (len > 32)
-		return false;
+    uint8_t checksumCalc = 0x00;
 
-	if (!_userConfigControl)
-	{
-		if (!enterConfig(false))
-			return false; // Return false if enterConfig fails
-	}
+    for(uint8_t i = 0; i < len; i++ )
+    {
+        checksumCalc += block[i];
+    }
+    checksumCalc = 0xFF - checksumCalc;    
 
-	if (!blockDataControl()) // // enable block data memory control
-		return false; // Return false if enable fails
-	if (!blockDataClass(classID)) // Write class ID using DataBlockClass()
-		return false;
+    return checksumCalc;
+}
 
-	blockDataOffset(offset / 32); // Write 32-bit block offset (usually 0)
-	computeBlockChecksum(); // Compute checksum going in
-	uint8_t oldCsum = blockDataChecksum();
 
-	// Write data bytes:
-	for (int i = 0; i < len; i++)
-	{
-		// Write to offset, mod 32 if offset is greater than 32
-		// The blockDataOffset above sets the 32-bit block
-		if (!writeBlockData((offset % 32) + i, data[i]))
-			return false; // Return false if writeBlockData fails
-	}
+/*============================================================================*/
+/**
+  * @brief
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+void bq27421_controlNop(void)
+{
+    uint8_t buf[2];
 
-	// Write new checksum using BlockDataChecksum (0x60)
-	uint8_t newCsum = computeBlockChecksum(); // Compute the new checksum
-	if (!writeBlockChecksum(newCsum))
-		return false; // Return false if checksum write fails
+    buf[0] = 0;
+    buf[1] = 0;
 
-	if (!_userConfigControl)
-	{
-		delay(10); // Wait for BQ27427 to process the write
-		if (!exitConfig())
-			return false; // Return false if exitConfig fails
-	}
+    bq27421_i2c_write(2, 0, &buf[0]);
+}
+
+
+/*============================================================================*/
+/**
+  * @brief
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+void bq27421_exit_config_update(void)
+{    
+    bq27421_controlNop();
+    HAL_Delay(10);
+    bq27421_softReset();
+}
+
+
+/*============================================================================*/
+/**
+  * @brief
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+//--------------------------------------------------------
+//SET_CFGUPDATE
+//--------------------------------------------------------
+// AA 00 13 00
+bool bq27421_enter_config_update(void)
+{
+    uint8_t buf[2];
+
+    buf[0] = (uint8_t)(BQ27421_CONTROL_SET_CFGUPDATE & 0xFF);
+    buf[1] = (uint8_t)(BQ27421_CONTROL_SET_CFGUPDATE >> 8);
+
+    return bq27421_i2c_write(2, BQ27421_CONTROL_LOW, &buf[0]);  
+}
+
+
+/*============================================================================*/
+/**
+  * @brief
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+//--------------------------------------------------------
+//Data Block
+//--------------------------------------------------------
+bool bq27421_selectSubclassBlock(uint8_t subclass, uint8_t block)
+{
+    uint8_t buf[2];
+
+    buf[0] = subclass;  // DataClass value
+    buf[1] = block;     // DataBlock value (0x3F)
+
+    return bq27421_i2c_write(2, BQ27421_DATA_CLASS, &buf[0]);   
+}
+
+
+/*============================================================================*/
+/**
+  * @brief
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+bool bq27421_BlockData(const uint8_t *block, uint8_t len){
+    // Write 32-byte block of updated data
+    return bq27421_i2c_write_data_block( 0x00, block, len );
+} 
+
+
+/*============================================================================*/
+/**
+  * @brief
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+uint8_t bq27421_writeBlockChecksum(const uint8_t *block,uint8_t len){
+
+    // Calculate checksum
+    uint8_t checksumCalc = bq27421_calcBlockChecksum(block,len);
+
+    // Write new checksum
+    bq27421_i2c_command_write( BQ27421_BLOCK_DATA_CHECKSUM, checksumCalc );
+    return checksumCalc;
+}
+
+
+/*============================================================================*/
+/**
+  * @brief
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+bool bq27421_verifyChecksumRegister(uint8_t expected)
+{
+    uint8_t checksum;
+
+    checksum = bq27421_blockDataChecksum();
+
+    if(checksum == expected)
+        return true;
+    else
+        return false;
+}
+
+
+/*============================================================================*/
+/**
+  * @brief
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+//bool bq27421_updateDataMemoryBlock(uint8_t classID,uint8_t blockID, uint8_t *block, uint8_t len)
+static bool bq27421_updateDataMemoryBlock(const BQ27421_DataBlock *blk)
+{
+    uint8_t chksum;
+    bool state;
+    uint32_t len = 32;
+
+    bq27421_selectSubclassBlock(blk->subclass,blk->block);
+    HAL_Delay(10);
+    bq27421_BlockData(blk->data,len);
+    HAL_Delay(10);
+    chksum = bq27421_writeBlockChecksum(blk->data,len);
+    HAL_Delay(10);
+    bq27421_selectSubclassBlock(blk->subclass,blk->block);
+    HAL_Delay(10);
+    state =  bq27421_verifyChecksumRegister(chksum);
+    HAL_Delay(10);
+    return state;
+}
+
+#if 1	//+test code
+/*============================================================================*/
+/**
+  * @brief
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+bool bq27421_updateDataMemoryBlockRead(const BQ27421_DataBlock *blk, BQ27421_DataBlock *block)
+{
+	bq27421_selectSubclassBlock(blk->subclass,blk->block);
+	HAL_Delay(10);
+
+	bq27421_i2c_read_data_block( 0x00, block->data, 32 );
+	HAL_Delay(10);
+	block->subclass = blk->subclass;
+	block->block = blk->block;
 
 	return true;
 }
-#endif
+
+
+/*============================================================================*/
+/**
+  * @brief
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+BQ27421_DataBlock goldenImage_data[14];
+bool bq27421_updateDataMemoryBlockReadTest(void)
+{
+	int result;
+
+	for(int i=0;i<bq27421_golden_image_count;i++)
+	{
+		bq27421_updateDataMemoryBlockRead(&bq27421_golden_image[i], &goldenImage_data[i]);
+
+		result = memcmp((char*)&bq27421_golden_image[i], (char*)&goldenImage_data[i], 34);
+	}
+
+	return result;
+}
+#endif // #if 1	//+test code

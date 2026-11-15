@@ -1,16 +1,18 @@
 /* See COPYING.txt for license details. */
 
 /*
-*
-* m1_bq27421.h
-*
-* bq27421, Fuel Gauge library
-* refrence : https://github.com/svcguy/lib-BQ27421/tree/master
-*
-* M1 Project
-*
-*/
-
+ * m1_bq27421.c
+ *
+ * Driver for Texas Instruments BQ27421
+ * 
+ * Portions of this implementation are based on:
+ * https://github.com/svcguy/lib-BQ27421
+ *
+ * Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
+ *
+ * Modifications:
+ * Copyright (C) 2026 Monstatek
+ */
 
 #ifndef __BQ27421_H
 #define __BQ27421_H
@@ -257,7 +259,15 @@ typedef enum {
 	SOH_STAT  // State of Health Status Bits
 } soh_measure;
 
-bool bq27421_init( uint16_t designCapacity_mAh, uint16_t terminateVoltage_mV, uint16_t taperCurrent_mA );
+typedef struct
+{
+    uint8_t subclass;
+    uint8_t block;
+    uint8_t data[32];
+} BQ27421_DataBlock;
+
+bool bq27421_init(void);
+//bool bq27421_init( uint16_t designCapacity_mAh, uint16_t terminateVoltage_mV, uint16_t taperCurrent_mA );
 bool bq27421_update( bq27421_info *battery );
 bool bq27421_readDeviceType( uint16_t *deviceType );
 bool bq27421_readDeviceFWver( uint16_t *deviceFWver );

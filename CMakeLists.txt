@@ -20,7 +20,10 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release")
 endif()
 
-# Extract version from m1_fw_update_bl.h (single source of truth)
+# Set the project name (artifacts inherit it). Extracted from
+# m1_csrc/m1_fw_update_bl.h -- the single source of truth for the firmware
+# version -- so the binary/hex/bin artifact stems always match the embedded
+# version (format: M1_v<major>.<minor>.<build>.<rc>-<fork_tag>).
 file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/m1_csrc/m1_fw_update_bl.h VERSION_LINE_MAJOR REGEX "^#define FW_VERSION_MAJOR")
 file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/m1_csrc/m1_fw_update_bl.h VERSION_LINE_MINOR REGEX "^#define FW_VERSION_MINOR")
 file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/m1_csrc/m1_fw_update_bl.h VERSION_LINE_BUILD REGEX "^#define FW_VERSION_BUILD")
@@ -34,15 +37,11 @@ string(REGEX MATCH "[0-9]+" FW_VERSION_RC ${VERSION_LINE_RC})
 string(REGEX MATCH "\"[^\"]+\"" FW_VERSION_FORK_TAG_QUOTED ${VERSION_LINE_FORK_TAG})
 string(REGEX REPLACE "\"" "" FW_VERSION_FORK_TAG ${FW_VERSION_FORK_TAG_QUOTED})
 
-# Set the project name with extracted version (format: v<major>.<minor>.<build>.<rc>-<fork_tag>)
 set(CMAKE_PROJECT_NAME M1_v${FW_VERSION_MAJOR}.${FW_VERSION_MINOR}.${FW_VERSION_BUILD}.${FW_VERSION_RC}-${FW_VERSION_FORK_TAG})
-message(STATUS "Building ${CMAKE_PROJECT_NAME}")
+message(STATUS "Project name: ${CMAKE_PROJECT_NAME} (version single-sourced from m1_csrc/m1_fw_update_bl.h)")
 
 # Include toolchain file
 include("cmake/gcc-arm-none-eabi.cmake")
-
-# Core project settings
-project(${CMAKE_PROJECT_NAME})
 
 # Enable compile command to ease indexing with e.g. clangd
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
@@ -50,10 +49,23 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 # Enable CMake support for ASM and C languages
 enable_language(C ASM)
 
+# Core project settings
+project(${CMAKE_PROJECT_NAME})
 message("Build type: " ${CMAKE_BUILD_TYPE})
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
+
+# Reproducible builds: strip the absolute source-tree prefix from __FILE__ and
+# from debug paths, so two clean builds of the same commit made in different
+# directories are byte-identical. A few diagnostic strings embed __FILE__
+# (the custom assert_param in m1_csrc/m1_compile_cfg.h, and two M1_LOG_I calls
+# in m1_csrc/m1_sdcard_man.c); this makes them source-root-relative instead of
+# carrying the build machine's absolute path. Operational behavior is
+# unchanged -- only the text of those diagnostic paths differs.
+target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
+    "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."
+)
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/m1_01)
@@ -65,7 +77,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
-    Core/Startup/startup_stm32h573vitx.s
+    # Add user sources here
 )
 
 # Add include paths
@@ -80,86 +92,107 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME}
-    -Wl,--whole-archive
-    m1_core
-    -Wl,--no-whole-archive
-    m1_drivers
+    m1_01
+
     # Add user defined libraries
 )
 
-# +++Settings from STM32CubeIDE
-#arm-none-eabi-size  MonstaTek_M1_v0800.elf 
-#arm-none-eabi-objdump -h -S MonstaTek_M1_v0800.elf  > "MonstaTek_M1_v0800.list"
-#arm-none-eabi-objcopy  -O ihex MonstaTek_M1_v0800.elf  "MonstaTek_M1_v0800.hex"
-#arm-none-eabi-objcopy  -O binary MonstaTek_M1_v0800.elf  "MonstaTek_M1_v0800.bin"
 # Specify the output ELF file
 set(TARGET_ELF "${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.elf")
-# Note: Optional post-build steps (size, objdump) are handled by the build script
+# Specify the output BIN file
+set(TARGET_BIN "${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin")
+# Command to display memory usage
+add_custom_command(
+    COMMAND ${CMAKE_COMMAND} -E echo "Memory usage:"    
+    TARGET ${CMAKE_PROJECT_NAME}
+    POST_BUILD
+    COMMAND ${CMAKE_SIZE} ${TARGET_ELF}
+    #COMMENT "Memory usage:"
+)
 
-set(OBJCOPY_TOOL "${CMAKE_OBJCOPY}")
-if(NOT IS_ABSOLUTE "${OBJCOPY_TOOL}")
-    unset(OBJCOPY_TOOL)
-    find_program(OBJCOPY_TOOL NAMES ${CMAKE_OBJCOPY} arm-none-eabi-objcopy)
+# Command to generate .list file
+add_custom_command(
+    COMMAND ${CMAKE_COMMAND} -E echo "Generating list file ${CMAKE_PROJECT_NAME}.list"
+    TARGET ${CMAKE_PROJECT_NAME}
+    POST_BUILD
+    COMMAND ${CMAKE_OBJDUMP}
+-h -S ${TARGET_ELF} > ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.list
+    #COMMENT "Generating .list file"
+)
+
+# Command to generate .bin file
+add_custom_command(
+    COMMAND ${CMAKE_COMMAND} -E echo "Generating bin file ${CMAKE_PROJECT_NAME}.bin"
+    TARGET ${CMAKE_PROJECT_NAME}
+    POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY}
+-O binary ${TARGET_ELF} ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin
+    #COMMENT "Generating .bin file"
+)
+
+# Command to generate .hex file
+add_custom_command(
+    COMMAND ${CMAKE_COMMAND} -E echo "Generating hex file ${CMAKE_PROJECT_NAME}.hex"
+    TARGET ${CMAKE_PROJECT_NAME}
+    POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY}
+-O ihex ${TARGET_ELF} ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.hex
+    #COMMENT "Generating .hex file"
+)
+
+# Command to generate .bin file with CRC
+add_custom_command(
+    COMMAND ${CMAKE_COMMAND} -E echo "Generating bin file with CRC ${CMAKE_PROJECT_NAME}_wCRC.bin"
+    TARGET ${CMAKE_PROJECT_NAME}
+    POST_BUILD
+    COMMAND srec_cat
+${TARGET_BIN} -binary -crop 0x0 0x000FFC14 -STM32_Little_Endian 0x000FFC14 -o ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}_wCRC.bin -binary
+    #COMMENT "Generating .bin file with CRC"
+)
+
+# Post-build regression guard: when the production MFC raw-emulation flags
+# are on, prove via symbol/map evidence (not log strings) that the canonical
+# RAWOWN listener/dispatcher and the DMA {At} transmitter actually made it
+# into the link -- fails the build if a future change silently drops or
+# renames them. See cmake/m1_01/verify_mfc_raw_hwpass.sh for the exact
+# symbol list. Must live in this file (not cmake/m1_01/CMakeLists.txt):
+# add_custom_command(TARGET ... POST_BUILD) is only valid in the directory
+# scope where the target was created by add_executable()/add_library().
+find_program(M1_NM_TOOL NAMES arm-none-eabi-nm)
+if(M1_MFC_RAW_EMULATION AND M1_MFC_DMA_AT)
+    if(M1_NM_TOOL)
+        add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+            COMMAND sh "${CMAKE_SOURCE_DIR}/cmake/m1_01/verify_mfc_raw_hwpass.sh"
+                    "${M1_NM_TOOL}" "$<TARGET_FILE:${CMAKE_PROJECT_NAME}>"
+            COMMENT "Verifying production MFC raw-emulation symbols are linked"
+            VERBATIM)
+        # Single-authoritative-MFC-implementation structural guard: fails the
+        # build if any obsolete generic-Type-A route or the deleted duplicate
+        # Flow-B crypto backend (symbol, source pattern, or CMake option)
+        # reappears, and if any REQUIRED authoritative RAWOWN/Crypto1/DMA symbol
+        # is missing. Combines ELF-symbol, source, and configuration evidence
+        # (see cmake/m1_01/mfc_authoritative_manifest.txt).
+        add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+            COMMAND sh "${CMAKE_SOURCE_DIR}/cmake/m1_01/verify_mfc_arch.sh"
+                    "${M1_NM_TOOL}" "$<TARGET_FILE:${CMAKE_PROJECT_NAME}>"
+                    "${CMAKE_SOURCE_DIR}"
+            COMMENT "Verifying single authoritative MFC implementation (no obsolete/duplicate routes)"
+            VERBATIM)
+    else()
+        message(WARNING "arm-none-eabi-nm not found -- skipping MFC raw-emulation symbol verification")
+    endif()
 endif()
 
-if(OBJCOPY_TOOL)
-    # Command to generate .bin file
-    add_custom_command(
-        COMMAND ${CMAKE_COMMAND} -E echo "Generating bin file ${CMAKE_PROJECT_NAME}.bin"
-        TARGET ${CMAKE_PROJECT_NAME}
-        POST_BUILD
-        COMMAND ${OBJCOPY_TOOL}
-    -O binary --gap-fill 0xFF ${TARGET_ELF} ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin
-        #COMMENT "Generating .bin file"
-    )
-
-    # Command to test CRC32 algorithm integrity
-    add_custom_command(
-        COMMAND ${CMAKE_COMMAND} -E echo "Running CRC32 regression tests..."
-        TARGET ${CMAKE_PROJECT_NAME}
-        POST_BUILD
-        COMMAND python ${CMAKE_SOURCE_DIR}/tools/append_crc32.py ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin --test
-    )
-
-    # Command to append CRC32 to .bin file (required for STM32 firmware update)
-    add_custom_command(
-        COMMAND ${CMAKE_COMMAND} -E echo "Appending CRC32 to ${CMAKE_PROJECT_NAME}.bin"
-        TARGET ${CMAKE_PROJECT_NAME}
-        POST_BUILD
-        COMMAND python ${CMAKE_SOURCE_DIR}/tools/append_crc32.py ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin
-    )
-
-    # Command to generate .hex file
-    add_custom_command(
-        COMMAND ${CMAKE_COMMAND} -E echo "Generating hex file ${CMAKE_PROJECT_NAME}.hex"
-        TARGET ${CMAKE_PROJECT_NAME}
-        POST_BUILD
-        COMMAND ${OBJCOPY_TOOL}
-    -I binary -O ihex --change-addresses 0x08000000 ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.hex
-        #COMMENT "Generating .hex file"
-    )
-else()
-    message(WARNING "arm-none-eabi-objcopy not found; skipping .bin/.hex/CRC post-build steps")
-endif()
-
-# Optional: Command to display memory usage (only if size tool is available)
-find_program(SIZE_TOOL arm-none-eabi-size)
-if(SIZE_TOOL)
-    add_custom_command(
-        COMMAND ${CMAKE_COMMAND} -E echo "Memory usage:"
-        TARGET ${CMAKE_PROJECT_NAME}
-        POST_BUILD
-        COMMAND ${SIZE_TOOL} ${TARGET_ELF}
-    )
-endif()
-
-# Optional: Command to generate .list file (only if objdump is available)  
-find_program(OBJDUMP_TOOL arm-none-eabi-objdump)
-if(OBJDUMP_TOOL)
-    add_custom_command(
-        COMMAND ${CMAKE_COMMAND} -E echo "Generating list file ${CMAKE_PROJECT_NAME}.list"
-        TARGET ${CMAKE_PROJECT_NAME}
-        POST_BUILD
-        COMMAND ${OBJDUMP_TOOL} -h -S ${TARGET_ELF} > ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.list
-    )
+# Post-build forbidden-symbol guard (self-contained): fail the build if a
+# known-bad symbol is linked into the production ELF. It currently guards
+# against the Flipper-derived LF-RFID FSK oscillator (lfrfid_fsk_osc) silently
+# reappearing in a shipped build. Pure ELF-symbol evidence via nm -- no git
+# history, tag, or checkpoint dependency, so it is fully reproducible from a
+# standalone public checkout.
+if(M1_NM_TOOL)
+    add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+        COMMAND sh "${CMAKE_SOURCE_DIR}/cmake/m1_01/verify_no_forbidden_symbols.sh"
+                "${M1_NM_TOOL}" "$<TARGET_FILE:${CMAKE_PROJECT_NAME}>"
+        COMMENT "Verifying no forbidden symbols are linked into the production ELF"
+        VERBATIM)
 endif()

@@ -1,9 +1,25 @@
 /* See COPYING.txt for license details. */
 
 /*
- * lfrfid_protocol_h10301.c
+ * LF RFID (125 kHz) implementation
  *
- *      Author: Thomas
+ * Licensed under the GNU General Public License v3.0 (GPLv3).
+ *
+ * The functional implementation and modifications were
+ * independently developed by Monstatek.
+ *
+ * Copyright (C) 2026 Monstatek
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ *
+ * See the GNU General Public License for more details.
  */
 /*************************** I N C L U D E S **********************************/
 #include <stdint.h>
@@ -13,7 +29,7 @@
 #include "app_freertos.h"
 #include "cmsis_os.h"
 #include "main.h"
-#include "uiView.h"
+#include "uiview.h"
 
 #include "lfrfid.h"
 
@@ -21,27 +37,36 @@
 /*************************** D E F I N E S ************************************/
 #define H10301_DECODED_DATA_SIZE     (3)
 
+static uint8_t* protocol_h10301_get_data(void* proto);
 static bool h10301_decoder_execute(void* proto, uint16_t size, void* dec);
+static bool protocol_h10301_decoder_execute(void* proto, uint16_t size);
 
 /* ============================================================
- * HID H10301 타이밍 기준
+ * HID H10301
  * ============================================================ */
 #define OUTPUT_INVERT	0
-/* 주기 기준 (80/64) */
+/*(80/64) */
 #define PERIOD_ONE_US     80U   // (1,40)+(0,40)
-#define PERIOD_ZERO_US    64U   // (1,32)+(0,32) 근처
+#define PERIOD_ZERO_US    64U   // (1,32)+(0,32)
 #define PERIOD_TOL_PCT    20U   // ±20%
 #define HALF_TOL_PCT      70U   // ±30% (half sanity)
 
-#define EMUL_HALF_ONE_CORR	(0)
-#define EMUL_HALF_ZERO_CORR	(0)
-#define EMUL_HALF_ONE_US  (40 - EMUL_HALF_ONE_CORR)
-#define EMUL_HALF_ZERO_US (32 - EMUL_HALF_ZERO_CORR)
-#define EMUL_PERIOD_ONE_US  (80-2) //(80)
-#define EMUL_PERIOD_ZERO_US (64-2) //(64)
+/* True nominal FSK2a half/period values (fc/10, fc/8 at a 125 kHz field).
+ * The "-2" that used to sit here compensated for the old per-edge ISR path
+ * writing TIM5->ARR = time_us with no inclusive-counter "-1" correction
+ * (rfid_emul_handler(), lfrfid_hal.c, now removed) -- it was never an
+ * interrupt-latency fudge factor; the arithmetic cancels exactly:
+ * (32+1)+(30+1)=64, (40+1)+(38+1)=80 (see lfrfid_dma_tx.c's own header
+ * comment for the full derivation). The new GPDMA2-driven transport
+ * (lfrfid_dma_tx.c) performs that inclusive-counter correction itself,
+ * once, from the real measured TIM5 kernel clock -- so it must not be
+ * duplicated here. */
+#define EMUL_HALF_ONE_US  (40)
+#define EMUL_HALF_ZERO_US (32)
+#define EMUL_PERIOD_ONE_US  (80)
+#define EMUL_PERIOD_ZERO_US (64)
 
-/* ───────── FSK half → symbol 상태 ───────── */
-// 엣지 시간 t_us가 기준 시간 base_us의 절반(T_h)인지 확인 (오차 허용)
+/* ───────── FSK half → symbol  ───────── */
 #define HALF_TOLERANCE_RATIO (1.0f - 0.35f)	// 30%
 #define FULL_TOLERANCE_RATIO (1.0f + 0.35f)	// 30%
 
@@ -69,10 +94,10 @@ static fsk_bit_state_t    bit_st;
 
 uint8_t* protocol_h10301_get_data(void* proto);
 void protocol_h10301_decoder_begin(void* proto);
-bool protocol_h10301_decoder_execute(void* proto, int size);
+bool protocol_h10301_decoder_execute(void* proto, uint16_t size);
 bool protocol_h10301_encoder_begin(void* proto);
 void protocol_h10301encoder_send(void* proto);
-bool protocol_h10301_write_begin(void* protocol, void *data);
+void protocol_h10301_write_begin(void* protocol, void *data);
 void protocol_h10301_write_send(void* proto);
 void protocol_h10301_render_data(void* protocol, char* result);
 
@@ -147,7 +172,7 @@ void h10301_decoder_push_bit(h10301_Decoder_t *dec, uint8_t bit)
 
 /*============================================================================*/
 /**
-  * @brief 내부 유틸 함수들
+  * @brief
   * @param
   * @retval
   */
@@ -200,20 +225,17 @@ bool fsk_symbol_feed(fsk_symbol_state_t *st,
     if (!st || !half || !out_symbol) return false;
 
     if (!st->has_prev) {
-        // 이전 half 없으면 저장만 하고 끝
+
         st->prev_half = *half;
         st->has_prev = true;
         return false;
     }
 
-    // 이전 half + 현재 half 로 하나의 주기 구성
     lfrfid_evt_t h0 = st->prev_half;
     lfrfid_evt_t h1 = *half;
 
-    // 엣지가 번갈아야 정상이라고 가정 (원하면 제거 가능)
     if (h0.edge == h1.edge) {
-        // 이 경우 이전 half를 버리고 현재 half를 새 prev로 삼고 종료
-        st->prev_half = *half;
+         st->prev_half = *half;
         st->has_prev = true;
         return false;
     }
@@ -226,34 +248,18 @@ bool fsk_symbol_feed(fsk_symbol_state_t *st,
     bool near_one  = within_pct(period, PERIOD_ONE_US,  PERIOD_TOL_PCT);
 
     if (!near_zero && !near_one) {
-        // 둘 다 아니면 첫 half 버리고 새 half를 prev로
         st->prev_half = *half;
         st->has_prev  = true;
         return false;
     }
 
-    // 둘 다 걸리면 더 가까운 쪽 선택
     if (near_zero && near_one) {
         uint16_t d0 = abs_u16(period - PERIOD_ZERO_US);
         uint16_t d1 = abs_u16(period - PERIOD_ONE_US);
         near_zero = (d0 <= d1);
         near_one  = !near_zero;
     }
-#if 0
-    // half sanity check (둘 다 이상하면 노이즈)
-    uint16_t ideal_half = near_one ? (PERIOD_ONE_US / 2U)
-                                   : (PERIOD_ZERO_US / 2U);
-    bool h0_ok = within_pct(dt0, ideal_half, HALF_TOL_PCT);
-    bool h1_ok = within_pct(dt1, ideal_half, HALF_TOL_PCT);
 
-    if (!h0_ok && !h1_ok) {
-        // half 둘 다 너무 틀어져 있으면 버리고, 두 번째 half를 새 prev로 저장
-        st->prev_half = *half;
-        st->has_prev  = true;
-        return false;
-    }
-#endif
-    // 여기까지 왔으면 심볼 0 또는 1로 판정
     *out_symbol = near_one ? 1 : 0;
 #else
     st->prev_half = *half;
@@ -266,13 +272,12 @@ bool fsk_symbol_feed(fsk_symbol_state_t *st,
     		 *out_symbol = 0;
     }
 #endif
-    // 두 half 모두 소비된 상태이므로 prev 비움
+
     st->has_prev = false;
 
     return true;
 }
 
-/* ───────── symbol stream → data bit 상태 ───────── */
 /*============================================================================*/
 /**
   * @brief
@@ -313,23 +318,16 @@ bool fsk_bit_feed(fsk_bit_state_t *st,
         else                 cnt0++;
     }
 
-    // 전체 심볼 수
     uint8_t total = st->count;
 
-    // ---- 비트 1 판정 ----
-    // 정상: 1 심볼 5개 이상
-    // 보정: total>=5 이고 1이 4개 이상이면서 0이 1개 이하 → 심볼 하나 빠졌다고 보고 1로 인정
     if (cnt1 >= 5 ||
         (total >= 5 && cnt1 >= 4 && cnt0 <= 1))
     {
         *out_bit = 1;
-        st->count = 0;     // 사용한 심볼들 소비 (필요하면 여기서 일부만 남기는 방식도 가능)
+        st->count = 0;
         return true;
     }
 
-    // ---- 비트 0 판정 ----
-    // 정상: 0 심볼 6개 이상
-    // 보정: total>=6 이고 0이 5개 이상이면서 1이 1개 이하 → 심볼 하나 빠졌다고 보고 0으로 인정
     if (cnt0 >= 6 ||
         (total >= 6 && cnt0 >= 5 && cnt1 <= 1))
     {
@@ -344,7 +342,7 @@ bool fsk_bit_feed(fsk_bit_state_t *st,
 
 /*============================================================================*/
 /**
-  * @brief 심볼 pair decode (01→0, 10→1)
+  * @brief
   * @param
   * @retval
   */
@@ -359,7 +357,7 @@ static bool decode_symbol_pair(uint8_t p, uint8_t *out)
 
 /*============================================================================*/
 /**
-  * @brief 96bit frame → 26bit payload 추출
+  * @brief
   * @param
   * @retval
   */
@@ -388,7 +386,7 @@ static bool decode_payload_26bits(const uint32_t *frame, uint32_t *out)
 
 /*============================================================================*/
 /**
-  * @brief parity 검사
+  * @brief
   * @param
   * @retval
   */
@@ -412,7 +410,7 @@ static bool h10301_parity_check(uint32_t raw26)
 
 /*============================================================================*/
 /**
-  * @brief 공개: 96bit frame이 H10301인지 판별
+  * @brief
   * @param
   * @retval
   */
@@ -441,7 +439,7 @@ bool h10301_is_valid(const uint32_t *frame)
 
 /*============================================================================*/
 /**
-  * @brief 공개: 96bit frame → raw26
+  * @brief
   * @param
   * @retval
   */
@@ -462,7 +460,7 @@ bool h10301_extract_raw26(const uint32_t *frame, uint32_t *out_raw26)
 
 /*============================================================================*/
 /**
-  * @brief 공개: raw26 → facility/card
+  * @brief
   * @param
   * @retval
   */
@@ -497,31 +495,25 @@ bool h10301_decoder_execute(void* proto, uint16_t size, void* dec)
     for (int i = 0; i < size; i++) {
         uint8_t symbol;
 
-        // half 하나씩 넣기 (쌍이 완성되면 symbol 출력)
         if (fsk_symbol_feed(&sym_st, &evt[i], &symbol)) {
 
             uint8_t bit;
             if (fsk_bit_feed(&bit_st, symbol, &bit)) {
-                // 여기서 bit는 최종 데이터 비트 (0 또는 1)
-                // 예: printf("DATA BIT = %u\n", bit);
+
             	h10301_decoder_push_bit(dec, bit);
 
-                // 2) 96비트가 채워졌으면 H10301 프레임인지 확인
-                if (h10301_decoder_is_full(dec)) {
+                 if (h10301_decoder_is_full(dec)) {
                     const uint32_t *frame = h10301_decoder_frame(dec);
 
                     if (h10301_is_valid(frame)) {
                         uint32_t raw26;
 
-                        // 3) 26비트 raw 추출
                         if (h10301_extract_raw26(frame, &raw26)) {
                             uint8_t  facility;
                             uint16_t card;
 
-                            // 4) facility / card number 추출
                             if (h10301_extract_fields(raw26, &facility, &card)) {
-                                // 여기서 facility, card를 사용하면 됨
-                                // 예: 디버그 출력
+
 #if 1
                                 //M1_LOG_I("RFID","HID H10301: FC=%u, Card=%u\n", facility, card);
 
@@ -551,7 +543,7 @@ bool h10301_decoder_execute(void* proto, uint16_t size, void* dec)
 /*============================================================================*/
 /*============================================================================*/
 /**
-  * @brief buf[ ] 안의 bit_index(0..N-1) 비트를 MSB-first 기준으로 읽기
+  * @brief
   * @param
   * @retval
   */
@@ -566,7 +558,7 @@ static uint8_t get_bit(const uint8_t *buf, int bit_index)
 
 /*============================================================================*/
 /**
-  * @brief buf[ ] 안의 bit_index(0..N-1) 비트를 MSB-first 기준으로 쓰기
+  * @brief
   * @param
   * @retval
   */
@@ -613,48 +605,32 @@ static uint8_t parity_odd12(uint16_t v12)
 
 
 /*============================================================================*/
-/*
- * 24비트 UID 바이트 배열 → 26비트(EP + UID_H12 + UID_L12 + OP)
- *  - uid_bytes: MSB-first (예: [0]=상위 바이트)
- *  - uid_len: 보통 3
- *  - out26[4]: 26비트 패킹된 결과 (MSB-first)
- *
- * 비트 구조:
- *   bit25 ........ bit0
- *    EP | UID_H(12) | UID_L(12) | OP
- */
+/**
+  * @brief
+  * @param
+  * @retval
+  */
 /*============================================================================*/
 void uid24_to_hid26_bytes(const uint8_t *uid_bytes, int uid_len,
                                  uint8_t out26[4])
 {
     memset(out26, 0, 4);
 
-    /* uid_len이 3바이트 이하일 때도 처리 가능하게 구성 */
     uint32_t b0 = (uid_len > 0 ? uid_bytes[0] : 0);
     uint32_t b1 = (uid_len > 1 ? uid_bytes[1] : 0);
     uint32_t b2 = (uid_len > 2 ? uid_bytes[2] : 0);
 
-    /* UID 상위 12비트 */
     uint16_t uid_high =
-          ((b0 << 4) | (b1 >> 4))   // 상위 12bit
+          ((b0 << 4) | (b1 >> 4))
         & 0x0FFF;
 
-    /* UID 하위 12비트 */
     uint16_t uid_low =
-          (((b1 & 0x0F) << 8) | b2) // 하위 12bit
+          (((b1 & 0x0F) << 8) | b2)
         & 0x0FFF;
 
-    /* 패리티 */
     uint8_t ep = parity_even12(uid_high);
     uint8_t op = parity_odd12(uid_low);
 
-    /*
-     * 패킹된 26bit 만들기:
-     *  bit25 = EP
-     *  bit24..13 = UID_H(12)
-     *  bit12..1  = UID_L(12)
-     *  bit0      = OP
-     */
     uint32_t w26 = 0;
 
     w26 |= (uint32_t)ep         << 25;
@@ -662,10 +638,6 @@ void uid24_to_hid26_bytes(const uint8_t *uid_bytes, int uid_len,
     w26 |= (uint32_t)uid_low    <<  1;
     w26 |= (uint32_t)op;
 
-    /*
-     * out26[0]의 MSB가 bit25에 오도록 정렬 (상위 26bit)
-     * 총 32비트 중 상위 6비트는 0
-     */
     uint32_t tmp = w26 << 6;
 
     out26[0] = (tmp >> 24) & 0xFF;
@@ -676,23 +648,19 @@ void uid24_to_hid26_bytes(const uint8_t *uid_bytes, int uid_len,
 
 
 /*============================================================================*/
-/*
- * Preamble(8), Company(14), CardFormat(22)
- * → 44bit Header를 6바이트 배열(MSB-first)로 패킹
- *
- * header44[0]의 MSB = Header 비트 43
- * header44[5]의 LSB = Header 비트 0
- */
+/**
+  * @brief
+  * @param
+  * @retval
+  */
 /*============================================================================*/
 void make_header44_bytes(uint8_t preamble8,
                          uint16_t company14,
                          uint32_t cardfmt22,
                          uint8_t header44[6])
 {
-    // 초기화
     memset(header44, 0, 6);
 
-    // 유효 비트만 사용
     company14 &= 0x3FFF;   // 14bit
     cardfmt22 &= 0x3FFFFF; // 22bit
 
@@ -701,37 +669,30 @@ void make_header44_bytes(uint8_t preamble8,
 
     // bit35..bit22 : company14 (14bit)
     //  - header44[1] = company[13:6]
-    //  - header44[2] 상위 6bit = company[5:0]
+    //  - header44[2] upper 6bit = company[5:0]
     header44[1] = (uint8_t)(company14 >> 6);          // company[13:6]
     header44[2] = (uint8_t)((company14 & 0x3F) << 2); // company[5:0] << 2
 
     // bit21..bit0 : cardfmt22 (22bit)
-    //  남은 비트 배치:
-    //   header44[2] 하위 2bit = cardfmt[21:20]
+    //   header44[2] lower 2bit = cardfmt[21:20]
     //   header44[3] = cardfmt[19:12]
     //   header44[4] = cardfmt[11:4]
-    //   header44[5] 상위 4bit = cardfmt[3:0], 하위 4bit = 0
+    //   header44[5] upper 4bit = cardfmt[3:0], lower 4bit = 0
     header44[2] |= (uint8_t)(cardfmt22 >> 20);          // cardfmt[21:20]
 
     header44[3] = (uint8_t)((cardfmt22 >> 12) & 0xFF);  // cardfmt[19:12]
     header44[4] = (uint8_t)((cardfmt22 >>  4) & 0xFF);  // cardfmt[11:4]
 
-    header44[5] = (uint8_t)((cardfmt22 & 0x0F) << 4);   // cardfmt[3:0] → 상위 4bit
-    // 하위 4비트는 자동으로 0 (초기 memset 덕분에)
+    header44[5] = (uint8_t)((cardfmt22 & 0x0F) << 4);   // cardfmt[3:0] → upper 4bit
 }
 
 
 /*============================================================================*/
-/*
- * 일반화된 맨체스터 인코더
- *
- *  - in       : 입력 바이트 배열 (MSB-first 비트열)
- *  - in_bits  : 사용할 비트 개수 (예: 26)
- *  - out      : 출력 바이트 배열 (MSB-first 비트열, bit-packed)
- *  - out_size : out 버퍼 크기 (바이트 단위)
- *
- * 규칙: 0 → 01,  1 → 10
- */
+/**
+  * @brief
+  * @param
+  * @retval
+  */
 /*============================================================================*/
 void manchester_encode_bits(const uint8_t *in, int in_bits,
                             uint8_t *out, int out_size)
@@ -741,27 +702,22 @@ void manchester_encode_bits(const uint8_t *in, int in_bits,
     int out_bit = 0;
 
     for (int i = 0; i < in_bits; ++i) {
-        uint8_t b  = get_bit(in, i);      // in[i]번째 비트
+        uint8_t b  = get_bit(in, i);
         uint8_t m0 = b ? 1 : 0;
         uint8_t m1 = b ? 0 : 1;
 
         set_bit(out, out_bit++, m0);
         set_bit(out, out_bit++, m1);
     }
-    // out_bit = in_bits * 2 (필요 시 범위 체크 가능)
 }
 
 
 /*============================================================================*/
-/*
- * header44 : 6바이트 (bit0..43)
- * man52    : 7바이트 (맨체스터 결과, bit0..51 사용)
- * out12    : 최종 96비트 (MSB-first, 12바이트)
- *
- * 최종 비트 구성:
- *   bit  0..43  = header44 (44bit)
- *   bit 44..95  = manchester52 (52bit)
- */
+/**
+  * @brief
+  * @param
+  * @retval
+  */
 /*============================================================================*/
 void combine_header_and_credential(const uint8_t header44[6],
                                    const uint8_t man52[7],
@@ -785,16 +741,11 @@ void combine_header_and_credential(const uint8_t header44[6],
 
 
 /*============================================================================*/
-/*
- * 최상위 편의 함수
- *
- * uid_bytes   : 24bit UID 바이트 배열(MSB-first, 보통 3바이트)
- * uid_len     : UID 길이
- * preamble8   : Preamble(8bit)
- * company14   : Company(14bit)
- * format22    : CardFormat(22bit)
- * raw96_12    : 최종 96bit (12바이트, MSB-first)
- */
+/**
+  * @brief
+  * @param
+  * @retval
+  */
 /*============================================================================*/
 void uid_bytes_to_h10301_raw96_bytes(const uint8_t *uid_bytes, int uid_len,
                                      uint8_t preamble8,
@@ -802,28 +753,23 @@ void uid_bytes_to_h10301_raw96_bytes(const uint8_t *uid_bytes, int uid_len,
                                      uint32_t format22,
                                      uint8_t raw96_12[12])
 {
-    // 2) UID24 → 26bit 데이터(EP/UID/OP) → 4바이트 패킹
     uint8_t data26[4];
     uid24_to_hid26_bytes(uid_bytes, uid_len, data26);
 
-    // 3) Header44(Preamble+Company+Format) → 6바이트
     uint8_t header44[6];
     make_header44_bytes(preamble8, company14, format22, header44);
 
-    // 4) 26bit 데이터(4바이트) → Manchester 52bit(7바이트)
     uint8_t man52[7];
     manchester_encode_bits(data26, 26, man52, sizeof(man52));
 
-    // 5) Header44 + Manchester52 → 최종 96bit(12바이트)
     combine_header_and_credential(header44, man52, raw96_12);
 }
 
 
 /*============================================================================*/
 /**
- * raw[ ] 안에서 bit_index(0..95)번째 비트를 MSB-first 기준으로 읽기
- * raw[0]의 MSB가 bit 0
-   * @param
+  * @brief
+  * @param
   * @retval
   */
 /*============================================================================*/
@@ -850,7 +796,6 @@ int h10301_raw96_to_wave(const uint8_t raw96[12],
 {
     size_t idx = 0;
 
-    /* BSRR SET/RESET 값을 내부에서 자동 생성 */
     uint32_t bsrr_set   = 1u << gpio_pin;        // HIGH
     uint32_t bsrr_reset = 1u << (gpio_pin + 16); // LOW
 
@@ -875,25 +820,25 @@ int h10301_raw96_to_wave(const uint8_t raw96[12],
         for (int i = 0; i < repeat; ++i)
         {
 #if OUTPUT_INVERT	// invert
-            /* LOW 구간 */
+            /* LOW  */
             if (idx >= max_steps) goto overflow;
             steps[idx].bsrr    = bsrr_reset;
             steps[idx].time_us = half_us;
             idx++;
 
-            /* HIGH 구간 */
+            /* HIGH  */
             if (idx >= max_steps) goto overflow;
             steps[idx].bsrr    = bsrr_set;
             steps[idx].time_us = period_us;
             idx++;
 #else
-            /* LOW 구간 */
+            /* LOW  */
             if (idx >= max_steps) goto overflow;
             steps[idx].bsrr    = bsrr_set;
             steps[idx].time_us = half_us;
             idx++;
 
-            /* HIGH 구간 */
+            /* HIGH  */
             if (idx >= max_steps) goto overflow;
             steps[idx].bsrr    = bsrr_reset;
             steps[idx].time_us = period_us;
@@ -907,7 +852,7 @@ int h10301_raw96_to_wave(const uint8_t raw96[12],
 
 overflow:
     if (out_step_count) *out_step_count = idx;
-    return -1;  // 버퍼 부족
+    return -1;
 }
 
 
@@ -920,7 +865,6 @@ overflow:
 /*============================================================================*/
 void protocol_h10301_decoder_begin(void* proto)
 {
-    (void)proto; /* Unused: stub for future work. May need removal later. */
 	h10301_decoder_init(&g_h10301_dec);
 
     fsk_symbol_state_init(&sym_st);
@@ -935,10 +879,10 @@ void protocol_h10301_decoder_begin(void* proto)
   * @retval
   */
 /*============================================================================*/
-bool protocol_h10301_decoder_execute(void* proto, int size)
+bool protocol_h10301_decoder_execute(void* proto, uint16_t size)
 {
 	lfrfid_evt_t* p = (lfrfid_evt_t*)proto;
-	return h10301_decoder_execute(p, (uint16_t)size, &g_h10301_dec);
+	return h10301_decoder_execute(p, size, &g_h10301_dec);
 }
 
 
@@ -951,7 +895,6 @@ bool protocol_h10301_decoder_execute(void* proto, int size)
 /*============================================================================*/
 bool protocol_h10301_encoder_begin(void* proto)
 {
-    (void)proto; /* Unused: stub for future work. May need removal later. */
     uint8_t output_raw[12];
 
     uint8_t uid[3] = { 0, };
@@ -959,8 +902,8 @@ bool protocol_h10301_encoder_begin(void* proto)
     memcpy(uid,lfrfid_tag_info.uid,sizeof(uid));
 
     uint8_t  Preamble  = 0x1D;      	// Preamble(8bit)
-    uint16_t Company = 0x1556;    		// Company(14bit 유효)
-    uint32_t CardFormat  = 0x155556;	// CardFormat(22bit 유효)
+    uint16_t Company = 0x1556;    		// Company(14bit )
+    uint32_t CardFormat  = 0x155556;	// CardFormat(22bit )
 
     uid_bytes_to_h10301_raw96_bytes(uid, uid_len, Preamble, Company, CardFormat, output_raw);
 
@@ -979,18 +922,10 @@ bool protocol_h10301_encoder_begin(void* proto)
 /*============================================================================*/
 void protocol_h10301encoder_send(void* proto)
 {
-    (void)proto; /* Unused: stub for future work. May need removal later. */
 	lfrfid_encoded_data.index = 0;
 	//lfrfid_emul_length = 128;	// modify
 	lfrfid_emul_hw_init();
-#if 0
-	App_WaveTx_Init();
 
-    if (!App_WaveTx_Start())
-    {
-        // BUSY or ERROR
-    }
-#endif
 }
 
 
@@ -1003,7 +938,6 @@ void protocol_h10301encoder_send(void* proto)
 /*============================================================================*/
 void protocol_h10301_render_data(void* protocol, char* result)
 {
-    (void)protocol; /* Unused: stub for future work. May need removal later. */
 	uint8_t* data = protocol_h10301_get_data(NULL);
 
     sprintf(
@@ -1026,7 +960,6 @@ void protocol_h10301_render_data(void* protocol, char* result)
 /*============================================================================*/
 uint8_t* protocol_h10301_get_data(void* proto)
 {
-    (void)proto; /* Unused: stub for future work. May need removal later. */
     return lfrfid_tag_info.uid;
 }
 
@@ -1038,7 +971,7 @@ uint8_t* protocol_h10301_get_data(void* proto)
   * @retval
   */
 /*============================================================================*/
-bool protocol_h10301_write_begin(void* protocol, void *data)
+void protocol_h10301_write_begin(void* protocol, void *data)
 {
 	LFRFID_TAG_INFO* tag_data = (LFRFID_TAG_INFO*)protocol;
 	LFRFIDProgram* write = (LFRFIDProgram*)data;
@@ -1049,8 +982,8 @@ bool protocol_h10301_write_begin(void* protocol, void *data)
     memcpy(uid,tag_data->uid,sizeof(uid));
 
     uint8_t  Preamble  = 0x1D;      	// Preamble(8bit)
-    uint16_t Company = 0x1556;    		// Company(14bit 유효)
-    uint32_t CardFormat  = 0x155556;	// CardFormat(22bit 유효)
+    uint16_t Company = 0x1556;    		// Company(14bit )
+    uint32_t CardFormat  = 0x155556;	// CardFormat(22bit )
 
     uid_bytes_to_h10301_raw96_bytes(uid, uid_len, Preamble, Company, CardFormat, encoded_data);
 
@@ -1064,7 +997,7 @@ bool protocol_h10301_write_begin(void* protocol, void *data)
 		}
 	}
 #endif
-    return true;
+
 }
 
 
@@ -1077,6 +1010,6 @@ bool protocol_h10301_write_begin(void* protocol, void *data)
 /*============================================================================*/
 void protocol_h10301_write_send(void* proto)
 {
-    (void)proto; /* Unused: stub for future work. May need removal later. */
+
 	t5577_execute_write(lfrfid_program, 0);
 }

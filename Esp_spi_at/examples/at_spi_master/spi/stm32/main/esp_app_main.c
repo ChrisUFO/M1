@@ -160,7 +160,7 @@ static void spi_master_request_to_write(uint8_t send_seq, uint16_t send_len)
 static int8_t spi_write_data(uint8_t* buf, int32_t len)
 {
     if (len > SPI_TRANS_MAX_LEN) {
-        M1_LOG_E(TAG, "Send length error, len:%ld\r\n", len);
+        //M1_LOG_E(TAG, "Send length error, len:%ld\r\n", len);
         return -1;
     }
     at_spi_master_send_data(buf, len);
@@ -174,7 +174,7 @@ static int32_t write_data_to_spi_task_tx_ring_buf(const void* data, size_t size)
     int32_t length = size;
 
     if (data == NULL  || length > STREAM_BUFFER_SIZE) {
-        M1_LOG_E(TAG, "Write data error, len:%ld\r\n", length);
+        //M1_LOG_E(TAG, "Write data error, len:%ld\r\n", length);
         return -1;
     }
 
@@ -212,7 +212,7 @@ static void spi_trans_control_task(void* arg)
     uint8_t *trans_data = (uint8_t*)malloc(SPI_TRANS_MAX_LEN * sizeof(uint8_t));
     if (trans_data == NULL)
     {
-        M1_LOG_E(TAG, "malloc fail\r\n");
+        //M1_LOG_E(TAG, "malloc fail\r\n");
         return;
     }
 
@@ -225,14 +225,14 @@ static void spi_trans_control_task(void* arg)
         if (recv_opt.direct == SPI_WRITE)
         {
             if (plan_send_len == 0) {
-                M1_LOG_E(TAG, "master want send data but length is 0\r\n");
+                //M1_LOG_E(TAG, "master want send data but length is 0\r\n");
                 continue;
             }
 
             if (recv_opt.seq_num != current_send_seq) {
-                M1_LOG_E(TAG, "SPI send seq error, %x, %x\r\n", recv_opt.seq_num, current_send_seq);
+                //M1_LOG_E(TAG, "SPI send seq error, %x, %x\r\n", recv_opt.seq_num, current_send_seq);
                 if (recv_opt.seq_num == 1) {
-                    M1_LOG_E(TAG, "Maybe SLAVE restart, ignore\r\n");
+                    //M1_LOG_E(TAG, "Maybe SLAVE restart, ignore\r\n");
                     current_send_seq = recv_opt.seq_num;
                 } else {
                     break;
@@ -243,13 +243,13 @@ static void spi_trans_control_task(void* arg)
             send_len = xStreamBufferReceive(spi_master_tx_ring_buf, (void*) trans_data, plan_send_len, 0);
 
             if (send_len != plan_send_len) {
-                M1_LOG_E(TAG, "Read len expect %lu, but actual read %lur\n", plan_send_len, send_len);
+                //M1_LOG_E(TAG, "Read len expect %lu, but actual read %lur\n", plan_send_len, send_len);
                 break;
             }
 
             ret = spi_write_data(trans_data, plan_send_len);
             if (ret < 0) {
-                M1_LOG_E(TAG, "Load data error\r\n");
+                //M1_LOG_E(TAG, "Load data error\r\n");
                 return;
             }
 
@@ -266,16 +266,16 @@ static void spi_trans_control_task(void* arg)
         else if (recv_opt.direct == SPI_READ)
         {
             if (recv_opt.seq_num != ((current_recv_seq + 1) & 0xFF)) {
-                M1_LOG_E(TAG, "SPI recv seq error, %x, %x\r\n", recv_opt.seq_num, (current_recv_seq + 1));
+                //M1_LOG_E(TAG, "SPI recv seq error, %x, %x\r\n", recv_opt.seq_num, (current_recv_seq + 1));
                 if (recv_opt.seq_num == 1) {
-                    M1_LOG_E(TAG, "Maybe SLAVE restart, ignore\r\n");
+                    //M1_LOG_E(TAG, "Maybe SLAVE restart, ignore\r\n");
                 } else {
                     break;
                 }
             }
 
             if (recv_opt.transmit_len > STREAM_BUFFER_SIZE || recv_opt.transmit_len == 0) {
-                M1_LOG_E(TAG, "SPI read len error, %x\r\n", recv_opt.transmit_len);
+                //M1_LOG_E(TAG, "SPI read len error, %x\r\n", recv_opt.transmit_len);
                 break;
             }
 
@@ -292,7 +292,7 @@ static void spi_trans_control_task(void* arg)
     		app_resp = (uint8_t *)malloc(recv_opt.transmit_len + 1);
     		if (!app_resp)
     		{
-    			M1_LOG_E(TAG, "Failed to allocate app_resp %d\r\n", recv_opt.transmit_len + 1);
+    			//M1_LOG_E(TAG, "Failed to allocate app_resp %d\r\n", recv_opt.transmit_len + 1);
     			return;
     		}
     		strcpy(app_resp, trans_data);
@@ -302,7 +302,7 @@ static void spi_trans_control_task(void* arg)
     		elem = (esp_queue_elem_t*)malloc(sizeof(esp_queue_elem_t));
 			if (!elem)
 			{
-				M1_LOG_E(TAG, "%s %u: Malloc failed\n",__func__,__LINE__);
+				//M1_LOG_E(TAG, "%s %u: Malloc failed\n",__func__,__LINE__);
 				return;
 			}
 			elem->buf = app_resp;
@@ -310,7 +310,7 @@ static void spi_trans_control_task(void* arg)
 			elem->uid = current_uid;
 			if ( esp_queue_put(ctrl_msg_Q, (void*)elem) )
 			{
-				M1_LOG_E(TAG, "%s %u: ctrl Q put fail\r\n",__func__,__LINE__);
+				//M1_LOG_E(TAG, "%s %u: ctrl Q put fail\r\n",__func__,__LINE__);
 				if (elem)
 					free(elem);
 				return;
@@ -320,7 +320,7 @@ static void spi_trans_control_task(void* arg)
         } // else if (recv_opt.direct == SPI_READ)
         else
         {
-            M1_LOG_D(TAG, "Unknown direct: %d", recv_opt.direct);
+            //M1_LOG_D(TAG, "Unknown direct: %d", recv_opt.direct);
             spi_mutex_unlock();
             continue;
         }
@@ -374,7 +374,7 @@ static uint8_t *spi_AT_app_get_response(int *read_len, uint32_t *uid, int timeou
 	/* 1. Any problems in response, return NULL */
 	if (!read_len)
 	{
-		M1_LOG_E(TAG, "Invalid input parameter\r\n");
+		//M1_LOG_E(TAG, "Invalid input parameter\r\n");
 		return NULL;
 	}
 
@@ -386,7 +386,7 @@ static uint8_t *spi_AT_app_get_response(int *read_len, uint32_t *uid, int timeou
 	ret = xSemaphoreTake(esp_resp_read_sem, SEC_TO_MILLISEC(timeout_sec));
 	if (ret!=pdPASS)
 	{
-		M1_LOG_E(TAG, "ESP response timed out after %u sec\r\n", timeout_sec);
+		//M1_LOG_E(TAG, "ESP response timed out after %u sec\r\n", timeout_sec);
 		xSemaphoreGive(esp_ctrl_req_sem);
 		return NULL;
 	}
@@ -403,13 +403,14 @@ static uint8_t *spi_AT_app_get_response(int *read_len, uint32_t *uid, int timeou
 		*uid = elem->uid;
 		buf = elem->buf;
 		free(elem);
+		// B.N @ MonstaTek 2025
 		if ( esp_queue_check(ctrl_msg_Q) ) // There's still data in the queue?
 			xSemaphoreGive(esp_resp_read_sem); // Give the app the chance to read again
 		return buf;
 	}
 	else
 	{
-		M1_LOG_E(TAG, "Ctrl Q empty or uninitialized\r\n");
+		//M1_LOG_E(TAG, "Ctrl Q empty or uninitialized\r\n");
 		return NULL;
 	}
 
@@ -424,7 +425,7 @@ static void init_master_hd(spi_device_handle_t* spi)
 	/* queue init */
 	ctrl_msg_Q = create_esp_queue();
 	if (!ctrl_msg_Q) {
-		M1_LOG_E(TAG, "Failed to create app ctrl msg Q\r\n");
+		//M1_LOG_E(TAG, "Failed to create app ctrl msg Q\r\n");
 		return;
 	}
     // Create the message queue.
@@ -464,13 +465,13 @@ static void init_master_hd(spi_device_handle_t* spi)
     spi_mutex_lock();
 
     spi_recv_opt_t recv_opt = query_slave_data_trans_info();
-    M1_LOG_I(TAG, "now direct:%u\r\n", recv_opt.direct);
+    //M1_LOG_I(TAG, "now direct:%u\r\n", recv_opt.direct);
 
     if (recv_opt.direct == SPI_READ) { // if slave in waiting response status, master need to give a read done single.
         if (recv_opt.seq_num != ((current_recv_seq + 1) & 0xFF)) {
-            M1_LOG_E(TAG, "SPI recv seq error, %x, %x\r\n", recv_opt.seq_num, (current_recv_seq + 1));
+            //M1_LOG_E(TAG, "SPI recv seq error, %x, %x\r\n", recv_opt.seq_num, (current_recv_seq + 1));
             if (recv_opt.seq_num == 1) {
-                M1_LOG_E(TAG, "Maybe SLAVE restart, ignore\r\n");
+                //M1_LOG_E(TAG, "Maybe SLAVE restart, ignore\r\n");
             }
         }
         current_recv_seq = recv_opt.seq_num;
@@ -644,293 +645,11 @@ uint8_t wifi_ap_scan_list(ctrl_cmd_t *app_req)
 	} // if ( ret==SUCCESS )
 	else
 	{
-		M1_LOG_E(TAG, "Response not received\r\n");
+		//M1_LOG_E(TAG, "Response not received\r\n");
 	}
 
 	return ret;
 } // uint8_t wifi_ap_scan_list(ctrl_cmd_t *app_req)
-
-
-
-uint8_t wifi_connect_ap(ctrl_cmd_t *app_req)
-{
-	char *rx_buf = NULL;
-	char *resp_buf = NULL;
-	int rx_buf_len = 0;
-	uint32_t rx_uid;
-	uint8_t ret;
-	uint32_t tick_t0, tick_pass;
-	char connect_cmd[128];
-	
-	tick_t0 = HAL_GetTick();
-	esp_queue_reset(ctrl_msg_Q);
-	
-	// Build connect command: AT+CWJAP="ssid","pwd"
-	const char* ssid = (const char*)app_req->u.wifi_ap_config.ssid;
-	const char* pwd = (const char*)app_req->u.wifi_ap_config.pwd;
-	
-	if (pwd && strlen(pwd) > 0) {
-		snprintf(connect_cmd, sizeof(connect_cmd), "AT+CWJAP=\"%s\",\"%s\"\r\n", ssid, pwd);
-	} else {
-		snprintf(connect_cmd, sizeof(connect_cmd), "AT+CWJAP=\"%s\"\r\n", ssid);
-	}
-	
-	app_req->at_cmd = strdup(connect_cmd);
-	app_req->cmd_resp = strdup(ESP32C6_AT_RES_OK);
-	app_req->cmd_len = strlen(app_req->at_cmd);
-	
-	ret = spi_AT_app_send_command(app_req);
-	if (ret == SUCCESS) {
-		ret = ERROR;
-		while (true) {
-			tick_pass = HAL_GetTick() - tick_t0;
-			tick_pass /= MILLISEC_TO_SEC;
-			if (tick_pass) {
-				tick_t0 += MILLISEC_TO_SEC;
-				if (app_req->cmd_timeout_sec > tick_pass) {
-					app_req->cmd_timeout_sec -= tick_pass;
-				} else {
-					break; // Timeout
-				}
-			}
-			esp_free_mem(&resp_buf);
-			rx_buf = spi_AT_app_get_response(&rx_buf_len, &rx_uid, app_req->cmd_timeout_sec);
-			resp_buf = rx_buf;
-			rx_buf = m1_resp_string_strip(rx_buf, CR_LF);
-			if (!rx_buf)
-				continue;
-			if (rx_uid != current_uid)
-				continue;
-			if (strcmp(rx_buf, app_req->cmd_resp) == 0) {
-				ret = SUCCESS;
-				break;
-			}
-			// Check for error response
-			if (strstr(rx_buf, "ERROR") || strstr(rx_buf, "FAIL")) {
-				ret = ERROR;
-				break;
-			}
-		}
-	}
-	
-	esp_free_mem(&resp_buf);
-	esp_free_mem(&app_req->at_cmd);
-	esp_free_mem(&app_req->cmd_resp);
-	
-	if (ret == SUCCESS) {
-		app_req->msg_type = CTRL_RESP;
-		app_req->resp_event_status = SUCCESS;
-	} else {
-		M1_LOG_E(TAG, "WiFi connect failed\r\n");
-	}
-	
-	return ret;
-} // uint8_t wifi_connect_ap(ctrl_cmd_t *app_req)
-
-
-
-uint8_t wifi_get_ap_config(ctrl_cmd_t *app_req)
-{
-	char *rx_buf = NULL;
-	char *resp_buf = NULL;
-	int rx_buf_len = 0;
-	uint32_t rx_uid;
-	uint8_t ret;
-	uint32_t tick_t0, tick_pass;
-	bool got_ap_info = false;
-
-	tick_t0 = HAL_GetTick();
-	esp_queue_reset(ctrl_msg_Q);
-
-	memset(&app_req->u.wifi_ap_config, 0, sizeof(app_req->u.wifi_ap_config));
-	strncpy((char *)app_req->u.wifi_ap_config.status, "DISCONNECTED", STATUS_LENGTH - 1);
-
-	app_req->at_cmd = strdup(CONCAT_CMD_PARAM(ESP32C6_AT_REQ_GET_AP_CONFIG, ""));
-	app_req->cmd_resp = strdup(ESP32C6_AT_RES_OK);
-	app_req->cmd_len = strlen(app_req->at_cmd);
-
-	ret = spi_AT_app_send_command(app_req);
-	if (ret == SUCCESS) {
-		ret = ERROR;
-		while (true) {
-			tick_pass = HAL_GetTick() - tick_t0;
-			tick_pass /= MILLISEC_TO_SEC;
-			if (tick_pass) {
-				tick_t0 += MILLISEC_TO_SEC;
-				if (app_req->cmd_timeout_sec > tick_pass) {
-					app_req->cmd_timeout_sec -= tick_pass;
-				} else {
-					break;
-				}
-			}
-
-			esp_free_mem(&resp_buf);
-			rx_buf = spi_AT_app_get_response(&rx_buf_len, &rx_uid, app_req->cmd_timeout_sec);
-			resp_buf = rx_buf;
-			rx_buf = m1_resp_string_strip(rx_buf, CR_LF);
-			if (!rx_buf) {
-				continue;
-			}
-			if (rx_uid != current_uid) {
-				continue;
-			}
-
-			if (strncmp(rx_buf, ESP32C6_AT_RES_CONNECT_AP_KEY, strlen(ESP32C6_AT_RES_CONNECT_AP_KEY)) == 0) {
-				/* Expected format: +CWJAP:"ssid","bssid",channel,rssi */
-				char *q1 = strchr(rx_buf, '"');
-				if (q1) {
-					char *q2 = strchr(q1 + 1, '"');
-					if (q2) {
-						size_t ssid_len = (size_t)(q2 - (q1 + 1));
-						if (ssid_len >= SSID_LENGTH) {
-							ssid_len = SSID_LENGTH - 1;
-						}
-						memcpy(app_req->u.wifi_ap_config.ssid, q1 + 1, ssid_len);
-						app_req->u.wifi_ap_config.ssid[ssid_len] = 0;
-						strncpy((char *)app_req->u.wifi_ap_config.status, "CONNECTED", STATUS_LENGTH - 1);
-						got_ap_info = true;
-					}
-				}
-
-				char *last_comma = strrchr(rx_buf, ',');
-				if (last_comma) {
-					app_req->u.wifi_ap_config.rssi = atoi(last_comma + 1);
-				}
-				continue;
-			}
-
-			if (strcmp(rx_buf, app_req->cmd_resp) == 0) {
-				ret = SUCCESS;
-				break;
-			}
-			if (strstr(rx_buf, "ERROR") || strstr(rx_buf, "No AP") || strstr(rx_buf, "FAIL")) {
-				ret = ERROR;
-				break;
-			}
-		}
-	}
-
-	esp_free_mem(&resp_buf);
-	esp_free_mem(&app_req->at_cmd);
-	esp_free_mem(&app_req->cmd_resp);
-
-	if (ret == SUCCESS && got_ap_info) {
-		/* Optional second query for IP */
-		tick_t0 = HAL_GetTick();
-		app_req->at_cmd = strdup(CONCAT_CMD_PARAM(ESP32C6_AT_REQ_GET_IP_STATUS, ""));
-		app_req->cmd_resp = strdup(ESP32C6_AT_RES_OK);
-		app_req->cmd_len = strlen(app_req->at_cmd);
-		if (spi_AT_app_send_command(app_req) == SUCCESS) {
-			while (true) {
-				tick_pass = HAL_GetTick() - tick_t0;
-				tick_pass /= MILLISEC_TO_SEC;
-				if (tick_pass && app_req->cmd_timeout_sec <= tick_pass) {
-					break;
-				}
-				esp_free_mem(&resp_buf);
-				rx_buf = spi_AT_app_get_response(&rx_buf_len, &rx_uid, app_req->cmd_timeout_sec);
-				resp_buf = rx_buf;
-				rx_buf = m1_resp_string_strip(rx_buf, CR_LF);
-				if (!rx_buf || rx_uid != current_uid) {
-					continue;
-				}
-
-				if (strncmp(rx_buf, ESP32C6_AT_RES_IP_STATUS_KEY, strlen(ESP32C6_AT_RES_IP_STATUS_KEY)) == 0) {
-					char *q1 = strchr(rx_buf, '"');
-					if (q1) {
-						char *q2 = strchr(q1 + 1, '"');
-						if (q2) {
-							size_t ip_len = (size_t)(q2 - (q1 + 1));
-							if (ip_len >= MAX_MAC_STR_SIZE) {
-								ip_len = MAX_MAC_STR_SIZE - 1;
-							}
-							memcpy(app_req->u.wifi_ap_config.out_mac, q1 + 1, ip_len);
-							app_req->u.wifi_ap_config.out_mac[ip_len] = 0;
-						}
-					}
-				}
-
-				if (strcmp(rx_buf, app_req->cmd_resp) == 0 || strstr(rx_buf, "ERROR")) {
-					break;
-				}
-			}
-		}
-		esp_free_mem(&resp_buf);
-		esp_free_mem(&app_req->at_cmd);
-		esp_free_mem(&app_req->cmd_resp);
-
-		app_req->msg_type = CTRL_RESP;
-		app_req->resp_event_status = SUCCESS;
-		return SUCCESS;
-	}
-
-	M1_LOG_E(TAG, "Get AP config failed\r\n");
-	return ERROR;
-}
-
-
-
-uint8_t wifi_disconnect_ap(ctrl_cmd_t *app_req)
-{
-	char *rx_buf = NULL;
-	char *resp_buf = NULL;
-	int rx_buf_len = 0;
-	uint32_t rx_uid;
-	uint8_t ret;
-	uint32_t tick_t0, tick_pass;
-
-	tick_t0 = HAL_GetTick();
-	esp_queue_reset(ctrl_msg_Q);
-
-	app_req->at_cmd = strdup(CONCAT_CMD_PARAM(ESP32C6_AT_REQ_DISCONNECT_AP, ""));
-	app_req->cmd_resp = strdup(ESP32C6_AT_RES_OK);
-	app_req->cmd_len = strlen(app_req->at_cmd);
-
-	ret = spi_AT_app_send_command(app_req);
-	if (ret == SUCCESS) {
-		ret = ERROR;
-		while (true) {
-			tick_pass = HAL_GetTick() - tick_t0;
-			tick_pass /= MILLISEC_TO_SEC;
-			if (tick_pass) {
-				tick_t0 += MILLISEC_TO_SEC;
-				if (app_req->cmd_timeout_sec > tick_pass) {
-					app_req->cmd_timeout_sec -= tick_pass;
-				} else {
-					break;
-				}
-			}
-			esp_free_mem(&resp_buf);
-			rx_buf = spi_AT_app_get_response(&rx_buf_len, &rx_uid, app_req->cmd_timeout_sec);
-			resp_buf = rx_buf;
-			rx_buf = m1_resp_string_strip(rx_buf, CR_LF);
-			if (!rx_buf || rx_uid != current_uid) {
-				continue;
-			}
-			if (strcmp(rx_buf, app_req->cmd_resp) == 0) {
-				ret = SUCCESS;
-				break;
-			}
-			if (strstr(rx_buf, "ERROR") || strstr(rx_buf, "FAIL")) {
-				ret = ERROR;
-				break;
-			}
-		}
-	}
-
-	esp_free_mem(&resp_buf);
-	esp_free_mem(&app_req->at_cmd);
-	esp_free_mem(&app_req->cmd_resp);
-
-	if (ret == SUCCESS) {
-		app_req->msg_type = CTRL_RESP;
-		app_req->resp_event_status = SUCCESS;
-	} else {
-		M1_LOG_E(TAG, "WiFi disconnect failed\r\n");
-	}
-
-	return ret;
-}
 
 
 
@@ -1077,7 +796,7 @@ uint8_t ble_advertise(ctrl_cmd_t *app_req)
 					break; // Timeout
 			} // if ( tick_pass )
 			esp_free_mem(&resp_buf);
-			vTaskDelay(100); // Give the system some time to avoid possible crash for unknown reason
+			vTaskDelay(100); // Give the system some time to avoid possible crash for unknown reason! B.N 2025
 			rx_buf = spi_AT_app_get_response(&rx_buf_len, &rx_uid, app_req->cmd_timeout_sec);
 			resp_buf = rx_buf;
 			rx_buf = m1_resp_string_strip(rx_buf, CR_LF);
@@ -1101,7 +820,7 @@ uint8_t ble_advertise(ctrl_cmd_t *app_req)
 			while ( true )
 			{
 				esp_free_mem(&resp_buf);
-				vTaskDelay(100); // Give the system some time to avoid possible crash for unknown reason
+				vTaskDelay(100); // Give the system some time to avoid possible crash for unknown reason! B.N 2025
 				rx_buf = spi_AT_app_get_response(&rx_buf_len, &rx_uid, app_req->cmd_timeout_sec);
 				resp_buf = rx_buf;
 				if ( rx_buf && rx_buf_len)
@@ -1144,7 +863,7 @@ uint8_t ble_advertise(ctrl_cmd_t *app_req)
 	} // if ( ret==SUCCESS )
 	else
 	{
-		M1_LOG_E(TAG, "Response not received\r\n");
+		//M1_LOG_E(TAG, "Response not received\r\n");
 	}
 
 	return ret;
@@ -1219,7 +938,7 @@ uint8_t esp_dev_reset(ctrl_cmd_t *app_req)
 	} // if ( ret==SUCCESS )
 	else
 	{
-		M1_LOG_E(TAG, "Response not received\r\n");
+		//M1_LOG_E(TAG, "Response not received\r\n");
 	}
 
 	return ret;

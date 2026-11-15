@@ -1,9 +1,16 @@
 /* See COPYING.txt for license details. */
 
 /*
- * t5577.h
+ * T5577 LF RFID implementation
+ *
+ * Licensed under the GNU General Public License v3.0 (GPLv3).
+ *
+ * Modifications:
+ *   - Hardware interface adaptation for Monstatek platform
+ *   - Integration into Monstatek firmware framework
+ *
+ * Copyright (C) 2026 Monstatek
  */
-
 #ifndef T5577_H_
 #define T5577_H_
 

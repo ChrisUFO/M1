@@ -1,7 +1,23 @@
 /* See COPYING.txt for license details. */
 
 /*
- * lfrfid_protocol.h
+ * LF RFID (125 kHz) implementation
+ *
+ * Licensed under the GNU General Public License v3.0 (GPLv3).
+ *
+ * Modifications and additional implementation:
+ * Copyright (C) 2026 Monstatek
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ *
+ * See the GNU General Public License for more details.
  */
 
 #ifndef LFRFID_PROTOCOL_H_
@@ -19,6 +35,16 @@ typedef enum {
     LFRFIDProtocolEM4100_32,
     LFRFIDProtocolEM4100_16,
     LFRFIDProtocolH10301,
+    LFRFIDProtocolPyramid,
+    LFRFIDProtocolIoProxXSF,
+    LFRFIDProtocolAWID,
+    LFRFIDProtocolRadioKey,
+    LFRFIDProtocolJablotron,
+    LFRFIDProtocolFDXB,
+    LFRFIDProtocolHIDProx,
+    LFRFIDProtocolHIDExt,
+    LFRFIDProtocolKeri,
+    LFRFIDProtocolNexwatch,
     LFRFIDProtocolMax,
 } LFRFIDProtocol;
 
@@ -76,6 +102,7 @@ typedef struct {
 extern const LFRFIDProtocolBase* lfrfid_protocols[];
 
 void lfrfid_decoder_begin(void);
+void lfrfid_decoder_reset(uint16_t protocol_index);
 bool lfrfid_decoder_execute(uint16_t protocol_index, const lfrfid_evt_t* new_stream, uint8_t stream_count);
 
 bool lfrfid_encoder_begin(uint16_t protocol_index, void* proto);

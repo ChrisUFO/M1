@@ -80,12 +80,15 @@
 			"command": "C:/Program Files/SEGGER/JLink_V854/JLink",
 			"args": [
 				"-CommandFile",
-				"./scripts/program.jlink",				
+				"./scripts/program.jlink"
 			],
 			"options": {
 				"cwd": "${workspaceFolder}"
 			},
+			"dependsOn": [
+				"[Release] Build project"
+			],
 			"problemMatcher": []
-		},		
+		}
 	]
 }

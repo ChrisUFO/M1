@@ -76,8 +76,7 @@ static const CLI_Command_Definition_t xHelpCommand =
     "help",
     "\r\nhelp:\r\n Lists all the registered commands\r\n\r\n",
     prvHelpCommand,
-    0,
-    0 /* cExpectedNumberOfParameters */
+    0
 };
 
 /* The definition of the list of commands.  Commands that are registered are
@@ -160,7 +159,7 @@ BaseType_t FreeRTOS_CLIProcessCommand( const char * const pcCommandInput,
     BaseType_t xReturn = pdTRUE;
     const char * pcRegisteredCommandString;
     size_t xCommandStringLength;
-    uint8_t num_of_params = 0;
+    uint8_t num_of_params;
 
     /* Note:  This function is not re-entrant.  It must not be called from more
      * thank one task. */
@@ -345,7 +344,6 @@ static BaseType_t prvHelpCommand( char * pcWriteBuffer,
     BaseType_t xReturn;
 
     ( void ) pcCommandString;
-    ( void ) num_of_params; /* Unused: stub for future work. May need removal later. */
 
     if( pxCommand == NULL )
     {

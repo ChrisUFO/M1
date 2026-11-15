@@ -122,8 +122,7 @@ static uint8_t m1_sdm_check_low_sdcard(void)
 /*============================================================================*/
 static void m1_sdm_main_task(void *argument)
 {
-	BaseType_t ret = pdFALSE;
-    (void)ret; /* Unused: stub for future work. May need removal later. */
+	BaseType_t ret;
 	S_M1_SdCardManager_Q_t evt;
 
 	(void)argument;
@@ -177,7 +176,7 @@ static void m1_sdm_main_task(void *argument)
 /*============================================================================*/
 static uint8_t m1_sdm_startstop_logging(void)
 {
-	uint8_t ret = 0;
+	uint8_t ret;
 
 	if (sd_logging_active==0)
 	{
@@ -372,7 +371,6 @@ void m1_sdm_task_init(void)
 
 	/* Start thread */
 	ret = xTaskCreate(m1_sdm_main_task, "SDManager_MainTask", M1_TASK_STACK_SIZE_1024, NULL, TASK_PRIORITY_SDCARD_MANAGER, &m1_sdm_task_hdl);
-	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
 	assert(m1_sdm_task_hdl!=NULL);
 
@@ -472,7 +470,9 @@ void m1_sdm_task_stop(void)
 /*============================================================================*/
 static uint8_t m1_sdm_close_datfile(void)
 {
-	return f_close(m1_pdatfile_hdl);
+	uint8_t r = f_close(m1_pdatfile_hdl);
+	M1_LOG_I(M1_LOGDB_TAG, "SDM: f_close=%d\r\n", r);
+	return r;
 } // static uint8_t m1_sdm_close_datfile(void)
 
 
@@ -487,7 +487,9 @@ static uint8_t m1_sdm_close_datfile(void)
 /*============================================================================*/
 static uint8_t m1_sdm_sync_datfile(void)
 {
-	return f_sync(m1_pdatfile_hdl);
+	uint8_t r = f_sync(m1_pdatfile_hdl);
+	M1_LOG_I(M1_LOGDB_TAG, "SDM: f_sync=%d\r\n", r);
+	return r;
 } // static uint8_t m1_sdm_sync_datfile(void)
 
 
@@ -524,7 +526,19 @@ uint32_t m1_sdm_getlastfilenumber(char *dirname, char *prefix)
 	char *filename;
 
 	filename = malloc(strlen(prefix) + 6);
-	assert(filename!=NULL);
+	/* assert() compiles out under NDEBUG (this project's actual ARM release
+	 * build passes -DNDEBUG -- confirmed via compile_commands.json), so it
+	 * was never a real safety net here; a failed allocation would fall
+	 * through to sprintf() on a NULL pointer. This is reachable on every
+	 * new SD-card data file created (not boot-time), so treat it as a
+	 * recoverable failure: report file_n = 0, exactly the value already
+	 * used when the scan below simply finds no matching files. The caller
+	 * (m1_sdm_file_init()) already re-checks existence in its own retry
+	 * loop before using whatever number this returns, so a false "0" here
+	 * cannot cause it to silently reuse/overwrite an existing file -- it
+	 * just costs a few extra existence-check iterations. */
+	if (filename == NULL)
+		return 0;
 	sprintf(filename, "%s*", prefix); // * = wildcard
 	file_n = 0;
 	fr = f_findfirst(&dir, &fno, dirname, filename);  /* Start to search for matching files */
@@ -540,6 +554,10 @@ uint32_t m1_sdm_getlastfilenumber(char *dirname, char *prefix)
 
 	f_closedir(&dir);
 
+	free(filename); /* was never released -- every call (once per new SD-card
+	                 * data file created, e.g. m1_sdm_file_init() below) leaked
+	                 * strlen(prefix)+6 bytes. */
+
 	return file_n;
 } // uint32_t m1_sdm_getlastfilenumber(char *dirname, char *prefix)
 
@@ -547,7 +565,7 @@ uint32_t m1_sdm_getlastfilenumber(char *dirname, char *prefix)
 
 /*============================================================================*/
 /**
-  * @brief  Open file to store raw data and a JSON file with the device configuration
+  * @brief  Open file to store raw data
   * @param  None
   * @retval 1 for f_write error, 2 for mem init error, else 0
   */
@@ -569,18 +587,18 @@ uint8_t m1_sdm_file_init(S_M1_SDM_DatFileInfo_t *pfileinfo)
 	    }
 	} // if (!m1_fb_check_existence(dir_name))
 
-	sprintf((char *)pfileinfo->dat_filename, "%s%s%s_", pfileinfo->file_prefix, pfileinfo->file_infix, pfileinfo->file_suffix);
-	file_number = m1_sdm_getlastfilenumber((char *)pfileinfo->dir_name, (char *)pfileinfo->dat_filename);
+	sprintf(pfileinfo->dat_filename, "%s%s%s_", pfileinfo->file_prefix, pfileinfo->file_infix, pfileinfo->file_suffix);
+	file_number = m1_sdm_getlastfilenumber(pfileinfo->dir_name, pfileinfo->dat_filename);
 	file_number++;
     //srand(HAL_GetTick());
     do
     {
-    	sprintf((char *)pfileinfo->dat_filename, "%s/%s%s%s_%lu%s", pfileinfo->dir_name, pfileinfo->file_prefix, pfileinfo->file_infix, pfileinfo->file_suffix, (unsigned long)file_number++, pfileinfo->file_ext);
-    } while (m1_fb_check_existence((char *)pfileinfo->dat_filename));
+    	sprintf(pfileinfo->dat_filename, "%s/%s%s%s_%d%s", pfileinfo->dir_name, pfileinfo->file_prefix, pfileinfo->file_infix, pfileinfo->file_suffix, file_number++, pfileinfo->file_ext);
+    } while (m1_fb_check_existence(pfileinfo->dat_filename));
 
     m1_pdatfile_hdl = &pfileinfo->dat_file_hdl;
 
-    ret = m1_fb_open_new_file(m1_pdatfile_hdl, (char *)pfileinfo->dat_filename);
+    ret = m1_fb_open_new_file(m1_pdatfile_hdl, pfileinfo->dat_filename);
     if (ret)
     {
     	M1_LOG_E(M1_LOGDB_TAG, "Error creating file on SD card!");
@@ -591,7 +609,7 @@ uint8_t m1_sdm_file_init(S_M1_SDM_DatFileInfo_t *pfileinfo)
     if ( ret )
     {
     	m1_fb_close_file(m1_pdatfile_hdl);
-    	m1_fb_delete_file((char *)pfileinfo->dat_filename);
+    	m1_fb_delete_file(pfileinfo->dat_filename);
     	return 2;
     }
 
@@ -669,7 +687,7 @@ uint8_t m1_sdm_flush_buffer(void)
 		ret = m1_sdm_write_buffer(src, psrc);
 	}
 
-	M1_LOG_N(M1_LOGDB_TAG, "m1_sdm_flush_buffer: buffer_id %d write_size %u q messages: %lu\r\n", sdwrite_buffer_id, (unsigned int)psrc, (unsigned long)q_empty);
+	M1_LOG_N(M1_LOGDB_TAG, "m1_sdm_flush_buffer: buffer_id %d write_size %d q messages: %d\r\n", sdwrite_buffer_id, psrc, q_empty);
 
 	dev_sd_hdl.buff_info.sd_write_buffer_idx = 0;
 	sdwrite_buffer_id = 0;
@@ -797,7 +815,6 @@ uint8_t m1_sdm_fill_buffer(uint8_t *src, uint16_t srcSize)
 /*============================================================================*/
 static void m1_sdm_startup_check(TimerHandle_t xTimer)
 {
-    (void)xTimer; /* Unused: stub for future work. May need removal later. */
 	m1_sdm_task_stop();
 } // static void m1_sdm_startup_check(TimerHandle_t xTimer)
 
@@ -812,7 +829,6 @@ static void m1_sdm_startup_check(TimerHandle_t xTimer)
 /*============================================================================*/
 static void m1_sdm_memory_timer_callback(TimerHandle_t xTimer)
 {
-    (void)xTimer; /* Unused: stub for future work. May need removal later. */
 	S_M1_SdCardManager_Q_t q_item;
 
 	q_item.cmd_opt = M1_SDM_CHECK_SDCARD_USAGE;

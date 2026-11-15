@@ -266,9 +266,7 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
    * @retval
    */
  /*============================================================================*/
- /* ================================
-  *  ?�?�문??무시 문자??비교 (strcasecmp ?��?
-  * ================================ */
+
  static int stricmp_nocase(const char *a, const char *b)
  {
      unsigned char ca, cb;
@@ -298,10 +296,7 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
    * @retval
    */
  /*============================================================================*/
- /* ================================
-  *  ?��? ?�퍼: 공백 구분 Hex 문자????배열
-  *  ?? "36 00 88 F8 82" ??{0x36,0x00,0x88,0xF8,0x82}
-  * ================================ */
+
  static int parse_hex_array_space(const char *str, uint8_t *out, int max_len)
  {
      int count = 0;
@@ -312,29 +307,25 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
 
      while (*str && count < max_len) {
 
-         /* ?�쪽 공백 ?�킵 */
          while (*str == ' ')
              str++;
 
          if (*str == '\0')
              break;
 
-         /* ?�큰 ?�나 복사 */
          int t = 0;
          while (*str != ' ' && *str != '\0' && t < (int)sizeof(token) - 1) {
              token[t++] = *str++;
          }
          token[t] = '\0';
 
-         /* 16진수�?변??*/
          unsigned int value;
          if (sscanf(token, "%x", &value) == 1) {
              out[count++] = (uint8_t)value;
          }
-         /* ?�못???�큰?� 그냥 ?�킵 */
      }
 
-     return count; // 변?�된 바이????
+     return count;
  }
 
 
@@ -345,10 +336,7 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
    * @retval
    */
  /*============================================================================*/
- /* ================================
-  *  ?��? ?�퍼: bool ?�스???�싱
-  *  지?? "1","0","true","false","on","off" (?�?�문??무시)
-  * ================================ */
+
  static bool parse_bool_text(const char *str, bool *out)
  {
      if (str == NULL || out == NULL) return false;
@@ -381,54 +369,17 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
  static int parse_hex_count(const char *str)
  {
      int count = 0;
-#if 0
-     while (*str) {
 
-         /* ?�쪽 공백 ?�킵 */
-         while (*str == ' ')
-             str++;
-
-         /* 종료 */
-         if (*str == '\0')
-             break;
-
-         /* ?�나???�큰 ?�작 ??개수 증�? */
-         count++;
-
-         /* ?�음 공백 ?�는 종료까�? ?�동 */
-         while (*str != ' ' && *str != '\0')
-             str++;
-     }
-#else
      char *tok = strtok((char*)str, " ");
 
      while (tok != NULL) {
     	 count++;
     	 tok = strtok(NULL, " ");
      }
-#endif
+
      return count;
  }
 
-
- /* ================================
-  *  ?�합 ?�서: parse_value()
-  *
-  *  text:  ?�싱??문자??(?? "36 00 88 F8 82", "123", "true", "3.14")
-  *  val :  type / buf / max_len ?�정 ???�출
-  *
-  *  - VALUE_TYPE_HEX_ARRAY:
-  *      buf     : uint8_t* 버퍼
-  *      max_len : buf ?�기
-  *      결과    : buf??바이??채우�? v.hex.out_len ??개수 ?�??
-  *
-  *  - VALUE_TYPE_STRING:
-  *      buf     : char* 버퍼
-  *      max_len : 버퍼 ?�기
-  *      결과    : buf??문자??복사 (null-terminated)
-  *
-  *  반환�? true = ?�공, false = ?�패
-  * ================================ */
  bool parse_value(const char *text, ParsedValue *val)
  {
      if (text == NULL || val == NULL)
@@ -477,12 +428,12 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
          f = strtod(text,&endptr);
 
          if (endptr == text) {
-             // 유효한 숫자를 찾지 못했습니다.
+
              return false;
          }
 
          if (errno == ERANGE) {
-             // 범위 초과 오류 발생
+
              return false;
          }
 
@@ -493,13 +444,7 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
 
          val->v.f = trunc(f * 1000.0) / 1000.0;
          return true;
-#if 0
-         if (sscanf(text, "%f", &f) == 1) {
-             val->v.f = f;
-             return true;
-         }
-         return false;
-#endif
+
      }
 #endif
      case VALUE_TYPE_STRING:
@@ -526,18 +471,27 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
  *               <char *> file_name - the name of the .ini file to read from
  * Returns:      the value located at entry
  *************************************************************************/
- int get_private_profile(ParsedValue *val, const char *entry, const char *file_name)
+ /* Purely-additive: counts real f_open() calls made by this module (one per
+  * single-shot call below, one per profile_session_open() regardless of how
+  * many keys are then read through it). Never read in any decision path. */
+ static uint32_t s_profile_open_count = 0;
+
+ uint32_t get_private_profile_open_count(void) { return s_profile_open_count; }
+ void reset_private_profile_open_count(void) { s_profile_open_count = 0; }
+
+ /* Core scan, operating on an ALREADY-OPEN file positioned wherever the
+  * caller left it (get_private_profile() rewinds via f_open itself;
+  * get_private_profile_session() rewinds explicitly first). Never opens or
+  * closes fp -- that stays the caller's responsibility, which is exactly
+  * what lets a session batch many lookups through one open/close pair.
+  * Body is otherwise byte-for-byte the original get_private_profile() scan:
+  * no parsing-semantics change, just relocated file lifetime. */
+ static int get_private_profile_from_fp(FIL *fp, ParsedValue *val, const char *entry)
  {
-	FIL fp;
-    //char buff[MAX_LINE_LENGTH];
 	char *line_buff;
     char *ep;
-    //char value[6];
     int len = strlen(entry);
-    //int i;
 
-    if( f_open(&fp, file_name,FA_READ) != FR_OK )
-		return(0);
 #if 1
     line_buff = malloc(g_linebuf_size);
     if(line_buff == NULL)
@@ -546,61 +500,52 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
     /* Now that the section has been found, find the entry. */
     do
     {
-    	if( !read_line(&fp,line_buff,g_linebuf_size))
+	if( !read_line(fp,line_buff,g_linebuf_size))
         {
 #if 1
     		safe_free((void*)&line_buff);
 #endif
-      		f_close(&fp);
-            return (0); // EOF???�달, ?��? 찾�? 못함
+            return (0);
         }
 
         if (line_buff[0] == '#') {
-          	continue; // 주석 무시
+          	continue;
         }
 
-        // --- ?�� 콜론 기반???�확????검??로직 ?�용 ?�� ---
 
         char *colon_pos = strchr(line_buff, TOKEN_COLON);
 
         if (colon_pos != NULL) {
 
-        	// 1. 콜론 ?�치????문자(\0)�??�어 ??문자?�을 ?�시 분리
         	*colon_pos = '\0';
 
-            // 2. ??부분의 ?�뒤 공백???�거
             char *current_key = trim(line_buff);
 
-            // 3. 추출???��? 검?�하?�는 ?��? ?�확???�치?�는지 ?�인 (strcmp ?�용)
-            if ((int)strlen(current_key) == len && !strcmp(current_key, entry)) {
+            if (strlen(current_key) == len && !strcmp(current_key, entry)) {
 
-            // 4. ?��? 찾았?��?�? 콜론??복원?�고 루프 ?�출
             	*colon_pos = TOKEN_COLON;
                 break;
             }
-            // 5. 불일�???콜론 복원?�고 ?�음 줄로 진행
+
             *colon_pos = TOKEN_COLON;
         }
-    }while( 1 ); // ?��? 찾을 ?�까지 무한 반복
+    }while( 1 );
 
-    ep = strrchr(line_buff,TOKEN_COLON);    /* 구분???��???(?�재 줄에 콜론???�음??보장) */
+    ep = strrchr(line_buff,TOKEN_COLON);
 
-    // ?�전??콜론???�었지�??�시 모�? ?�러 처리
     if (ep == NULL) {
 #if 1
     	safe_free((void*)&line_buff);
 #endif
-    	f_close(&fp);
     	return 0;
     }
 
-    ep++; // �??�작 ?�치
-    if( !strlen(ep) )          /* 값이 ?�는 경우 */
+    ep++;
+    if( !strlen(ep) )
     {
 #if 1
     	safe_free((void*)&line_buff);
 #endif
-      	f_close(&fp);
         return(0);
     }
     /* Copy only numbers fail on characters */
@@ -614,9 +559,93 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
 #if 1
     safe_free((void*)&line_buff);
 #endif
-    f_close(&fp);                /* Clean up and return the value */
 
 	return 1;
+ }
+
+ int get_private_profile(ParsedValue *val, const char *entry, const char *file_name)
+ {
+	FIL fp;
+	int result;
+
+    if( f_open(&fp, file_name,FA_READ) != FR_OK )
+		return(0);
+    s_profile_open_count++;
+
+    result = get_private_profile_from_fp(&fp, val, entry);
+
+    f_close(&fp);                /* Clean up and return the value */
+
+	return result;
+ }
+
+ bool profile_session_open(ProfileSession *sess, const char *file_name)
+ {
+	if (sess == NULL)
+		return false;
+
+	sess->is_open = (f_open(&sess->fp, file_name, FA_READ) == FR_OK);
+	if (sess->is_open)
+		s_profile_open_count++;
+
+	return sess->is_open;
+ }
+
+ void profile_session_close(ProfileSession *sess)
+ {
+	if (sess != NULL && sess->is_open)
+	{
+		f_close(&sess->fp);
+		sess->is_open = false;
+	}
+ }
+
+ /* Same scan as get_private_profile(), against an already-open session --
+  * rewinds first so each lookup still scans from the top (identical match
+  * semantics; only the repeated open/close is eliminated). */
+ static int get_private_profile_session_core(ParsedValue *val, const char *entry, ProfileSession *sess)
+ {
+	if (sess == NULL || !sess->is_open)
+		return 0;
+
+	f_lseek(&sess->fp, 0);
+
+	return get_private_profile_from_fp(&sess->fp, val, entry);
+ }
+
+ int get_private_profile_session_string(ParsedValue *val, const char *entry, ProfileSession *sess)
+ {
+	val->type = VALUE_TYPE_STRING;
+	return get_private_profile_session_core(val, entry, sess);
+ }
+
+ int get_private_profile_session_hex(ParsedValue *val, const char *entry, ProfileSession *sess)
+ {
+	val->type = VALUE_TYPE_HEX_ARRAY;
+	return get_private_profile_session_core(val, entry, sess);
+ }
+
+ int get_private_profile_session_uint(ParsedValue *val, const char *entry, ProfileSession *sess)
+ {
+	val->type = VALUE_TYPE_UINT32;
+	return get_private_profile_session_core(val, entry, sess);
+ }
+
+ bool isValidHeaderFieldSession(ParsedValue *data, const char* filetype, const char* version, ProfileSession *sess)
+ {
+	if(data == NULL || filetype == NULL || version == NULL || sess == NULL || !sess->is_open){
+		return false;
+	}
+
+	get_private_profile_session_string(data, "Filetype", sess);
+	if(strcmp(data->buf, filetype))
+		return false;
+
+	get_private_profile_session_string(data, "Version", sess);
+	if(strcmp(data->buf, version))
+		return false;
+
+	return true;
  }
 
 
@@ -719,7 +748,49 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
 
   
  /***** Routine for writing private profile strings --- by Joseph J. Graf *****/
-    
+
+ /* Closes the temp file (checking sync+close), closes the read file, and
+  * only THEN performs the destructive original-replace (unlink+rename).
+  * Both exit points of write_private_profile_string() below funnel
+  * through this single checked sequence so they cannot drift apart.
+  *
+  * FatFs has no atomic rename-over-existing-file primitive (f_rename()
+  * fails with FR_EXIST if the destination already exists), so the
+  * unlink-then-rename two-step is an inherent filesystem limitation, not
+  * something this fix can architect around without a much larger change
+  * (e.g. a lock/journal file) that is out of scope here. What IS fixed:
+  * the original is only ever unlinked AFTER the replacement has been
+  * proven fully written (sync succeeded) and closed -- never before, and
+  * never unconditionally. If f_unlink() itself fails, the original is
+  * still completely intact (this function never reached the point of
+  * touching it) and failure is reported truthfully. If f_rename() fails
+  * AFTER a successful unlink, the original is genuinely gone; this is
+  * reported as failure (never silently reported as success) rather than
+  * papered over, since there is no further recovery FatFs itself offers
+  * here -- it is the one residual window this filesystem's own API
+  * cannot close, and callers must be able to tell it happened. */
+ static int pps_commit_replace(FIL *wfp, FIL *rfp, const char *tmp_name, const char *file_name)
+ {
+     FRESULT close_rf;
+
+     if (f_sync(wfp) != FR_OK)  { f_close(wfp); f_close(rfp); f_unlink(tmp_name); return 0; }
+     if (f_close(wfp) != FR_OK) { f_close(rfp); f_unlink(tmp_name); return 0; }
+     close_rf = f_close(rfp);
+     (void)close_rf;   /* rfp is read-only; a close failure here doesn't invalidate the write */
+
+     if (f_unlink(file_name) != FR_OK) {
+         /* Original still fully intact -- clean up only our own temp file. */
+         f_unlink(tmp_name);
+         return 0;
+     }
+     if (f_rename(tmp_name, file_name) != FR_OK) {
+         /* Residual FatFs-limitation window: original already unlinked and
+          * rename failed. Report failure truthfully; do not claim success. */
+         return 0;
+     }
+     return 1;
+ }
+
  /*************************************************************************
   * Function:    write_private_profile_string()
   * Arguments:   <char *> section - the name of the section to search for
@@ -729,28 +800,43 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
   * Returns:     TRUE if successful, otherwise FALSE
   *************************************************************************/
  int write_private_profile_string(const char *entry, const char *buffer, const char *file_name)
-{  
+{
 	FIL rfp, wfp;
-    char tmp_name[] = "temp.rfid";
+    /* Temp file lives in the TARGET's own directory (not a single fixed
+     * relative name shared by every RFID file on the card) and is named
+     * from the target's own filename, so it is uniquely associated with
+     * this specific operation rather than colliding with any other
+     * saved-RFID file's own in-progress write. */
+    char dir[128];
+    char tmp_name[160];
     //char buff[MAX_LINE_LENGTH];
     char *line_buff;
     int len = strlen(entry);
-	
-	 if ((f_open(&rfp, file_name, FA_READ)) != FR_OK)	
-    {  
+
+    fu_get_directory_path(file_name, dir, sizeof(dir));
+    {
+        char tmp_basename[64];
+        const char *base = fu_get_filename(file_name);
+        snprintf(tmp_basename, sizeof(tmp_basename), ".%s.tmp", (base != NULL) ? base : "rfidsave");
+        fu_path_combine(tmp_name, sizeof(tmp_name), dir, tmp_basename);
+    }
+
+	 if ((f_open(&rfp, file_name, FA_READ)) != FR_OK)
+    {
 		if ((f_open(&wfp, file_name, FA_CREATE_NEW|FA_WRITE)) != FR_OK)
         {   return(0);   }
-		
+
 		f_printf(&wfp,"%s: %s\n",entry,buffer);
-		f_close(&wfp);
+		if (f_sync(&wfp) != FR_OK)  { f_close(&wfp); return(0); }
+		if (f_close(&wfp) != FR_OK) { return(0); }
 		return(1);
     }
 
 	if ((f_open(&wfp, tmp_name, FA_CREATE_ALWAYS|FA_WRITE)) != FR_OK)
-    {   
-		f_close(&rfp);	
-		return(0);   
-	}	
+    {
+		f_close(&rfp);
+		return(0);
+	}
      /* Move through the file one line at a time until a section is
       * matched or until EOF. Copy to temp file as it is read. */
 	// serach key - write value
@@ -767,16 +853,16 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
      {
     	if( !read_line(&rfp,line_buff,g_linebuf_size) )
         {   /* EOF without an entry so make one */
+            int ok;
             f_printf(&wfp,"%s: %s\n",entry,buffer);
-            /* Clean up and rename */
 #if 1
             safe_free((void*)&line_buff);
 #endif
-            f_close(&rfp);
-            f_close(&wfp);
-            f_unlink(file_name);
-            f_rename(tmp_name,file_name);
-            return(1);
+            /* Checked sync+close+unlink+rename -- see pps_commit_replace()'s
+             * own header comment. Never reports success after a failed
+             * filesystem operation. */
+            ok = pps_commit_replace(&wfp, &rfp, tmp_name, file_name);
+            return(ok);
         }
   
      	if (line_buff[0] == '#') {
@@ -784,37 +870,28 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
             continue;
         }
 
-     	// 2. ?�재 줄에??콜론(:)???�치�?찾습?�다. (TOKEN_COLON ?�용)
      	char *colon_pos = strchr(line_buff, TOKEN_COLON);
 
-     	// 3. 콜론??존재?�고, 콜론 ?�에 ?��? ?�다�?
      	if (colon_pos != NULL) {
 
-     		// 4. 콜론 ??문자?�을 분리?�니??
-     	    //    (콜론 ?�치????문자(\0)�??�어 문자?�을 ?�시�??�름)
      	    *colon_pos = '\0';
 
-     	    // 5. 콜론 ?�의 ??문자?�의 ?�뒤 공백???�거?�니??
      	    char *current_key = trim(line_buff);
 
-     	    // 6. ?�재 ?�의 길이?� 검?�하?�는 ?�의 길이가 같고, ???��? ?�확???�치?�는지 ?�인?�니??
-     	    if ((int)strlen(current_key) == len && !strcmp(current_key, entry)) {
+     	    if (strlen(current_key) == len && !strcmp(current_key, entry)) {
 
-     	    // 7. 루프 ?�출 ?�에 콜론???�시 복원?�줍?�다 (값을 추출?�야 ?��?�?.
      	    	*colon_pos = TOKEN_COLON;
-     	        break; // ?�확???�치?�는 ?��? 찾았?��?�??�출
+     	        break;
      	    }
 
-     	    // 8. ?�치?��? ?�으�???문자�??�시 콜론?�로 복원?�고 ?�음 줄로 진행?�니??
      	    *colon_pos = TOKEN_COLON;
      	}
 
-     	// 9. �?�?처리 (콜론???�거???��? 불일�???
      	if (line_buff[0] == '\0') {
-     		break; // EOF 처리�??�어가 ????�� 추�?
+     		break;
      	}
 
-     	f_printf(&wfp,"%s\n",line_buff); // ?��? 찾�? 못한 줄�? ?�시 ?�일??복사
+     	f_printf(&wfp,"%s\n",line_buff);
     }
   
     if( line_buff[0] == '\0' )
@@ -832,15 +909,13 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
         }
     }
 
-    /* Clean up and rename */
 #if 1
     safe_free((void*)&line_buff);
 #endif
-    f_close(&wfp);
-    f_close(&rfp);
-    f_unlink(file_name);
-    f_rename(tmp_name,file_name);
-    return(1);
+    /* Checked sync+close+unlink+rename -- see pps_commit_replace()'s own
+     * header comment. Never reports success after a failed filesystem
+     * operation. */
+    return pps_commit_replace(&wfp, &rfp, tmp_name, file_name);
  }
   
  #undef MAX_LINE_LENGTH

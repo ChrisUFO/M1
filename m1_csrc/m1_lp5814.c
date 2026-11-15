@@ -1,14 +1,17 @@
 /* See COPYING.txt for license details. */
 
 /*
-*
-*  m1_lp5814.c
-*
-* Library for LP5814 RGB led driver
-*
-* M1 Project
-*
-*/
+ * LP5814 RGB LED Driver
+ *
+ * Partially developed with reference to:
+ * https://github.com/rickkas7/LP5562-RK
+ *
+ * Original project licensed under the MIT License.
+ *
+ * Adapted and modified for LP5814 hardware by Monstatek.
+ *
+ * Copyright (C) 2026 Monstatek
+ */
 
 
 /*************************** I N C L U D E S **********************************/
@@ -356,6 +359,14 @@ void lp5814_led_on(uint8_t port, uint8_t value)
 /*============================================================================*/
 void lp5814_led_on_rgb(uint8_t led_rgb, uint8_t value)
 {
+	/* A solid RGB request must also terminate any pattern previously started
+	 * by lp5814_fastblink_on_R_G_B(). Merely disabling the RGB outputs leaves
+	 * the animation engine running; re-enabling a channel then makes a
+	 * nominally solid charge indication blink. The zero-duration command
+	 * disables the engine and preserves the independently controlled white
+	 * backlight before the solid outputs are configured below. */
+	lp5814_fastblink_on_R_G_B(0, 0, 0);
+
 	uint8_t stat = lp5814_readRegister(LP5814_REG_DEV_CONFIG1);
 
 	if ( led_rgb & LED_BLINK_ON_RED )
@@ -587,7 +598,6 @@ void lp5814_set_blink_timer(uint8_t r_g_b, uint16_t on_off_ms, uint8_t mode, voi
 /*============================================================================*/
 static void lp5814_stop_blink_timer(TimerHandle_t xTimer)
 {
-    (void)xTimer; /* Unused: stub for future work. May need removal later. */
 	lp5814_all_off_RGB(); // Turn off
 	lp5814_fastblink_on_R_G_B(0, 0, 0);
 	if ( blink_timer_cb_func )

@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
 """Firmware version comparator test — models the device rollback gate.
 
-The bootloader gate (upstream m1_system.c:782-783) packs the four config
-version bytes into a single u32 and compares:
+The bootloader gate (this tree, m1_csrc/m1_system.c:782-783) packs the four
+config version bytes into a single u32 and compares:
 
-    fw_ver_old = *(uint32_t *)&cfg.fw_version_rc;
+    fw_ver_old = *(uint32_t *)&old_fw_config.fw_version_rc;
+    if ( fw_ver_old < fw_ver_new ) // Existing FW in bank 2 is older than current FW?
 
-In the current fork tree the verifiable packing site is
-m1_csrc/m1_fw_update.c:470-473; `fwver_old` there is an explicit unused
-stub, so the strict-greater comparison itself arrives only with the
-upstream base adoption (PR-2/#37).
-
-The struct layout (documented in tools/append_crc32.py:123-126,
-S_M1_FW_CONFIG_t) is little-endian on the STM32 target:
+The struct layout (S_M1_FW_CONFIG_t in m1_csrc/m1_fw_update_bl.h:78-81) is
+little-endian on the STM32 target:
 
     +4  fw_version_rc     uint8_t
     +5  fw_version_build  uint8_t
@@ -23,25 +19,31 @@ so the u32 read starting at fw_version_rc evaluates to:
 
     version_u32 = (major << 24) | (minor << 16) | (build << 8) | rc
 
-The gate only accepts an incoming image whose packed version is strictly
-greater than the stored one; anything older or equal is rejected (rollback
-protection). This test packs versions exactly the same way and asserts the
-ordering properties the fork's version namespace depends on:
+The gate decides whether a user-requested rollback (BACK+DOWN key combo,
+m1_csrc/m1_system.c) may swap to the stored bank-2 image: the swap happens
+only when the stored image is STRICTLY OLDER than the running one
+("Rollback is ready!"); an equal or newer stored image is declined
+("Rollback was already completed!"). The gate therefore enables falling
+back to an older image — it is not anti-downgrade protection for incoming
+updates. This test packs versions exactly the same way and asserts the
+ordering properties this fork's version namespace depends on:
 
   * 0.9.0.0 > 0.8.11    — the frozen fork namespace must exceed the last
     legacy fork release (0.8.11 packs with rc=0, i.e. as 0.8.11.0 =
-    0x00080B00), otherwise the gate would refuse every 0.9.x image as
-    "not newer" than what is already in flash.
+    0x00080B00), so a stored legacy image always compares strictly older
+    than the running fork image (a rollback from a 0.9.x build to the
+    stored 0.8.11 remains possible).
   * 0.8.11 == 0.8.11.0  — the legacy three-field notation is the same
     version as the four-field notation with rc=0; packing is deterministic.
   * 0.8.11 > 0.8.1.0    — the fork namespace must also exceed the upstream
-    base version (0.8.1.0 = 0x00080100) that PR-2 adopts, so a 0.9.0.0-UFO
-    image always wins the numeric comparison against any 0.8.x lineage
-    image, fork or upstream. Minor=9 > 8 guarantees this regardless of
-    build or rc fields.
-  * the "-UFO" fork tag is display-only: it appears in artifact names and
-    CLI output but is NOT part of the packed u32, so a bare 0.9.0.0 and a
-    "-UFO"-tagged 0.9.0.0 compare numerically equal.
+    base version (0.8.1.0 = 0x00080100) this branch adopts, so a
+    0.9.0.0-UFO image always wins the numeric comparison against any
+    0.8.x lineage image, fork or upstream. Minor=9 > 8 guarantees this
+    regardless of build or rc fields.
+  * the "-UFO" fork tag is display-only: it appears in artifact names,
+    the about-box label and build stems (FW_VERSION_FORK_TAG) but is NOT
+    part of the packed u32, so a bare 0.9.0.0 and a "-UFO"-tagged 0.9.0.0
+    compare numerically equal.
 
 Run standalone (no dependencies):  python tools/test_fw_version_compare.py
 Exits 0 on success, 1 on any failure.
@@ -65,6 +67,32 @@ def fmt(version_tuple, fork_tag=None):
     return "%s-%s" % (base, fork_tag) if fork_tag else base
 
 
+def parse_version(text):
+    """Parse the version notations this tree actually uses into a 4-tuple.
+
+    Handles '0.9.0.0-UFO' (quad + display-only fork tag), '0.8.11.0'
+    (four-field), and '0.8.11' (legacy three-field notation, rc implied 0).
+    The fork tag is display-only and never part of the packed u32, so it is
+    stripped before the numeric fields are read.
+    """
+    base = text.split("-")[0]
+    fields = [int(f) for f in base.split(".")]
+    while len(fields) < 4:
+        fields.append(0)
+    return tuple(fields)
+
+
+def gate_accepts(stored, running):
+    """Mirror of the device rollback gate (m1_csrc/m1_system.c:783).
+
+    True when the device would perform the rollback swap: the stored
+    (bank-2) image must be STRICTLY OLDER than the running one. A stored
+    image that is equal or newer leaves the device on the running bank
+    ("Rollback was already completed!") — nothing is auto-updated.
+    """
+    return stored < running
+
+
 PASS = 0
 FAIL = 0
 
@@ -82,9 +110,11 @@ def check(description, condition, detail=""):
 def main():
     v_0_9_0_0 = pack_version(0, 9, 0, 0)
     v_0_8_11 = pack_version(0, 8, 11, 0)  # legacy fork release
-    v_0_8_11_0 = pack_version(0, 8, 11, 0)  # same, explicit rc field
+    # genuinely different constructions: parsed from the string notations
+    # this tree uses, not the same literal pack_version() call as above.
+    v_0_8_11_0 = pack_version(*parse_version("0.8.11"))  # 3-field, rc padded
     v_0_8_1_0 = pack_version(0, 8, 1, 0)  # upstream base version
-    v_0_9_0_0_tagged = pack_version(0, 9, 0, 0)  # fork tag not in u32
+    v_0_9_0_0_tagged = pack_version(*parse_version("0.9.0.0-UFO"))
 
     print("=" * 60)
     print("Firmware Version Comparator Test (device rollback gate)")
@@ -100,8 +130,9 @@ def main():
 
     check(
         "0.8.11 == 0.8.11.0 (three-field notation packs with rc=0)",
-        v_0_8_11 == v_0_8_11_0,
-        "0x%08X vs 0x%08X" % (v_0_8_11, v_0_8_11_0),
+        parse_version("0.8.11") == (0, 8, 11, 0) and v_0_8_11 == v_0_8_11_0,
+        "fields %r vs (0, 8, 11, 0); 0x%08X vs 0x%08X"
+        % (parse_version("0.8.11"), v_0_8_11, v_0_8_11_0),
     )
 
     check(
@@ -110,14 +141,38 @@ def main():
         "0x%08X vs 0x%08X" % (v_0_8_11, v_0_8_1_0),
     )
 
+    print("\nTesting rollback permission (gate_accepts mirrors the device)...")
+    check(
+        "rollback permitted: stored 0.8.11 strictly older than running 0.9.0.0",
+        gate_accepts(v_0_8_11, v_0_9_0_0),
+        "gate_accepts(stored=0x%08X, running=0x%08X) was False" % (v_0_8_11, v_0_9_0_0),
+    )
+    check(
+        "rollback declined: stored version EQUAL to running (0.8.11 vs 0.8.11)",
+        not gate_accepts(v_0_8_11, v_0_8_11),
+        "equal versions must not trigger the bank swap",
+    )
+    check(
+        "rollback declined: stored 0.8.11 strictly NEWER than running 0.8.1.0",
+        not gate_accepts(v_0_8_11, v_0_8_1_0),
+        "swap to stored 0x%08X over running 0x%08X must be refused (bank 2 newer than current FW)"
+        % (v_0_8_11, v_0_8_1_0),
+    )
+    check(
+        "rollback declined: running 0.9.0.0-UFO over stored 0.9.0.0 (tag packs equal)",
+        not gate_accepts(v_0_9_0_0, v_0_9_0_0_tagged),
+        "tagged display form packs equal, so the swap is declined",
+    )
+
     print("\nTesting fork tag exclusion (display-only)...")
     print("  bare %s       = 0x%08X" % (fmt((0, 9, 0, 0)), v_0_9_0_0))
     print("  %s = 0x%08X" % (fmt((0, 9, 0, 0), "UFO"), v_0_9_0_0_tagged))
 
     check(
         'bare 0.9.0.0 == 0.9.0.0-UFO numerically ("-UFO" excluded from gate)',
-        v_0_9_0_0 == v_0_9_0_0_tagged,
-        "0x%08X vs 0x%08X" % (v_0_9_0_0, v_0_9_0_0_tagged),
+        parse_version("0.9.0.0") == (0, 9, 0, 0) and v_0_9_0_0 == v_0_9_0_0_tagged,
+        "parsed %r; 0x%08X vs 0x%08X"
+        % (parse_version("0.9.0.0"), v_0_9_0_0, v_0_9_0_0_tagged),
     )
 
     print("\nTesting gate arithmetic on worked examples...")

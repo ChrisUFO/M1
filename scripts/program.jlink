@@ -1,8 +1,11 @@
 si SWD
 speed auto
 device STM32H573VI
-connect 
+connect
 erase
+// loadbin path is the CMake preset release tree (out/build/gcc-14_2_build-release),
+// kept fresh by the "[Release] Build project" dependency of the VS Code JLink flash
+// task. build.sh output (build/, artifacts/) is NOT flashed by this script.
 loadbin ./out/build/gcc-14_2_build-release/M1_v0.9.0.0-UFO.bin, 0x08000000
 r
 g

@@ -1,12 +1,12 @@
-# Normalize line endings: LF in the repository for all text files.
-# Working-tree checkout still follows core.autocrlf/core.eol per platform.
-* text=auto
-
-# Shell scripts must always check out with LF (CRLF breaks bash).
-*.sh text eol=lf
-
-# The extension-less ./build bash script must also check out with LF.
-/build text eol=lf
+# Normalize line endings: LF in the repository AND on checkout for all text
+# files. The eol=lf pin is deliberate: this repo's own verification tooling
+# (host tests reading sources in binary mode with LF needles, e.g.
+# NFC/NFC_drv/common/test/ce_dev_type_test.c, and cmake/m1_01/verify_mfc_arch.sh
+# parsing mfc_authoritative_manifest.txt) requires LF working copies on every
+# platform -- see documentation/merge1-baseline-evidence.md section 6. With a
+# platform-following policy (core.autocrlf=true on Windows) those suites fail
+# purely from CRLF checkouts.
+* text=auto eol=lf
 
 # Windows batch scripts must always check out with CRLF.
 *.bat text eol=crlf
@@ -29,3 +29,9 @@
 *.gz -text
 *.db -text
 *.pyc -text
+# Binary test/release fixtures: never normalize, never treat as text. These
+# survive git's NUL-based content heuristic today, but a future ASCII-only
+# fixture (e.g. a crafted invalid *.m1pkg) would be EOL-normalized or
+# text-merged without this explicit rule.
+*.m1pkg -text
+*.ods -text

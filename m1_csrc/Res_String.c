@@ -4,9 +4,9 @@
  * Res_String.c
  */
 
-#include "Res_String.h"
+#include "res_string.h"
 
-const char *szStringTable[]={
+const char *const szStringTable[]={
     "Emulate",
     "Write",
     "Edit",

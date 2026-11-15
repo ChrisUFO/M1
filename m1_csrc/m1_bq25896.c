@@ -1,19 +1,24 @@
 /* See COPYING.txt for license details. */
 
 /*
-*
-* m1_bq25896.c
-*
-* Driver for BQ25896
-*
-* M1 Project
-*
-* Reference: https://github.com/VRaktion/mbed-BQ25896
-*/
-
+ * m1_bq25896.c
+ *
+ * Driver for Texas Instruments BQ25896
+ *
+ * Portions of this implementation were developed with reference to:
+ * https://github.com/VRaktion/mbed-BQ25896
+ *
+ * Copyright (c) the respective authors of the original project.
+ *
+ * Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
+ *
+ * Modifications and hardware adaptation:
+ * Copyright (C) 2026 MonstaTek
+ */
 /*************************** I N C L U D E S **********************************/
 
 #include <stdint.h>
+
 #include "stm32h5xx_hal.h"
 #include "main.h"
 #include "m1_bq25896.h"
@@ -1006,7 +1011,7 @@ float bq_getVBUSV(void)
 /*============================================================================*/
 int bq_getVBUS_GD(void)
 {
-	return bq_readRegister(REG11_ADDR) & REG11_VBUS_GD >> 7;
+	return (bq_readRegister(REG11_ADDR) & REG11_VBUS_GD) >> 7;
 } // int bq_getVBUS_GD(void)
 
 
