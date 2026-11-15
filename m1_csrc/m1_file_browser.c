@@ -814,7 +814,7 @@ const S_M1_file_info *m1_fb_display(S_M1_Buttons_Status *button_status)
 	static uint16_t scroll_h;
 	uint16_t scroll_y, count, len;
 	uint16_t l, k;
-	uint8_t y_offset, disp_max_column, ext_len;
+	uint8_t y_offset, disp_max_column, ext_len = 0;
 	static uint8_t spacing;
 	static bool scroll_ok;
 	bool flag;

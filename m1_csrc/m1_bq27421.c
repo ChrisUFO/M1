@@ -1129,7 +1129,7 @@ bool bq27421_applyConfigIfMatches(uint16_t designCapacity_mAh,
 /*============================================================================*/
 static uint16_t bq27421_flags(void)
 {
-	uint16_t flags;
+	uint16_t flags = 0;
 
 	bq27421_i2c_read16( BQ27421_FLAGS_LOW, &flags );
 
@@ -1146,7 +1146,7 @@ static uint16_t bq27421_flags(void)
 /*============================================================================*/
 static uint16_t bq27421_status(void)
 {
-	uint16_t status;
+	uint16_t status = 0;
 
 	bq27421_readControlReg(&status);
 
@@ -1418,7 +1418,7 @@ bool bq27421_blockDataOffset(uint8_t offset)
 /*============================================================================*/
 uint8_t bq27421_blockDataChecksum(void)
 {
-	uint8_t csum;
+	uint8_t csum = 0;
 	bq27421_i2c_read8( BQ27421_EXTENDED_CHECKSUM, &csum );
 	//i2cReadBytes(BQ27421_EXTENDED_CHECKSUM, &csum, 1);
 	return csum;

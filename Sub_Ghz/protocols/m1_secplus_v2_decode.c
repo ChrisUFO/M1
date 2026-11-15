@@ -61,7 +61,7 @@ uint8_t m1_secplus_v2_decode_half(uint64_t in_bits, uint8_t *half_code, uint32_t
 /*============================================================================*/
 uint8_t subghz_decode_security_plus_20(uint16_t p, uint16_t pulsecount)
 {
-    uint64_t code;
+    uint64_t code = 0;
     static uint64_t prev_code;
     uint16_t te_long, te_short, i;
     uint16_t tolerance_long, tolerance_short;
