@@ -49,9 +49,16 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 `FW_VERSION_*` in `m1_csrc/m1_fw_update_bl.h` is the single source for the
 CMake-derived artifact name (`M1_v<MAJOR>.<MINOR>.<BUILD>.<RC>-<FORK_TAG>`).
-Two tracked files hardcode the versioned artifact name and must be swept on
+The `./build` script re-derives the stem from the same header and takes the
+authoritative target name from the CMake cache, so it needs no manual sweep.
+Tracked files that hardcode the versioned artifact name and must be swept on
 every bump: `.vscode/launch.json` (debug-launch `executable` and
-`projectName`) and `scripts/program.jlink` (`loadbin` path).
+`projectName`), `scripts/program.jlink` (`loadbin` path), and the artifact
+examples in `README.md` (manual-build target and output-file table).
+Vendor/Eclipse-era identifiers (`MonstaTek_M1_v*` in `.project`, `*.ioc`,
+`Project_files.txt`, the commented size/objcopy lines in `CMakeLists.txt`,
+and the README CubeIDE output example) belong to a different build system
+and are deliberately excluded from the sweep.
 
 ## Line-Ending Normalization (EOL)
 

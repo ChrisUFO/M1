@@ -5,6 +5,9 @@
 # Shell scripts must always check out with LF (CRLF breaks bash).
 *.sh text eol=lf
 
+# The extension-less ./build bash script must also check out with LF.
+/build text eol=lf
+
 # Windows batch scripts must always check out with CRLF.
 *.bat text eol=crlf
 

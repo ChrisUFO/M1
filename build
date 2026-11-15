@@ -38,13 +38,20 @@ if ! command -v arm-none-eabi-gcc &> /dev/null; then
     fi
 fi
 
-# Extract version from header file
-FW_MAJOR=$(grep "FW_VERSION_MAJOR" m1_csrc/m1_fw_update_bl.h | grep -o '[0-9]\+' | head -1)
-FW_MINOR=$(grep "FW_VERSION_MINOR" m1_csrc/m1_fw_update_bl.h | grep -o '[0-9]\+' | head -1)
-FW_BUILD=$(grep "FW_VERSION_BUILD" m1_csrc/m1_fw_update_bl.h | grep -o '[0-9]\+' | head -1)
+# Extract version from header file (single source of truth, mirrors CMakeLists.txt)
+VERSION_HEADER="m1_csrc/m1_fw_update_bl.h"
+FW_MAJOR=$(grep '^#define FW_VERSION_MAJOR' "$VERSION_HEADER" | grep -o '[0-9]\+' | head -1)
+FW_MINOR=$(grep '^#define FW_VERSION_MINOR' "$VERSION_HEADER" | grep -o '[0-9]\+' | head -1)
+FW_BUILD=$(grep '^#define FW_VERSION_BUILD' "$VERSION_HEADER" | grep -o '[0-9]\+' | head -1)
+FW_RC=$(grep '^#define FW_VERSION_RC' "$VERSION_HEADER" | grep -o '[0-9]\+' | head -1)
+FW_FORK_TAG=$(grep '^#define FW_VERSION_FORK_TAG' "$VERSION_HEADER" | grep -o '"[^"]*"' | head -1 | tr -d '"')
 
 # Configuration
-PROJECT_NAME="M1_v${FW_MAJOR}.${FW_MINOR}.${FW_BUILD}-UFO"
+# Expected artifact stem (v<major>.<minor>.<build>.<rc>-<fork_tag>). The
+# authoritative target name is read back from the CMake cache after
+# configure, so a stem-format change in CMakeLists.txt cannot desynchronize
+# this script from the real target name again.
+EXPECTED_STEM="M1_v${FW_MAJOR}.${FW_MINOR}.${FW_BUILD}.${FW_RC}-${FW_FORK_TAG}"
 BUILD_DIR="out/build/gcc-14_2_build-release"
 DIST_DIR="distribution"
 
@@ -64,22 +71,30 @@ fi
 # Create distribution directory
 mkdir -p "$DIST_DIR"
 
-# Clean old distribution files
-echo "Cleaning old distribution files..."
-rm -f "$DIST_DIR"/*
-
 # Configure build (only if build directory doesn't exist or version changed)
+PROJECT_NAME=""
+if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
+    PROJECT_NAME=$(grep -m1 '^CMAKE_PROJECT_NAME:STATIC=' "$BUILD_DIR/CMakeCache.txt" | cut -d= -f2-)
+fi
+
 RECONFIGURE=false
-if [ ! -d "$BUILD_DIR" ] || [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
+if [ -z "$PROJECT_NAME" ]; then
     RECONFIGURE=true
-elif ! grep -q "CMAKE_PROJECT_NAME:STATIC=$PROJECT_NAME" "$BUILD_DIR/CMakeCache.txt"; then
-    echo "Version change detected (target: $PROJECT_NAME). Forcing reconfigure..."
+elif [ "$PROJECT_NAME" != "$EXPECTED_STEM" ]; then
+    echo "Version change detected (cache: $PROJECT_NAME, header: $EXPECTED_STEM). Forcing reconfigure..."
     RECONFIGURE=true
+    PROJECT_NAME=""
 fi
 
 if [ "$RECONFIGURE" = true ]; then
     echo "Configuring build..."
     cmake --preset gcc-14_2_build-release
+    PROJECT_NAME=$(grep -m1 '^CMAKE_PROJECT_NAME:STATIC=' "$BUILD_DIR/CMakeCache.txt" | cut -d= -f2-)
+fi
+
+if [ -z "$PROJECT_NAME" ]; then
+    echo "ERROR: CMAKE_PROJECT_NAME not found in $BUILD_DIR/CMakeCache.txt"
+    exit 1
 fi
 
 # Build
@@ -100,6 +115,11 @@ fi
 echo "Build successful (binary created)"
 
 # Note: CRC32 is appended by CMake post-build command
+
+# Clean old distribution files only after a successful build, so a failed
+# build never destroys the previous release artifacts
+echo "Cleaning old distribution files..."
+rm -f "$DIST_DIR"/*
 
 # Copy files to distribution
 echo ""
