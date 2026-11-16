@@ -707,6 +707,14 @@ void startup_device_init(void)
  * HAL_FLASH_OB_Launch anywhere in this function.
  */
 /*============================================================================*/
+
+/* The helper's mask is the OPTSR value mask, which HAL names OB_IWDG_SW.
+ * OB_USER_IWDG_SW (0x4) is the USERType selector and bit 2 of OPTSR is
+ * BORH_EN: using it here logged brownout-high-enable as the watchdog mode on
+ * every boot (audit finding D1). Fail the build if the constants ever diverge. */
+_Static_assert(M1_BOOT_OPTSR_IWDG_SW == (uint32_t)OB_IWDG_SW,
+               "M1_BOOT_OPTSR_IWDG_SW must equal the HAL's OB_IWDG_SW value mask");
+
 static void startup_iwdg_option_byte_check(void)
 {
 	FLASH_OBProgramInitTypeDef OBInit = {0};
@@ -714,7 +722,7 @@ static void startup_iwdg_option_byte_check(void)
 
 	HAL_FLASHEx_OBGetConfig(&OBInit);
 
-	hw_watchdog = (OBInit.USERConfig & OB_USER_IWDG_SW)==OB_IWDG_HW;
+	hw_watchdog = m1_boot_iwdg_is_hardware(OBInit.USERConfig);
 	M1_LOG_I(M1_LOGDB_TAG, "IWDG option byte: %s (%s), read-only.\r\n",
 	         hw_watchdog ? "hardware" : "software",
 	         hw_watchdog ? "HARDWARE watchdog may reset before init" : "expected");

@@ -100,4 +100,26 @@ static inline bool m1_boot_swap_allowed(uint8_t swap_attempts)
 	return swap_attempts < (uint8_t)M1_BOOT_SWAP_ATTEMPTS_MAX;
 }
 
+/* FLASH_OPTSR_IWDG_SW (bit 3): 1 = IWDG started by software (m1_wdt_init()),
+ * 0 = IWDG armed by hardware at reset. This is the OPTSR *value* mask.
+ *
+ * Deliberately NOT OB_USER_IWDG_SW: that constant is the USERType *selector*
+ * mask (0x4) that tells HAL_FLASHEx_OBProgram WHICH option byte to program, and
+ * bit 2 of OPTSR is BORH_EN -- testing the selector reports the brownout level
+ * as the watchdog mode on every boot. The same value-vs-selector split is the
+ * proven pattern in bl_swap_banks() (USERConfig pairs with OB_SWAP_BANK_ENABLE,
+ * USERType with OB_USER_SWAP_BANK). m1_system.c static-asserts this constant
+ * against the HAL's OB_IWDG_SW so the two cannot drift. */
+#define M1_BOOT_OPTSR_IWDG_SW	0x00000008U
+
+/* Pure IWDG-mode decision, kept out of the boot path so the host test pins the
+ * mask: input is OBInit.USERConfig (== FLASH->OPTSR_CUR & ~PRODUCT_STATE).
+ * Bit clear means hardware-started -- the configuration the boot diagnostic
+ * exists to surface, because the watchdog could then reset the device before
+ * init can service it. */
+static inline bool m1_boot_iwdg_is_hardware(uint32_t opts_cur)
+{
+	return (opts_cur & M1_BOOT_OPTSR_IWDG_SW) == 0U;
+}
+
 #endif /* M1_BOOT_FAILSAFE_H_ */
