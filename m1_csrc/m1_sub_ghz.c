@@ -261,7 +261,7 @@ static const float subghz_fcc_ism_bands_ASIA[SUBGHZ_ISM_BANDS_LIST_ASIA][2] =
 //typedef struct S_M1_SUBGHZ_ISM_REGIONS_t;
 typedef struct
 {
-	float (*this_region)[2];
+	const float (*this_region)[2];
 	uint8_t bands_list;
 } S_M1_SUBGHZ_ISM_REGIONS_t;
 
@@ -333,9 +333,9 @@ S_M1_RingBuffer subghz_rx_rawdata_rb;
 static uint16_t *subghz_front_buffer = NULL;
 static uint16_t subghz_front_buffer_size = 0;
 static uint8_t *subghz_ring_read_buffer = NULL;
-static uint8_t *subghz_sdcard_write_buffer = NULL;
-static uint8_t *sdcard_dat_buffer = NULL;
-static uint8_t *sdcard_buffer_run_ptr = NULL;
+static char *subghz_sdcard_write_buffer = NULL;
+static char *sdcard_dat_buffer = NULL;
+static char *sdcard_buffer_run_ptr = NULL;
 static uint8_t double_buffer_ptr_id = 0;
 static uint16_t raw_samples_count;
 static uint16_t sdcard_dat_read_size;
@@ -1333,6 +1333,7 @@ static void subghz_record_gui_create(uint8_t param)
 /*============================================================================*/
 static void subghz_record_gui_destroy(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	fb_release(FB_OWNER_RADIO, FB_RES_LED); // migrated: defensive safety-net release (subghz_record_gui_destroy)
 } // static void subghz_record_gui_destroy(uint8_t param)
 
@@ -1635,7 +1636,7 @@ static int subghz_record_gui_message(void)
 			rcv_samples = ringbuffer_get_data_slots(&subghz_rx_rawdata_rb);
 			if ( rcv_samples >= SUBGHZ_RAW_DATA_SAMPLES_TO_RW )
 			{
-				M1_LOG_N(M1_LOGDB_TAG, "Raw samples %d\r\n", rcv_samples);
+				M1_LOG_N(M1_LOGDB_TAG, "Raw samples %lu\r\n", (unsigned long)rcv_samples);
 				subghz_record_flushed_samples += sub_ghz_rx_raw_save(false, false); // GUI: accumulate flushed count
 				vTaskDelay(10); // Give the system some time in case RF noise is flooding the receiver
 			} // if ( rcv_samples >= SUBGHZ_RAW_DATA_SAMPLES_TO_RW )
@@ -1899,18 +1900,18 @@ static int subghz_record_kp_handler(void)
 			{
 				// Save recent unsaved data file from SD card, deinit all sdcard tasks and return to previous screen
 				sub_ghz_raw_samples_deinit(false);
-				str = strstr(&datfile_info.dat_filename[1], "/"); // Search for the second / sign
+				str = strstr((char *)&datfile_info.dat_filename[1], "/"); // Search for the second / sign
 				if ( str!=NULL )
 					str += 1; // Move to next character after the /
 				else
-					str = datfile_info.dat_filename;
+					str = (char *)datfile_info.dat_filename;
 				strcpy(new_filename, str);
 				str = strstr(new_filename, "."); // Search for the dot sign
 				// The search should always return the valid result, so no need to do a null check.
 				strcpy(str, SUB_GHZ_FILE_EXTENSION); // Replace the tmp extension with the real extension
 				M1_LOG_I(M1_LOGDB_TAG, "SAVE: tmp='%s' newdefault='%s'\r\n", datfile_info.dat_filename, new_filename);
-				ret = m1_fb_rename_file(datfile_info.dat_filename, new_filename, true);
-				M1_LOG_I(M1_LOGDB_TAG, "SAVE: final='%s' rename=%d\r\n", new_filename, ret);
+				ret = m1_fb_rename_file((char *)datfile_info.dat_filename, new_filename, true);
+				M1_LOG_I(M1_LOGDB_TAG, "SAVE: final='%s' rename=%d\r\n", new_filename, (int)ret);
 				if ( !ret )
 				{
 					m1_draw_file_saved_screen();      /* unified save-success splash */
@@ -1918,7 +1919,7 @@ static int subghz_record_kp_handler(void)
 				}
 				else
 				{
-					m1_fb_delete_file(datfile_info.dat_filename); // Delete the temporary file
+					m1_fb_delete_file((char *)datfile_info.dat_filename); // Delete the temporary file
 				}
 				m1_uiView_display_update(SUBGHZ_RECORD_DISPLAY_PARAM_READY);
 			} // if ( subghz_uiview_gui_latest_param==SUBGHZ_RECORD_DISPLAY_PARAM_COMPLETE )
@@ -1964,7 +1965,7 @@ static void subghz_replay_browse_gui_create(uint8_t param)
 /*============================================================================*/
 static void subghz_replay_browse_gui_destroy(uint8_t param)
 {
-
+	(void)param; /* Unused: stub for future work. May need removal later. */
 } // static void subghz_replay_browse_gui_destroy(uint8_t param)
 
 
@@ -1977,6 +1978,7 @@ static void subghz_replay_browse_gui_destroy(uint8_t param)
 /*============================================================================*/
 static void subghz_replay_browse_gui_update(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	if ( m1_browser_explore_active() ) { m1_browser_explore_end(); m1_app_send_q_message(main_q_hdl, Q_EVENT_MENU_EXIT); return; }
 	S_M1_file_info *ex = m1_browser_explore_take_pending();
 	while (true)
@@ -2106,7 +2108,7 @@ static void subghz_replay_play_gui_create(uint8_t param)
 /*============================================================================*/
 static void subghz_replay_play_gui_destroy(uint8_t param)
 {
-
+	(void)param; /* Unused: stub for future work. May need removal later. */
 } // static void subghz_replay_play_gui_destroy(uint8_t param)
 
 
@@ -2490,7 +2492,7 @@ void sub_ghz_frequency_reader(void)
 	int16_t avg_noisefloor[SUB_GHZ_BAND_EOL][3];
 	uint8_t active_band_id, i, j, asf_sample_count, detection_count;
 	float freq_found;
-	uint8_t prn_buffer[30], float_buffer[10];
+	char prn_buffer[30], float_buffer[10];
 	struct si446x_reply_GET_MODEM_STATUS_map *pmodemstat;
 
 	m1_u8g2_firstpage();
@@ -3273,8 +3275,8 @@ static void sub_ghz_raw_tx_stop(void)
 static uint8_t sub_ghz_raw_samples_init(void)
 {
 	uint16_t sdcard_read_result;
-	uint8_t i, error, key_len, *token;
-	uint8_t *psdcard_dat_buffer = NULL;
+	uint8_t i, error, key_len; char *token;
+	char *psdcard_dat_buffer = NULL;
 
 	do
 	{
@@ -3321,7 +3323,7 @@ static uint8_t sub_ghz_raw_samples_init(void)
 		double_buffer_ptr[0] = subghz_front_buffer;
 		double_buffer_ptr[1] = subghz_back_buffer;
 
-		error = m1_fb_open_file(&datfile_info.dat_file_hdl, datfile_info.dat_filename);
+		error = m1_fb_open_file(&datfile_info.dat_file_hdl, (char *)datfile_info.dat_filename);
 		M1_LOG_I(M1_LOGDB_TAG, "RS: open=%d path='%s'\r\n", error, datfile_info.dat_filename);
 		if (error)
 			break;
@@ -3422,7 +3424,7 @@ static void sub_ghz_raw_samples_deinit(bool discard_samples)
 	double_buffer_ptr[0] = NULL;
 	double_buffer_ptr[1] = NULL;
 	if (discard_samples)
-		m1_fb_delete_file(datfile_info.dat_filename);
+		m1_fb_delete_file((char *)datfile_info.dat_filename);
 
 	M1_LOG_D(M1_LOGDB_TAG, "sub_ghz_raw_samples_deinit %d\r\n", subghz_back_buffer_size);
 } // static void sub_ghz_raw_samples_deinit(bool discard_samples)
@@ -3458,7 +3460,7 @@ static uint8_t sub_ghz_parse_raw_data(uint8_t buffer_ptr_id)
 			{
 				if (token==NULL) // Possibly last few characters of this buffer
 				{
-					if ( (sdcard_buffer_run_ptr + 10) < sdcard_dat_buffer_end_pos ) // Remaining data is too long. Not valid!
+					if ( (uint32_t)(sdcard_buffer_run_ptr + 10) < sdcard_dat_buffer_end_pos ) // Remaining data is too long. Not valid!
 					{
 						error_code = SUB_GHZ_RAW_DATA_PARSER_ERROR_L1;
 						M1_LOG_E(M1_LOGDB_TAG, "PR: ERROR_L1 no-delim/no-crlf, remain=%lu head='%.16s'\r\n",
@@ -3722,7 +3724,7 @@ static uint16_t sub_ghz_rx_raw_save(bool header_init, bool last_data)
 	uint32_t freq32;
 	uint16_t count, n_samples_to_rw, *pdata;
 	char *sign_text[2] = {"+", ""};
-	uint8_t *pfillbuffer;
+	char *pfillbuffer;
 	uint8_t sign;
 
 	prn_buffer = malloc(64);
@@ -3747,7 +3749,7 @@ static uint16_t sub_ghz_rx_raw_save(bool header_init, bool last_data)
 		strcat(pfillbuffer, prn_buffer);
 		sprintf(prn_buffer, "%s %s\r\n", subghz_datfile_keywords[3], subghz_modulation_text[subghz_scan_config.modulation]);
 		strcat(pfillbuffer, prn_buffer);
-		m1_sdm_fill_buffer(pfillbuffer, strlen(pfillbuffer));
+		m1_sdm_fill_buffer((uint8_t *)pfillbuffer, (uint16_t)strlen(pfillbuffer));
 		free(prn_buffer); /* this early return skipped the free() at the bottom
 		                   * of the function entirely -- leaked 64 bytes once
 		                   * per RAW recording session (this header_init branch
@@ -3784,7 +3786,7 @@ static uint16_t sub_ghz_rx_raw_save(bool header_init, bool last_data)
 	}
 	strcat(pfillbuffer, "\r\n");
 
-	m1_sdm_fill_buffer(pfillbuffer, strlen(pfillbuffer));
+	m1_sdm_fill_buffer((uint8_t *)pfillbuffer, (uint16_t)strlen(pfillbuffer));
 
 	if ( prn_buffer!=NULL )
 		free(prn_buffer);

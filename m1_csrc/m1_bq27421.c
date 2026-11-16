@@ -58,7 +58,9 @@ const uint32_t bq27421_golden_image_count = sizeof(bq27421_golden_image) / sizeo
 bool _sealFlag; // Global to identify that IC was previously sealed
 bool _userConfigControl; // Global to identify that user has control over
                          // entering/exiting config
+#if 0 /* Unused: kept for diagnostics (same class the zero-warning restyle guarded). */
 static uint8_t Blockdata[32];
+#endif
 
 
 
@@ -69,27 +71,27 @@ static bool bq27421_i2c_read16(uint8_t command, uint16_t *data);
 static uint16_t bq27421_flags(void);
 static uint16_t bq27421_status(void);
 static bool bq27421_sealed(void);
-static bool bq27421_seal(void);
+//static bool bq27421_seal(void);
 static bool bq27421_unseal(void);
 static bool bq27421_itporFlag(void);
 //static bool Bbq27421_executeControlWord(uint16_t function);
 static bool bq27421_softReset(void);
 
 static bool bq27421_reset(void);
-static bool bq27421_enter_config(bool userControl);
-static bool bq27421_exit_config(bool userControl);
+//static bool bq27421_enter_config(bool userControl);
+//static bool bq27421_exit_config(bool userControl);
 static bool bq27421_blockDataControl(void);
 static bool bq27421_blockDataClass(uint8_t id);
 static bool bq27421_blockDataOffset(uint8_t offset);
 static uint8_t bq27421_blockDataChecksum(void);
 static uint16_t bq27421_readBlockData(uint8_t offset);
-static uint8_t bq27421_computeBlockChecksum(void);
+//static uint8_t bq27421_computeBlockChecksum(void);
 //static bool bq27421_writeBlockChecksum(uint8_t csum);
 static uint16_t bq27421_read_x_data(uint8_t class_id, uint8_t offset);
 //static bool bq27421_writeExtendedData(uint8_t class_id, uint8_t offset, uint8_t * data, uint8_t len);
-static uint8_t bq27421_check_x_data(uint8_t offset);
+//static uint8_t bq27421_check_x_data(uint8_t offset);
 //static bool bq27421_checkSohStatus(void);
-static bool bq27421_wdreseted(void);
+//static bool bq27421_wdreseted(void);
 //bool bq27421_applyConfigIfMatches(uint16_t designCapacity_mAh,
 //                                  uint16_t designEnergy_mWh,
 //                                  uint16_t terminateVoltage_mV,
@@ -104,7 +106,7 @@ static uint8_t bq27421_writeBlockChecksum(const uint8_t *block,uint8_t len);
 static bool bq27421_verifyChecksumRegister(uint8_t expected);
 //static bool bq27421_updateDataMemoryBlock(uint8_t classID,uint8_t blockID, uint8_t *block, uint8_t len);
 static bool bq27421_updateDataMemoryBlock(const BQ27421_DataBlock *blk);
-static bool bq27421_updateDataMemoryBlockReadTest(void);
+//static bool bq27421_updateDataMemoryBlockReadTest(void);
 static uint8_t bq27421_golden_image_update(void);
 
 bool bq27421_init(void);
@@ -133,6 +135,7 @@ bool bq27421_user_reset(void)
 	bq27421_softReset();
 	HAL_Delay(10);
 	bq27421_sealed();
+	return true;
 }
 
 /* Hardware-backed ops for bq27421_wait_for_itpor()/bq27421_wait_for_current_stable()
@@ -174,7 +177,7 @@ static const bq27421_boot_guard_ops_t s_bq27421_guard_ops = {
 bool bq27421_init(void)
 {
 	uint8_t flags; //designcap_valid, qmax_cell_valid;
-	uint16_t device_type, bat_design_cap, qmax_cell, taper_rate;
+	uint16_t device_type, bat_design_cap = 0, taper_rate = 0;
 	bool reset_confirmed;
 	bool need_update;
 	bool gauge_ok = true;   /* overall status for the return value; only the
@@ -429,7 +432,7 @@ static uint8_t bq27421_golden_image_update(void)
     //--------------------------------------------------------
     bool status;
 
-    for(int i=0;i<bq27421_golden_image_count;i++)
+    for(uint32_t i=0;i<bq27421_golden_image_count;i++)
     {
         status = false;
 
@@ -1129,7 +1132,7 @@ bool bq27421_applyConfigIfMatches(uint16_t designCapacity_mAh,
 /*============================================================================*/
 static uint16_t bq27421_flags(void)
 {
-	uint16_t flags;
+	uint16_t flags = 0;
 
 	bq27421_i2c_read16( BQ27421_FLAGS_LOW, &flags );
 
@@ -1146,7 +1149,7 @@ static uint16_t bq27421_flags(void)
 /*============================================================================*/
 static uint16_t bq27421_status(void)
 {
-	uint16_t status;
+	uint16_t status = 0;
 
 	bq27421_readControlReg(&status);
 
@@ -1161,12 +1164,14 @@ static uint16_t bq27421_status(void)
   * @retval
   */
 /*============================================================================*/
+#if 0 /* Unused: kept for diagnostics (same class the zero-warning restyle guarded). */
 static bool bq27421_wdreseted(void)
 {
 	uint16_t stat = bq27421_status();
 	//bq27421_readControlReg(&stat);
 	return stat & BQ27421_STATUS_WDRESET;
 }
+#endif
 
 
 /*============================================================================*/
@@ -1191,10 +1196,12 @@ static bool bq27421_sealed(void)
   * @retval
   */
 /*============================================================================*/
+#if 0 /* Unused: kept for diagnostics (same class the zero-warning restyle guarded). */
 static bool bq27421_seal(void)
 {
 	return bq27421_i2c_control_write( BQ27421_CONTROL_SEALED );
 }
+#endif
 
 
 /*============================================================================*/
@@ -1310,6 +1317,7 @@ bool bq27421_softReset(void)
   * @retval
   */
 /*============================================================================*/
+#if 0 /* Unused: kept for diagnostics (same class the zero-warning restyle guarded). */
 bool bq27421_enter_config(bool userControl)
 {
 	if (userControl)
@@ -1333,6 +1341,7 @@ bool bq27421_enter_config(bool userControl)
 
 	return false;
 }
+#endif
 
 
 /*============================================================================*/
@@ -1342,6 +1351,7 @@ bool bq27421_enter_config(bool userControl)
   * @retval
   */
 /*============================================================================*/
+#if 0 /* Unused: kept for diagnostics (same class the zero-warning restyle guarded). */
 bool bq27421_exit_config(bool userControl)
 {
 	if (userControl)
@@ -1360,6 +1370,7 @@ bool bq27421_exit_config(bool userControl)
 	}
 	return false;
 }
+#endif
 
 /*****************************************************************************
  ************************** Extended Data Commands ***************************
@@ -1418,7 +1429,7 @@ bool bq27421_blockDataOffset(uint8_t offset)
 /*============================================================================*/
 uint8_t bq27421_blockDataChecksum(void)
 {
-	uint8_t csum;
+	uint8_t csum = 0;
 	bq27421_i2c_read8( BQ27421_EXTENDED_CHECKSUM, &csum );
 	//i2cReadBytes(BQ27421_EXTENDED_CHECKSUM, &csum, 1);
 	return csum;
@@ -1434,7 +1445,7 @@ uint8_t bq27421_blockDataChecksum(void)
 /*============================================================================*/
 uint16_t bq27421_readBlockData(uint8_t offset)
 {
-	uint16_t ret;
+	uint16_t ret = 0;
 	uint8_t address = offset + BQ27421_EXTENDED_BLOCKDATA;
 	bq27421_i2c_read16(address, &ret);
 
@@ -1482,6 +1493,7 @@ bool bq27421_writeBlockData(uint8_t offset, uint8_t data)
   * @retval
   */
 /*============================================================================*/
+#if 0 /* Unused: kept for diagnostics (same class the zero-warning restyle guarded). */
 uint8_t bq27421_computeBlockChecksum(void)
 {
 	//uint8_t Blockdata[32];
@@ -1498,6 +1510,7 @@ uint8_t bq27421_computeBlockChecksum(void)
 
 	return csum;
 }
+#endif
 
 
 #if 0
@@ -1522,6 +1535,7 @@ bool bq27421_writeBlockChecksum(uint8_t csum)
   * @retval
   */
 /*============================================================================*/
+#if 0 /* Unused: kept for diagnostics (same class the zero-warning restyle guarded). */
 uint8_t bq27421_check_x_data(uint8_t offset)
 {
 	uint8_t chksum = 0;
@@ -1547,6 +1561,7 @@ uint8_t bq27421_check_x_data(uint8_t offset)
 
 	return false;
 }
+#endif
 
 
 /*============================================================================*/
@@ -1688,7 +1703,7 @@ bool bq27421_selectSubclassBlock(uint8_t subclass, uint8_t block)
 /*============================================================================*/
 bool bq27421_BlockData(const uint8_t *block, uint8_t len){
     // Write 32-byte block of updated data
-    return bq27421_i2c_write_data_block( 0x00, block, len );
+    return bq27421_i2c_write_data_block( 0x00, (uint8_t *)block, len );
 } 
 
 
@@ -1787,11 +1802,12 @@ bool bq27421_updateDataMemoryBlockRead(const BQ27421_DataBlock *blk, BQ27421_Dat
   */
 /*============================================================================*/
 BQ27421_DataBlock goldenImage_data[14];
+#if 0 /* Unused: kept for diagnostics (same class the zero-warning restyle guarded). */
 bool bq27421_updateDataMemoryBlockReadTest(void)
 {
 	int result;
 
-	for(int i=0;i<bq27421_golden_image_count;i++)
+	for(uint32_t i=0;i<bq27421_golden_image_count;i++)
 	{
 		bq27421_updateDataMemoryBlockRead(&bq27421_golden_image[i], &goldenImage_data[i]);
 
@@ -1800,4 +1816,5 @@ bool bq27421_updateDataMemoryBlockReadTest(void)
 
 	return result;
 }
+#endif
 #endif // #if 1	//+test code

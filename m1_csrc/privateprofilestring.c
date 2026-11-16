@@ -521,7 +521,7 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
 
             char *current_key = trim(line_buff);
 
-            if (strlen(current_key) == len && !strcmp(current_key, entry)) {
+            if ((int)strlen(current_key) == len && !strcmp(current_key, entry)) {
 
             	*colon_pos = TOKEN_COLON;
                 break;
@@ -878,7 +878,7 @@ bool isValidHeaderField(ParsedValue *data, const char* filetype, const char* ver
 
      	    char *current_key = trim(line_buff);
 
-     	    if (strlen(current_key) == len && !strcmp(current_key, entry)) {
+     	    if ((int)strlen(current_key) == len && !strcmp(current_key, entry)) {
 
      	    	*colon_pos = TOKEN_COLON;
      	        break;

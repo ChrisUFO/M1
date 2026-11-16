@@ -606,8 +606,7 @@ static void parse_wifi_list_a_lines(char *resp, ctrl_cmd_t *app_req)
             {
                 size_t auth_len = (size_t)(auth_end - auth_start);
                 encryption_mode = auth_string_to_mode(auth_start, auth_len, &auth_matched);
-                //M1_LOG_I(TAG, \
-                         "AUTH parse: raw='%.*s' -> mode=%d (matched=%d)\r\n", (int)auth_len,auth_start, encryption_mode, auth_matched ? 1 : 0);
+                /*M1_LOG_I(TAG, "AUTH parse: raw='%.*s' -> mode=%d (matched=%d)\r\n", (int)auth_len,auth_start, encryption_mode, auth_matched ? 1 : 0);*/
                 if (!auth_matched)
                 {
                     //M1_LOG_E(TAG, "Unknown AUTH token from list -a: %.*s\r\n", (int)auth_len, auth_start);
@@ -699,8 +698,8 @@ static void parse_wifi_list_a_lines(char *resp, ctrl_cmd_t *app_req)
 
         app_req->u.wifi_ap_scan.out_list = out_list;
         memset(&out_list[app_req->u.wifi_ap_scan.count], 0, sizeof(wifi_scanlist_t));
-        strncpy((char *)out_list[app_req->u.wifi_ap_scan.count].ssid, ssid, SSID_LENGTH - 1);
-        strncpy((char *)out_list[app_req->u.wifi_ap_scan.count].bssid, bssid, BSSID_STR_SIZE - 1);
+        memcpy(out_list[app_req->u.wifi_ap_scan.count].ssid, ssid, strnlen(ssid, SSID_LENGTH - 1));
+        memcpy(out_list[app_req->u.wifi_ap_scan.count].bssid, bssid, strnlen(bssid, BSSID_STR_SIZE - 1));
         out_list[app_req->u.wifi_ap_scan.count].rssi = rssi;
         out_list[app_req->u.wifi_ap_scan.count].channel = channel;
         out_list[app_req->u.wifi_ap_scan.count].encryption_mode = encryption_mode;
@@ -770,7 +769,7 @@ static void parse_wifi_list_s_lines(char *resp, ctrl_cmd_t *app_req)
 
         app_req->u.wifi_ap_scan.out_list = out_list;
         memset(&out_list[app_req->u.wifi_ap_scan.count], 0, sizeof(wifi_scanlist_t));
-        strncpy((char *)out_list[app_req->u.wifi_ap_scan.count].bssid, bssid, BSSID_STR_SIZE - 1);
+        memcpy(out_list[app_req->u.wifi_ap_scan.count].bssid, bssid, strnlen(bssid, BSSID_STR_SIZE - 1));
         out_list[app_req->u.wifi_ap_scan.count].rssi = rssi;
         out_list[app_req->u.wifi_ap_scan.count].channel = 0;
         out_list[app_req->u.wifi_ap_scan.count].encryption_mode = WIFI_AUTH_OPEN;
@@ -1861,9 +1860,9 @@ void wifi_scan_ap(void)
 
                             memcpy(&wifitarget->ap_inf, &ap_list[selected_id[0]], sizeof(wifi_scanlist_t));
                             memset(&wifitarget->sta_inf, 0, sizeof(wifitarget->sta_inf));
-                            strncpy((char *)wifitarget->sta_inf.bssid,
-                                    (const char *)sta_list[selected_id[1]].bssid,
-                                    BSSID_STR_SIZE - 1);
+                            memcpy(wifitarget->sta_inf.bssid,
+                                   sta_list[selected_id[1]].bssid,
+                                   strnlen((const char *)sta_list[selected_id[1]].bssid, BSSID_STR_SIZE - 1));
                             wifitarget->sta_inf.rssi = sta_list[selected_id[1]].rssi;
 
                             wifi_scan_common_exit_cleanup(&ap_req, &sta_req);
@@ -1914,7 +1913,7 @@ void wifi_scan_ap(void)
 
                             u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_N);
 
-                            snprintf(ui_msg, sizeof(ui_msg), "AP: %s", (const char *)ap_list[selected_id[0]].ssid);
+                            snprintf(ui_msg, sizeof(ui_msg), "AP: %.27s", (const char *)ap_list[selected_id[0]].ssid);
                             y_offset += M1_GUI_FONT_HEIGHT;
                             u8g2_DrawStr(&m1_u8g2, 2, y_offset, ui_msg);
 
@@ -2071,7 +2070,8 @@ static uint16_t wifi_ap_list_print(ctrl_cmd_t *app_resp, bool up_dir)
 	else
 	{
 	    strcpy(prn_msg, "SSID: ");
-	    strncpy(&prn_msg[6], list[i].ssid, M1_LCD_DISPLAY_WIDTH/M1_SUB_MENU_FONT_WIDTH-6);
+	    strncpy(&prn_msg[6], (const char *)list[i].ssid, M1_LCD_DISPLAY_WIDTH/M1_SUB_MENU_FONT_WIDTH-6);
+	    prn_msg[M1_LCD_DISPLAY_WIDTH/M1_SUB_MENU_FONT_WIDTH] = '\0';
 	}
 	u8g2_DrawStr(&m1_u8g2, 2, y_offset, prn_msg);
 
@@ -2095,8 +2095,7 @@ static uint16_t wifi_ap_list_print(ctrl_cmd_t *app_resp, bool up_dir)
 
 	u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
 
-	//M1_LOG_D(M1_LOGDB_TAG, "%d) ssid \"%s\" bssid \"%s\" rssi \"%d\" channel \"%d\" auth mode \"%s\" \r\n",\
-						i, list[i].ssid, list[i].bssid, list[i].rssi, list[i].channel, wifi_auth_mode_to_str(list[i].encryption_mode));
+	/*M1_LOG_D(M1_LOGDB_TAG, "%d) ssid \"%s\" bssid \"%s\" rssi \"%d\" channel \"%d\" auth mode \"%s\" \r\n", i, list[i].ssid, list[i].bssid, list[i].rssi, list[i].channel, wifi_auth_mode_to_str(list[i].encryption_mode));*/
 
 	return w_scan_p->count;
 } // static uint16_t wifi_ap_list_print(ctrl_cmd_t *app_resp, bool up_dir)
@@ -2246,8 +2245,7 @@ static uint16_t wifi_station_list_print(ctrl_cmd_t *app_resp, bool up_dir)
 
     u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
 
-    //M1_LOG_D(M1_LOGDB_TAG, "STA ID %02d) sta mac \"%s\" rssi \"%d\"\r\n",\
-                        i, list[i].bssid, list[i].rssi);
+    /*M1_LOG_D(M1_LOGDB_TAG, "STA ID %02d) sta mac \"%s\" rssi \"%d\"\r\n", i, list[i].bssid, list[i].rssi);*/
 
     return w_scan_p->count;
 } // static uint16_t wifi_station_list_print(ctrl_cmd_t *app_resp, bool up_dir)
@@ -4549,7 +4547,7 @@ void wifi_beacon(void)
             for (_si = 0U; _si < beacon_argc; _si++)
             {
                 y_offset += M1_GUI_FONT_HEIGHT;
-                snprintf(ui_msg, sizeof(ui_msg), "%s", ssid_buf[_si]);
+                snprintf(ui_msg, sizeof(ui_msg), "%.39s", ssid_buf[_si]);
                 u8g2_DrawStr(&m1_u8g2, 2, y_offset, ui_msg);
             }
         } while (m1_u8g2_nextpage());
@@ -4716,7 +4714,7 @@ void wifi_survey(void)
     int16_t  ch_best_rssi[WIFI_SURVEY_CH_SPAN];
     uint16_t total_aps = 0;
     uint8_t top_row = 0;   /* index (0-based over channels 1..14) of first visible row */
-    char line[26];
+    char line[40];
 
     u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
 
@@ -4825,7 +4823,7 @@ void wifi_survey(void)
                 }
                 if (ch_count[idx] > 0)
                 {
-                    snprintf(line, sizeof(line), "Ch%2u: %2u AP %ddBm",
+                    snprintf(line, sizeof(line), "Ch%2u: %2u AP %4ddBm",
                              (unsigned int)(idx + WIFI_SURVEY_CH_MIN),
                              (unsigned int)ch_count[idx],
                              (int)ch_best_rssi[idx]);
@@ -5229,7 +5227,7 @@ static uint8_t wifi_saved_add_or_update(const wifi_scanlist_t *ap)
         if (g_saved_count >= WIFI_SAVED_MAX) { return 2U; } /* full */
         e = &g_saved[g_saved_count];
         memset(e, 0, sizeof(*e));
-        strncpy(e->bssid, up, sizeof(e->bssid) - 1U);
+        memcpy(e->bssid, up, strnlen(up, sizeof(e->bssid) - 1U));
     }
 
     strncpy(e->ssid, (const char *)ap->ssid, sizeof(e->ssid) - 1U);

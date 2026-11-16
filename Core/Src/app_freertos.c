@@ -63,6 +63,7 @@ const osThreadAttr_t dummytask_attributes = {
 /* USER CODE BEGIN VPORT_SUPPORT_TICKS_AND_SLEEP */
 __weak void vPortSuppressTicksAndSleep( TickType_t xExpectedIdleTime )
 {
+  (void)xExpectedIdleTime; /* Unused: stub for future work. May need removal later. */
   // Generated when configUSE_TICKLESS_IDLE == 2.
   // Function called in tasks.c (in portTASK_FUNCTION).
   // TO BE COMPLETED or TO BE REPLACED by a user one, overriding that weak one.

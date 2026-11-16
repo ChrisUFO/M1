@@ -42,6 +42,7 @@
 
 #define RADIO_PATCH_CONFIGURATION_DATA { \
                             Radio_Patch_Configuration_Data_Array,                            \
+                            0, 0, 0, 0, {0}                                                  \
                             }
 
 #endif /* RADIO_PATCH_CONFIG_H_ */

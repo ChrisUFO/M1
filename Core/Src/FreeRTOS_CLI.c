@@ -159,7 +159,7 @@ BaseType_t FreeRTOS_CLIProcessCommand( const char * const pcCommandInput,
     BaseType_t xReturn = pdTRUE;
     const char * pcRegisteredCommandString;
     size_t xCommandStringLength;
-    uint8_t num_of_params;
+    uint8_t num_of_params = 0;
 
     /* Note:  This function is not re-entrant.  It must not be called from more
      * thank one task. */

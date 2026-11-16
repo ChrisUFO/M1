@@ -134,7 +134,7 @@ BaseType_t cmd_m1_mtest(char *pconsole, size_t xWriteBufferLen, const char *pcCo
 	{
 	    /* Obtain the name of the source file, and the length of its name, from
 	    the command string. The name of the source file is the first parameter. */
-		input_params[i] = FreeRTOS_CLIGetParameter
+		input_params[i] = (char *)FreeRTOS_CLIGetParameter
 	                        (
 	                          /* The command string itself. */
 	                          pcCommandString,
@@ -749,8 +749,9 @@ void cmd_m1_mtest_infrared(char *pconsole, char *input_params[], uint8_t n_param
 	uint8_t force_quit, ret;
 	S_M1_Main_Q_t q_item;
 	IRMP_DATA irmp_data;
+#if 0 /* Unused local: gpio test writes via m1_gpio helpers. */
 	GPIO_InitTypeDef gpio_init_struct;
-
+#endif
 	switch (cmd_type)
 	{
     	case 40:
@@ -825,8 +826,7 @@ void cmd_m1_mtest_infrared(char *pconsole, char *input_params[], uint8_t n_param
 void ShowRegister(uint8_t reg, uint8_t value)
 {
 	uint8_t t = 0x80;
-	uint8_t msg[20];
-
+	char msg[20];
 	msg[0] = 0;
 	M1_LOG_N(M1_LOGDB_TAG, "Register %2xh: %xh\r\n", reg, value);
 	M1_LOG_N("     ", "7 6 5 4 3 2 1 0\r\n");
@@ -847,6 +847,7 @@ void ShowRegister(uint8_t reg, uint8_t value)
 /*============================================================================*/
 void cmd_m1_mtest_power(char *pconsole, char *input_params[], uint8_t n_params, uint8_t cmd_type)
 {
+	(void)pconsole; /* Unused: power mtest logs via M1_LOG. */
 	uint8_t 		reg = 0xff;
 	int				res = -1;
 	if (n_params >=3)
@@ -869,9 +870,11 @@ void cmd_m1_mtest_power(char *pconsole, char *input_params[], uint8_t n_params, 
 				if (strcmp(input_params[1], "bc") == 0) {			// Battery Charger
 					M1_LOG_N(M1_LOGDB_TAG, "(Battery Charger)\r\n");
 					res = bq_readRegister(reg);
+					(void)res; /* Unused: side-effect register read. May need removal later. */
 				} else if (strcmp(input_params[1], "pd") == 0) {	// USB-PD
 					M1_LOG_N(M1_LOGDB_TAG, "(USB-PD)\r\n");
 					res = pd_readRegister(reg);
+					(void)res; /* Unused: side-effect register read. May need removal later. */
 				}
     		} else {	// Show Status
     			M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: Show Status ");
@@ -885,7 +888,7 @@ void cmd_m1_mtest_power(char *pconsole, char *input_params[], uint8_t n_params, 
     		}
     		break;
 
-    	case 59:
+    	case 59: ;
     		S_M1_Power_Status_t SystemPowerStatus;
     		battery_power_status_get(&SystemPowerStatus);
 
@@ -1073,7 +1076,6 @@ void cmd_m1_mtest_subghz(char *pconsole, char *input_params[], uint8_t n_params,
 /*============================================================================*/
 void cmd_m1_mtest_esp32(char *pconsole, char *input_params[], uint8_t n_params, uint8_t cmd_type)
 {
-	uint32_t input1_val;
 	ctrl_cmd_t app_req = CTRL_CMD_DEFAULT_REQ();
 
 	switch (cmd_type)
@@ -1175,9 +1177,6 @@ void cmd_m1_mtest_esp32(char *pconsole, char *input_params[], uint8_t n_params, 
 void cmd_m1_mtest_gpio(char *pconsole, char *input_params[], uint8_t n_params, uint8_t cmd_type)
 {
 	uint32_t input1_val;
-	int16_t rssi;
-	uint8_t mode_type;
-
 	switch (cmd_type)
 	{
     	case 80:
@@ -1218,9 +1217,6 @@ void cmd_m1_mtest_gpio(char *pconsole, char *input_params[], uint8_t n_params, u
 /*============================================================================*/
 void cmd_m1_mtest_nfc(char *pconsole, char *input_params[], uint8_t n_params, uint8_t cmd_type)
 {
-	uint32_t input1_val;
-	int16_t rssi;
-	uint8_t mode_type;
 
 	M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: NFC - CLI TEST input_params[%s] cmd_type[%d] n_params[%d]\r\n", *input_params, cmd_type, n_params);
 

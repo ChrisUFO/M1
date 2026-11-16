@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: scoped warning hygiene restored on the adopted base (issue #39) —
+  the genuine warning fixes embedded in the dropped zero-warning restyle are
+  recovered from the merge ledger (`recovered-warning-fix` tags, 34 entries)
+  as isolated commits, and `-Wall -Wextra -Werror` is enforced on the app
+  sources (the `m1_csrc` translation units) only, via CMake source-file
+  properties with `TARGET_DIRECTORY` scoping — vendor trees keep the relaxed
+  default (see DEVELOPMENT.md "Scoped -Werror policy"); all remaining
+  new-base app warnings the fork never saw are fixed in kind
+- Fork: Windows verification adapters as repo artifacts (issue #49) — the
+  gcc-nosan host-test compiler shim (strips ASan/UBSan flags the host gcc
+  cannot link, demotes the three gcc-15 `-Werror=` classes that fire on
+  harness-generated stubs) and the emulated `srec_cat` STM32 CRC emitter
+  with the baseline reference vectors as self-tests, plus usage docs
+  (`tools/WINDOWS_VERIFICATION.md`)
 - Fork: adoption of the upstream 0.8.1.0 base (pinned `2af1f8a`, ancestry
   graft — fork history is now recorded as merged; legacy changes recoverable
   via `legacy/v0.8.11`, see DEVELOPMENT.md Merge Policy)

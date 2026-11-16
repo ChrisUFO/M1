@@ -516,8 +516,8 @@ static nfc_storage_result_t nfc_storage_parse_header_ini(
         result = NFC_STORAGE_ERR_FORMAT;
         goto done;
     }
-    if (parse_device_type(data.buf, faminfo) != 0) {
-        platformLog("Unsupported Device type: %s\r\n", data.buf);
+    if (parse_device_type((char *)data.buf, faminfo) != 0) {
+        platformLog("Unsupported Device type: %s\r\n", (char *)data.buf);
         result = NFC_STORAGE_ERR_UNSUP;
         goto done;
     }

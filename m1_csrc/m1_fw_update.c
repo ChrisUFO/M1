@@ -167,7 +167,7 @@ void firmware_update_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
 {
 	uint8_t i, n_items;
 	uint8_t menu_text_y;
-	uint8_t prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
+	char prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
 
 	n_items = phmenu->num_submenu_items;
 	menu_text_y = THIS_LCD_MENU_TEXT_FIRST_ROW_Y;
@@ -404,7 +404,7 @@ void firmware_update_get_image_file(void)
 			sum = image_size;
 			while ( sum )
 			{
-				count = m1_fb_read_from_file(&hfile_fw, fw_payload, FW_IMAGE_CHUNK_SIZE);
+				count = m1_fb_read_from_file(&hfile_fw, (char *)fw_payload, FW_IMAGE_CHUNK_SIZE);
 				if ( !count || (count % 4 != 0) ) // Read failed?
 				{
 					uret = M1_FW_IMAGE_FILE_ACCESS_ERROR;
@@ -468,6 +468,7 @@ void firmware_update_get_image_file(void)
 				break;
 			}
 			fwver_old = *(uint32_t *)&m1_device_stat.config.fw_version_rc;
+			(void)fwver_old; /* Unused: kept for debug symmetry with fw_version_new. */
 			fw_version_new = *(uint32_t *)&fwconfig.fw_version_rc;
 		} // if ( !uret )
 		else

@@ -384,11 +384,8 @@ void vUsb2SerTask(void *pvParameters)
   size_t bytes_to_send;
   size_t bytes_remaining;
   uint8_t *current_buffer_ptr;
-  enCdcMode prev_cdc_mode = m1_usbcdc_mode;
 
   UNUSED(pvParameters);
-
-  const TickType_t xMaxBlockTime = pdMS_TO_TICKS(500);
 
     for(;;)
     {

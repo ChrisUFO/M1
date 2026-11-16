@@ -38,8 +38,8 @@
 #define H10301_DECODED_DATA_SIZE     (3)
 
 static uint8_t* protocol_h10301_get_data(void* proto);
-static bool h10301_decoder_execute(void* proto, uint16_t size, void* dec);
-static bool protocol_h10301_decoder_execute(void* proto, uint16_t size);
+static bool h10301_decoder_execute(void* proto, int size, void* dec);
+static bool protocol_h10301_decoder_execute(void* proto, int size);
 
 /* ============================================================
  * HID H10301
@@ -94,10 +94,10 @@ static fsk_bit_state_t    bit_st;
 
 uint8_t* protocol_h10301_get_data(void* proto);
 void protocol_h10301_decoder_begin(void* proto);
-bool protocol_h10301_decoder_execute(void* proto, uint16_t size);
+bool protocol_h10301_decoder_execute(void* proto, int size);
 bool protocol_h10301_encoder_begin(void* proto);
 void protocol_h10301encoder_send(void* proto);
-void protocol_h10301_write_begin(void* protocol, void *data);
+bool protocol_h10301_write_begin(void* protocol, void *data);
 void protocol_h10301_write_send(void* proto);
 void protocol_h10301_render_data(void* protocol, char* result);
 
@@ -488,7 +488,7 @@ bool h10301_extract_fields(uint32_t raw26,
   * @retval
   */
 /*============================================================================*/
-bool h10301_decoder_execute(void* proto, uint16_t size, void* dec)
+bool h10301_decoder_execute(void* proto, int size, void* dec)
 {
 	lfrfid_evt_t* evt = (lfrfid_evt_t*)proto;
 
@@ -865,6 +865,7 @@ overflow:
 /*============================================================================*/
 void protocol_h10301_decoder_begin(void* proto)
 {
+	(void)proto; /* Unused: stub for future work. May need removal later. */
 	h10301_decoder_init(&g_h10301_dec);
 
     fsk_symbol_state_init(&sym_st);
@@ -879,10 +880,10 @@ void protocol_h10301_decoder_begin(void* proto)
   * @retval
   */
 /*============================================================================*/
-bool protocol_h10301_decoder_execute(void* proto, uint16_t size)
+bool protocol_h10301_decoder_execute(void* proto, int size)
 {
 	lfrfid_evt_t* p = (lfrfid_evt_t*)proto;
-	return h10301_decoder_execute(p, size, &g_h10301_dec);
+	return h10301_decoder_execute(p, (uint16_t)size, &g_h10301_dec);
 }
 
 
@@ -895,6 +896,7 @@ bool protocol_h10301_decoder_execute(void* proto, uint16_t size)
 /*============================================================================*/
 bool protocol_h10301_encoder_begin(void* proto)
 {
+	(void)proto; /* Unused: stub for future work. May need removal later. */
     uint8_t output_raw[12];
 
     uint8_t uid[3] = { 0, };
@@ -922,6 +924,7 @@ bool protocol_h10301_encoder_begin(void* proto)
 /*============================================================================*/
 void protocol_h10301encoder_send(void* proto)
 {
+	(void)proto; /* Unused: stub for future work. May need removal later. */
 	lfrfid_encoded_data.index = 0;
 	//lfrfid_emul_length = 128;	// modify
 	lfrfid_emul_hw_init();
@@ -938,6 +941,7 @@ void protocol_h10301encoder_send(void* proto)
 /*============================================================================*/
 void protocol_h10301_render_data(void* protocol, char* result)
 {
+	(void)protocol; /* Unused: stub for future work. May need removal later. */
 	uint8_t* data = protocol_h10301_get_data(NULL);
 
     sprintf(
@@ -960,6 +964,7 @@ void protocol_h10301_render_data(void* protocol, char* result)
 /*============================================================================*/
 uint8_t* protocol_h10301_get_data(void* proto)
 {
+	(void)proto; /* Unused: stub for future work. May need removal later. */
     return lfrfid_tag_info.uid;
 }
 
@@ -971,7 +976,7 @@ uint8_t* protocol_h10301_get_data(void* proto)
   * @retval
   */
 /*============================================================================*/
-void protocol_h10301_write_begin(void* protocol, void *data)
+bool protocol_h10301_write_begin(void* protocol, void *data)
 {
 	LFRFID_TAG_INFO* tag_data = (LFRFID_TAG_INFO*)protocol;
 	LFRFIDProgram* write = (LFRFIDProgram*)data;
@@ -997,6 +1002,7 @@ void protocol_h10301_write_begin(void* protocol, void *data)
 		}
 	}
 #endif
+	return true;
 
 }
 
@@ -1010,6 +1016,6 @@ void protocol_h10301_write_begin(void* protocol, void *data)
 /*============================================================================*/
 void protocol_h10301_write_send(void* proto)
 {
-
+	(void)proto; /* Unused: stub for future work. May need removal later. */
 	t5577_execute_write(lfrfid_program, 0);
 }

@@ -203,7 +203,7 @@ void m1_gui_scr_animation(void);
 void m1_gui_let_update_fw(void);
 void m1_info_box_display_init(bool high_box);
 void m1_info_box_display_clear(void);
-void m1_info_box_display_draw(uint8_t box_row, const uint8_t *ptext);
+void m1_info_box_display_draw(uint8_t box_row, const char *ptext);
 uint8_t m1_message_box(u8g2_t *u8g2, const char *title1, const char *title2, const char *title3, const char *buttons);
 void m1_draw_file_saved_screen(void);
 void m1_wait_back_to_exit(void);

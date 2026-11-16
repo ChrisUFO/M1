@@ -66,9 +66,11 @@ void m1_system_init(void)
 	 * application tasks start. FatFs LFN operations use substantial stack, so
 	 * the initialization task needs the existing 1024-word allocation. */
 	ret = xTaskCreate(m1_system_init_task, "m1_system_init_task_n", M1_TASK_STACK_SIZE_1024, NULL, TASK_PRIORITY_SYS_INIT, &sys_init_task_hdl);
+	(void)ret; /* Unused: result checked via assert. May need removal later. */
 	assert(ret==pdPASS);
 	assert(sys_init_task_hdl!=NULL);
 	free_heap = xPortGetFreeHeapSize();
+	(void)free_heap; /* Unused: result checked via assert. May need removal later. */
 	assert(free_heap >= M1_LOW_FREE_HEAP_WARNING_SIZE);
 } // void m1_system_init(void)
 
@@ -154,6 +156,7 @@ void m1_system_GPIO_init(void)
 
 void m1_system_init_task(void *param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	while (1)
 	{
 #if ( osCMSIS < 0x20000 )

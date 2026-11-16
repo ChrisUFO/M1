@@ -43,27 +43,27 @@
 
 S_M1_Menu_t menu_Sub_GHz_Scan =
 {
-    "Scan", sub_ghz_scan, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Scan", sub_ghz_scan, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Sub_GHz_Record =
 {
-    "Record", sub_ghz_record, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Record", sub_ghz_record, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Sub_GHz_Replay =
 {
-    "Replay", sub_ghz_replay, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Replay", sub_ghz_replay, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Sub_GHz_Frequency_Reader =
 {
-    "Frequency Reader", sub_ghz_frequency_reader, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Frequency Reader", sub_ghz_frequency_reader, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Sub_GHz_GPIO_Remap =
 {
-    "Remap Tx pin", sub_ghz_gpio_remap, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Remap Tx pin", sub_ghz_gpio_remap, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Sub_GHz =
@@ -76,23 +76,23 @@ S_M1_Menu_t menu_Sub_GHz =
 
 S_M1_Menu_t menu_125KHz_RFID_Read =
 {
-    "Read", rfid_125khz_read, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Read", rfid_125khz_read, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_125KHz_RFID_Saved =
 {
-    "Saved", rfid_125khz_saved, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Saved", rfid_125khz_saved, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 
 S_M1_Menu_t menu_125KHz_RFID_Add_Manually =
 {
-    "Add", rfid_125khz_add_manually, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Add", rfid_125khz_add_manually, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_125KHz_RFID_Utilities =
 {
-    "Utilities", rfid_125khz_utilities, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Utilities", rfid_125khz_utilities, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_125KHz_RFID =
@@ -105,22 +105,22 @@ S_M1_Menu_t menu_125KHz_RFID =
 
 S_M1_Menu_t menu_NFC_Read =
 {
-    "Read", nfc_read, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Read", nfc_read, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_NFC_Saved =
 {
-    "Saved", nfc_saved, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Saved", nfc_saved, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_NFC_Detect_Reader =
 {
-    "Extract Keys", nfc_detect_reader, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Extract Keys", nfc_detect_reader, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_NFC_MFC_Keys =
 {
-    "MIFARE Classic Keys", nfc_mfc_keys, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "MIFARE Classic Keys", nfc_mfc_keys, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_NFC_ULC_Keys =
@@ -129,12 +129,12 @@ S_M1_Menu_t menu_NFC_ULC_Keys =
      * display in the NFC Tools list. Label shortened to fit; the
      * internal struct name, launcher function, view mode, dictionary
      * paths and formats are all unchanged. */
-    "Ultralight Keys", nfc_ulc_keys, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Ultralight Keys", nfc_ulc_keys, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_NFC_PWD_Keys =
 {
-    "NTAG/UL Passwords", nfc_pwd_keys, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "NTAG/UL Passwords", nfc_pwd_keys, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 /* "MFC Emulate" (nfc_mfc_emulate(), m1_nfc.c) is intentionally not listed
@@ -151,12 +151,12 @@ S_M1_Menu_t menu_NFC_Tools =
 };
 
 /* NFC > Add: manual card creation for the six approved types. */
-S_M1_Menu_t menu_NFC_Add_MFC1K   = { "MFC 1K",     nfc_add_mfc1k,      NULL, NULL, 0, 0, NULL, NULL, NULL };
-S_M1_Menu_t menu_NFC_Add_MFC4K   = { "MFC 4K",     nfc_add_mfc4k,      NULL, NULL, 0, 0, NULL, NULL, NULL };
-S_M1_Menu_t menu_NFC_Add_UL      = { "Ultralight", nfc_add_ultralight, NULL, NULL, 0, 0, NULL, NULL, NULL };
-S_M1_Menu_t menu_NFC_Add_NTAG213 = { "NTAG213",    nfc_add_ntag213,    NULL, NULL, 0, 0, NULL, NULL, NULL };
-S_M1_Menu_t menu_NFC_Add_NTAG215 = { "NTAG215",    nfc_add_ntag215,    NULL, NULL, 0, 0, NULL, NULL, NULL };
-S_M1_Menu_t menu_NFC_Add_NTAG216 = { "NTAG216",    nfc_add_ntag216,    NULL, NULL, 0, 0, NULL, NULL, NULL };
+S_M1_Menu_t menu_NFC_Add_MFC1K   = { "MFC 1K",     nfc_add_mfc1k,      NULL, NULL, 0, 0, NULL, NULL, {NULL} };
+S_M1_Menu_t menu_NFC_Add_MFC4K   = { "MFC 4K",     nfc_add_mfc4k,      NULL, NULL, 0, 0, NULL, NULL, {NULL} };
+S_M1_Menu_t menu_NFC_Add_UL      = { "Ultralight", nfc_add_ultralight, NULL, NULL, 0, 0, NULL, NULL, {NULL} };
+S_M1_Menu_t menu_NFC_Add_NTAG213 = { "NTAG213",    nfc_add_ntag213,    NULL, NULL, 0, 0, NULL, NULL, {NULL} };
+S_M1_Menu_t menu_NFC_Add_NTAG215 = { "NTAG215",    nfc_add_ntag215,    NULL, NULL, 0, 0, NULL, NULL, {NULL} };
+S_M1_Menu_t menu_NFC_Add_NTAG216 = { "NTAG216",    nfc_add_ntag216,    NULL, NULL, 0, 0, NULL, NULL, {NULL} };
 
 S_M1_Menu_t menu_NFC_Add =
 {
@@ -179,22 +179,22 @@ S_M1_Menu_t menu_NFC =
 
 S_M1_Menu_t menu_Infrared_Universal_TVs =
 {
-    "TV remotes", infrared_universal_tv_remotes, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "TV remotes", infrared_universal_tv_remotes, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Infrared_Universal_Audios =
 {
-    "Audio player remotes", infrared_universal_audio_remotes, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Audio player remotes", infrared_universal_audio_remotes, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Infrared_Universal_Projectors =
 {
-    "Projector remotes", infrared_universal_projector_remotes, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Projector remotes", infrared_universal_projector_remotes, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Infrared_Universal_ACs =
 {
-    "AC remotes", infrared_universal_ac_remotes, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "AC remotes", infrared_universal_ac_remotes, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Infrared_Universal_Remotes =
@@ -205,17 +205,17 @@ S_M1_Menu_t menu_Infrared_Universal_Remotes =
 
 S_M1_Menu_t menu_Infrared_Learn_New_Remote =
 {
-    "Learn", infrared_learn_new_remote, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Learn", infrared_learn_new_remote, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Infrared_Saved_Remotes =
 {
-    "Replay", infrared_saved_remotes, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Replay", infrared_saved_remotes, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Infrared_Remap_GPIO =
 {
-    "Remap Tx pin", infrared_remap_gpio, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Remap Tx pin", infrared_remap_gpio, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Infrared =
@@ -228,22 +228,22 @@ S_M1_Menu_t menu_Infrared =
 
 S_M1_Menu_t menu_GPIO_GPIO_Manual_Control =
 {
-    "GPIO Control", gpio_manual_control, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "GPIO Control", gpio_manual_control, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_GPIO_3_3V_On_GPIO =
 {
-    "3.3V power", gpio_3_3v_on_gpio, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "3.3V power", gpio_3_3v_on_gpio, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_GPIO_5V_On_GPIO =
 {
-    "5V power", gpio_5v_on_gpio, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "5V power", gpio_5v_on_gpio, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_GPIO_USB_UART =
 {
-    "USB-UART bridge", gpio_usb_uart_bridge, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "USB-UART bridge", gpio_usb_uart_bridge, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_GPIO =
@@ -258,7 +258,7 @@ S_M1_Menu_t menu_GPIO =
 
 S_M1_Menu_t menu_Setting_Storage_About =
 {
-    "About SD Card", storage_about, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "About SD Card", storage_about, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 /* No Explore/Mount/Unmount items here: boot/home LEFT is the sole surviving
@@ -270,7 +270,7 @@ S_M1_Menu_t menu_Setting_Storage_About =
  * MSC lifecycle handler (safe SD ownership handoff); user-facing name = "USB Drive". */
 S_M1_Menu_t menu_USB_Drive =
 {
-    "USB Drive", storage_usbmsc, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "USB Drive", storage_usbmsc, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_USB =
@@ -280,7 +280,7 @@ S_M1_Menu_t menu_USB =
 
 S_M1_Menu_t menu_Setting_Storage_Format =
 {
-    "Format SD Card", storage_format, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Format SD Card", storage_format, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 /*------------------------- > Settings-Storage-End ---------------------------*/
@@ -289,17 +289,17 @@ S_M1_Menu_t menu_Setting_Storage_Format =
 
 S_M1_Menu_t menu_Setting_Power_Info =
 {
-    "Battery Info", power_battery_info, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Battery Info", power_battery_info, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Setting_Power_Reboot =
 {
-    "Reboot", power_reboot, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Reboot", power_reboot, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Setting_Power_Off =
 {
-    "Power Off", power_off, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Power Off", power_off, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 /*----------------------- > Settings-Power-End -------------------------------*/
@@ -309,12 +309,12 @@ S_M1_Menu_t menu_Setting_Power_Off =
 
 S_M1_Menu_t menu_Setting_Firmware_Update_Image_File =
 {
-    "Image File", firmware_update_get_image_file, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Image File", firmware_update_get_image_file, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Setting_Firmware_Update_Start =
 {
-    "Firmware update", firmware_update_start, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Firmware update", firmware_update_start, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 
@@ -325,17 +325,17 @@ S_M1_Menu_t menu_Setting_Firmware_Update_Start =
 
 S_M1_Menu_t menu_Setting_ESP32_Image_File =
 {
-    "Image File", setting_esp32_image_file, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Image File", setting_esp32_image_file, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Setting_ESP32_Start_Address =
 {
-    "Start Address", setting_esp32_start_address, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Start Address", setting_esp32_start_address, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Setting_ESP32_Firmware_Update =
 {
-    "Firmware Update", setting_esp32_firmware_update, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Firmware Update", setting_esp32_firmware_update, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 /*---------------------- > Settings-ESP32 Update-End ----------------------*/
@@ -362,7 +362,7 @@ S_M1_Menu_t menu_Setting_ESP32 =
 
 S_M1_Menu_t menu_Settings_About =
 {
-    "About", settings_about, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "About", settings_about, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Settings =
@@ -378,34 +378,34 @@ S_M1_Menu_t menu_Settings =
  * from the in-function Network Actions menu, not a nested menu-system submenu. */
 S_M1_Menu_t menu_Wifi_Networks =
 {
-    "Networks", wifi_scan_networks, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Networks", wifi_scan_networks, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Wifi_Deauth =
 {
-    "Deauth Client", wifi_deauth_client, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Deauth Client", wifi_deauth_client, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Wifi_Handshake =
 {
-    "Handshake", wifi_handshake_flow, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Handshake", wifi_handshake_flow, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Wifi_Beacon =
 {
-    "Beacon", wifi_beacon, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Beacon", wifi_beacon, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Wifi_Survey =
 {
-    "Channel Survey", wifi_survey, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Channel Survey", wifi_survey, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 /* MonstaShark stays under Wi-Fi so it shares the AP scan session with the
  * other Wi-Fi tools; navigation between them does not cross menu_wifi_exit. */
 S_M1_Menu_t menu_Capture_Network =
 {
-    "MonstaShark", m1_capture_network_screen, NULL, NULL, 0, 0, menu_m1_icon_wifi, NULL, NULL
+    "MonstaShark", m1_capture_network_screen, NULL, NULL, 0, 0, menu_m1_icon_wifi, NULL, {NULL}
 };
 
 /* gui_menu_update = NULL uses the standard scrolling submenu renderer
@@ -420,7 +420,7 @@ S_M1_Menu_t menu_Wifi =
 /*------------------------------ > Bluetooth ---------------------------------*/
 S_M1_Menu_t menu_Bluetooth_ScanDevices =
 {
-    "Scan Devices", bluetooth_scan_devices, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Scan Devices", bluetooth_scan_devices, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 /* Device Details is not a top-level function: it is the inspector reached by pressing
@@ -428,17 +428,17 @@ S_M1_Menu_t menu_Bluetooth_ScanDevices =
 
 S_M1_Menu_t menu_Bluetooth_SignalMeter =
 {
-    "Signal Meter", bluetooth_signal_meter, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Signal Meter", bluetooth_signal_meter, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Bluetooth_GattExplorer =
 {
-    "GATT Explorer", bluetooth_gatt_explorer, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "GATT Explorer", bluetooth_gatt_explorer, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 S_M1_Menu_t menu_Bluetooth_Saved =
 {
-    "Saved", bluetooth_saved, NULL, NULL, 0, 0, NULL, NULL, NULL
+    "Saved", bluetooth_saved, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
 
@@ -509,7 +509,8 @@ static void menu_main_init(void)
 /*============================================================================*/
 void menu_main_handler_task(void *param)
 {
-	uint8_t key, sel_item, n_items;
+	(void)param; /* Unused: stub for future work. May need removal later. */
+	uint8_t key, sel_item = 0, n_items;
 	uint8_t menu_update_stat;
 	S_M1_Buttons_Status this_button_status;
 	S_M1_Main_Q_t q_item;
@@ -824,6 +825,7 @@ static void m1_quick_power_down(void)
 /*============================================================================*/
 void subfunc_handler_task(void *param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	while(1)
 	{
 		// Waiting for notification from menu_main_handler_task,
