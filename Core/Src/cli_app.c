@@ -104,14 +104,14 @@ const CLI_Command_Definition_t xCommandList[] = {
     },
     {
         .pcCommand = "cdcstats", /* The command string to type. */
-        .pcHelpString = "cdcstats:\r\n Shows USB CDC RX diagnostics (dropped bytes, high watermark, buffered now)\r\n\r\n",
+        .pcHelpString = "cdcstats:\r\n Shows USB CDC bridge RX diagnostics (VCP/ESP32 bridge path): bytes refused at arrival (retryable back-pressure), bytes lost unrecoverably, the high watermark (sticky until cdcreset) and the sampled buffered-now level. The 32-bit counters can wrap after long sustained load.\r\n\r\n",
         .pxCommandInterpreter = cmd_cdcstats, /* The function to run. */
         .pxCommandHelper = cmd_cdcstats_help, /* Help for the function. */
         .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
     },
     {
         .pcCommand = "cdcreset", /* The command string to type. */
-        .pcHelpString = "cdcreset:\r\n Resets USB CDC RX diagnostic counters\r\n\r\n",
+        .pcHelpString = "cdcreset:\r\n Resets the USB CDC bridge RX diagnostic counters and high watermark\r\n\r\n",
         .pxCommandInterpreter = cmd_cdcreset, /* The function to run. */
         .pxCommandHelper = cmd_cdcreset_help, /* Help for the function. */
         .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
@@ -237,10 +237,12 @@ BaseType_t cmd_clearScreen_help(void)
 
 /*============================================================================*/
 /*
- * CLI command: USB CDC RX diagnostics (issue #44, part A)
+ * CLI command: USB CDC bridge RX diagnostics (issue #44, part A)
  *
  * Reports the counters maintained on upstream's CDC stream-buffer RX path
- * (VCP / ESP32 bridge modes). Read-only: `cdcreset` clears them.
+ * (VCP / ESP32 bridge modes; the console path is not observed). "Refused at
+ * arrival" is retryable back-pressure, "Lost" is unrecoverable loss. Read-only:
+ * `cdcreset` clears them.
  */
 /*============================================================================*/
 BaseType_t cmd_cdcstats(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
@@ -249,11 +251,13 @@ BaseType_t cmd_cdcstats(char *pcWriteBuffer, size_t xWriteBufferLen, const char 
     (void)num_of_params;
 
     (void)snprintf(pcWriteBuffer, xWriteBufferLen,
-                   "USB CLI RX Diagnostics:\r\n"
-                   "  Dropped bytes: %lu\r\n"
-                   "  High watermark: %lu bytes\r\n"
-                   "  Buffered now: %lu bytes\r\n",
+                   "USB CDC bridge RX diagnostics:\r\n"
+                   "  Refused at arrival: %lu (retryable)\r\n"
+                   "  Lost (unrecoverable): %lu\r\n"
+                   "  High watermark: %lu bytes (sticky)\r\n"
+                   "  Buffered now: %lu (sampled)\r\n",
                    (unsigned long)CDC_CLI_RxDroppedBytes(),
+                   (unsigned long)CDC_CLI_RxLostBytes(),
                    (unsigned long)CDC_CLI_RxHighWatermark(),
                    (unsigned long)CDC_CLI_RxBufferedBytes());
     return pdFALSE;
@@ -287,7 +291,7 @@ BaseType_t cmd_cdcreset(char *pcWriteBuffer, size_t xWriteBufferLen, const char 
 
     CDC_CLI_RxResetStats();
     (void)snprintf(pcWriteBuffer, xWriteBufferLen,
-                   "USB CLI RX diagnostics reset.\r\n");
+                   "USB CDC bridge RX diagnostics reset.\r\n");
     return pdFALSE;
 } // BaseType_t cmd_cdcreset(...)
 
