@@ -93,6 +93,13 @@ void assert_failed(uint8_t* file, uint32_t line);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+/* The strap index is hand-copied into the host-buildable m1_dfu_entry.h (which
+ * cannot include main.h). This is the one TU that sees both, so pin them here:
+ * remapping the UP button without updating the strap would leave the service
+ * entry reading a dead pin. The port is GPIOE (BUTTON_UP_GPIO_Port). */
+_Static_assert((1U << M1_DFU_STRAP_PIN_INDEX) == (uint32_t)BUTTON_UP_Pin,
+               "DFU strap index must match BUTTON_UP_Pin (PE11)");
+
 /* USER CODE END 0 */
 
 /**
@@ -112,8 +119,9 @@ int main(void)
    *
    * The 'UP' button (PE11, active low) held at reset is the hardware strap;
    * m1_dfu_strap_active() owns the polarity and is host-tested. On a strap hit
-   * the unit gives a speaker tick, lights PD12/PD13 and calls bl_jump_to_dfu(),
-   * which owns the whole teardown order AND the 32 s watchdog safety net -- one
+   * the unit gives a speaker tick, drives PD12/PD13 (user-owned external
+   * connector pins 6-7 -- not DFU LEDs) and calls bl_jump_to_dfu(), which owns
+   * the whole teardown order AND the 32 s watchdog safety net -- one
    * implementation, so the order cannot drift between the strap and the
    * software-request path. No option bytes are written on this or any boot.
    */
@@ -140,8 +148,9 @@ int main(void)
     if ( dfu_hardware_strap )
     {
       /* --- Audio feedback -------------------------------------------------
-       * SPK_CTRL is PC7: hold it high ~100 ms so the speaker gives an audible
-       * tick, then release. */
+       * SPK_CTRL is PC7: hold it high briefly so the speaker gives an
+       * audible tick, then release. The 300000-iteration emit loop is ~23 ms
+       * at 64 MHz (not the legacy comment's ~100 ms). */
       RCC->AHB2ENR |= RCC_AHB2ENR_GPIOCEN;
       __DSB();
 
@@ -159,8 +168,10 @@ int main(void)
       }
 
       /* --- Visual feedback ------------------------------------------------
-       * PD12/PD13 high: the same DFU indication the software-request path
-       * drives through the HAL once peripherals are up. */
+       * PD12/PD13 high: user-owned external connector pins 6-7 (see
+       * docs/hardware.md and m1_ext_gpio[] in m1_gpio.c), the same indication
+       * the software-request path drives through the HAL once peripherals are
+       * up. They are asserted on the way into the non-returning jump. */
       RCC->AHB2ENR |= RCC_AHB2ENR_GPIODEN;
       __DSB();
 
