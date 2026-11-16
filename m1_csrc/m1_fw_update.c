@@ -254,9 +254,13 @@ void firmware_update_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
         				break;
 
     	    		case M1_FW_IMAGE_FILE_TYPE_ERROR:
-        			case M1_FW_IMAGE_SIZE_INVALID:
                         m1_info_box_display_init(true);
         				m1_info_box_display_draw(INFO_BOX_ROW_1, "Invalid image file!");
+        				break;
+
+        			case M1_FW_IMAGE_SIZE_INVALID:
+                        m1_info_box_display_init(true);
+        				m1_info_box_display_draw(INFO_BOX_ROW_1, "Invalid image size!");
         				break;
 
         			case M1_FW_VERSION_ERROR:
@@ -391,12 +395,20 @@ void firmware_update_get_image_file(void)
 		if ( !uret )
 		{
 			image_size = f_size(&hfile_fw);
-		    // Both the address and image size must be aligned to 4 bytes
-		    if ( (!image_size) || (image_size % 4 != 0) || (image_size > (FW_IMAGE_SIZE_MAX + FW_IMAGE_CRC_SIZE)) )
+		    /* Exactly one image size is a valid update: the canonical
+		     * CRC-appended image (signed span + trailing CRC word, 0xFFC18
+		     * bytes) -- the only shape the build's CRC emitter produces and
+		     * the only span the boot failsafe validates. A shorter,
+		     * self-consistent file would pass the CRC screen below, be
+		     * flashed, and then be flagged corrupt on every boot, so reject
+		     * it here, before anything is erased. */
+		    if ( !m1_boot_image_size_is_canonical(image_size) )
 		    {
+		    	M1_LOG_E(M1_LOGDB_TAG, "Rejected image size %lu: a firmware image must be exactly %lu bytes (0xFFC14 signed span + 4-byte CRC).\r\n",
+		    			(unsigned long)image_size, (unsigned long)M1_BOOT_IMAGE_FILE_SIZE_CANONICAL);
 		    	uret = M1_FW_IMAGE_SIZE_INVALID;
 		    	break;
-		    } // if ( (!image_size) || (image_size % 4 != 0) || (image_size > (FW_IMAGE_SIZE_MAX + FW_IMAGE_CRC_SIZE) )
+		    } // if ( !m1_boot_image_size_is_canonical(image_size) )
 
 		    // Call the function to initialize this transaction.
 		    // Do not take the return value in this case. Input data can be anything.

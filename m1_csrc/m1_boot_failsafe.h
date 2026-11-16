@@ -30,6 +30,27 @@
  * addresses against this constant so the two can never drift apart silently. */
 #define M1_BOOT_CRC_CROP_END_BYTES	0x000FFC14U
 
+/* The one update image shape the boot check can validate: the signed span above
+ * followed by its own 4-byte CRC word -- exactly what the canonical build emits
+ * as <artifact>_wCRC.bin (0xFFC18 bytes). Update intake enforces this size and
+ * nothing else (m1_fw_update.c for the SD path, bl_flash_stream_begin() for the
+ * streamed M1CP path): the pre-flight verifier hashes a file over its own
+ * length, so a shorter, self-consistent file would be erased and programmed
+ * (and, if the fixed-address post-flash check happened to pass, swapped in) and
+ * then be flagged corrupt by this fixed span on every boot.
+ * m1_fw_update_bl.h static-asserts this constant against FW_CRC_ADDRESS -
+ * FW_START_ADDRESS + FW_IMAGE_CRC_SIZE so intake cannot drift from the span. */
+#define M1_BOOT_CRC_WORD_BYTES			4U
+#define M1_BOOT_IMAGE_FILE_SIZE_CANONICAL	(M1_BOOT_CRC_CROP_END_BYTES + M1_BOOT_CRC_WORD_BYTES)
+
+/* Intake gate decision, kept pure so the host test pins it: is this candidate
+ * update image exactly the canonical image? Deliberately exact equality -- no
+ * "close enough" tolerance, no alignment-only check. */
+static inline bool m1_boot_image_size_is_canonical(uint32_t image_size)
+{
+	return image_size == M1_BOOT_IMAGE_FILE_SIZE_CANONICAL;
+}
+
 /* Maximum bank swaps allowed between two CRC-validated boots. A swap counts
  * against the budget until a boot validates the image it swapped in; a healthy
  * boot clears it (startup_boot_failsafe()). This bounds option-byte churn and

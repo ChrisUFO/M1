@@ -609,6 +609,19 @@ uint8_t bl_flash_app(FIL *hfile)
 /******************************************************************************/
 uint8_t bl_flash_stream_begin(uint32_t image_size)
 {
+	/* Same intake contract as the SD path (m1_fw_update.c): only the canonical
+	 * image (signed span + trailing CRC word) can ever pass the final
+	 * bl_crc_check(), which compares against the CRC word at the FIXED
+	 * FW_CRC_ADDRESS in the target bank. Reject anything else before the erase,
+	 * with the size-error code, instead of erasing a 1 MiB bank to program an
+	 * image that cannot validate and would leave the bank un-bootable-valid. */
+	if ( !m1_boot_image_size_is_canonical(image_size) )
+	{
+		M1_LOG_E(M1_LOGDB_TAG, "Rejected streamed image size %lu: must be exactly %lu bytes (0xFFC14 signed span + 4-byte CRC).\r\n",
+				(unsigned long)image_size, (unsigned long)M1_BOOT_IMAGE_FILE_SIZE_CANONICAL);
+		return BL_CODE_SIZE_ERROR;
+	}
+
 	/* Force the write cursor back to its pre-BEGIN state FIRST, in case the
 	 * previous attempt (if any) was aborted or failed before its own
 	 * bl_flash_binary(NULL,0) finalize call ran -- otherwise this BEGIN's

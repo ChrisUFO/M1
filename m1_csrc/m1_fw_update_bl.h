@@ -97,6 +97,14 @@ typedef struct {
 _Static_assert((FW_CRC_ADDRESS - FW_START_ADDRESS) == M1_BOOT_CRC_CROP_END_BYTES,
                "Boot CRC span must equal the build's 0xFFC14 CRC crop end");
 
+/* Update intake accepts exactly one size -- the span above plus the trailing
+ * 4-byte CRC word, i.e. the canonical 0xFFC18 image. A shorter (or longer)
+ * self-consistent file would pass the update verifier over its own length and
+ * be flashed, then fail this fixed span on every boot; the gates in
+ * m1_fw_update.c and bl_flash_stream_begin() reject it up front instead. */
+_Static_assert(((FW_CRC_ADDRESS - FW_START_ADDRESS) + FW_IMAGE_CRC_SIZE) == M1_BOOT_IMAGE_FILE_SIZE_CANONICAL,
+               "Update intake size must equal the boot failsafe's signed span + CRC word");
+
 typedef enum
 {
 	M1_FW_UPDATE_SUCCESS = 0,
@@ -152,8 +160,10 @@ void fw_gui_progress_update(size_t remainder);
 /* Streamed programming wrappers (M1CP firmware-update path). These reuse the
  * exact SD-path engine (bl_flash_if_init/bl_flash_start/bl_flash_binary/
  * bl_flash_if_deinit) in the same order, driven by streamed chunks instead of a
- * file. Sequence: begin(image_size) [erases inactive bank] -> write(chunk)... ->
- * finish() [runs bl_crc_check over the programmed image vs the embedded CRC].
+ * file. Sequence: begin(image_size) [rejects any image_size other than
+ * M1_BOOT_IMAGE_FILE_SIZE_CANONICAL with BL_CODE_SIZE_ERROR, then erases the
+ * inactive bank] -> write(chunk)... -> finish() [runs bl_crc_check over the
+ * programmed image vs the embedded CRC].
  * All chunks except the final one must be a multiple of 16 bytes (quadword).
  * Return BL_CODE_OK on success. No bank swap here; activation is separate
  * (bl_swap_banks). Task context only. */
