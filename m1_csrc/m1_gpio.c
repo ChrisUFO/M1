@@ -457,7 +457,8 @@ void gpio_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
 {
 	uint8_t i, n_items;
 	uint8_t menu_text_y;
-	char prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
+	/* +8: the USB-bridge UART line is 26 chars, one past GUI_DISP_LINE_LEN_MAX */
+	char prn_name[GUI_DISP_LINE_LEN_MAX + 8] = {0};
 #if 0 /* Unused locals: stub for future work. May need removal later. */
 	uint16_t msg_len, msg_id;
 #endif
@@ -549,7 +550,8 @@ void gpio_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
 /******************************************************************************/
 void gpio_xkey_handler(S_M1_Key_Event event, uint8_t button_id, uint8_t sel_item)
 {
-	char prn_name[GUI_DISP_LINE_LEN_MAX + 1] = {0};
+	/* +8: the USB-bridge UART line is 26 chars, one past GUI_DISP_LINE_LEN_MAX */
+	char prn_name[GUI_DISP_LINE_LEN_MAX + 8] = {0};
 
     if ( event==BUTTON_EVENT_CLICK )
     {
@@ -579,9 +581,10 @@ void gpio_xkey_handler(S_M1_Key_Event event, uint8_t button_id, uint8_t sel_item
         else  if ( sel_item == 3) {
             if ( button_id==BUTTON_LEFT_KP_ID ) // Left arrow key
             {
-                menuid_usbbridge--;
-                if ( menuid_usbbridge < 0 )
+                if ( menuid_usbbridge == MNU_USBBRIDGE_UART1 )
                     menuid_usbbridge = MAX_MENU_USBBRIDGE;
+                else
+                    menuid_usbbridge--;
             } // if ( button_id==BUTTON_LEFT_KP_ID )
             else if ( button_id==BUTTON_RIGHT_KP_ID ) // Right arrow key
             {

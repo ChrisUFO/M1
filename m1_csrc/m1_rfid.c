@@ -2144,7 +2144,8 @@ static void lfrfid_saved_rename_update(uint8_t param)
 				error = 0;
 				fu_get_directory_path(new_file, lfrfid_tag_info.filepath, sizeof(lfrfid_tag_info.filepath));
 				const char *pbuff = fu_get_filename(new_file);
-				strncpy(lfrfid_tag_info.filename, pbuff, sizeof(lfrfid_tag_info.filename));
+				strncpy(lfrfid_tag_info.filename, pbuff, sizeof(lfrfid_tag_info.filename) - 1);
+				lfrfid_tag_info.filename[sizeof(lfrfid_tag_info.filename) - 1] = '\0';
 			}
 		}
 

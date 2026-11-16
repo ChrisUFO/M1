@@ -267,6 +267,7 @@ void m1_dummytimer_task(void *argument)
 /*============================================================================*/
 void m1_runonce_task_handler(void *param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	//m1_led_indicator_on(NULL);
 	vTaskDelete(NULL); // Delete this task
 } // void m1_runonce_task_handler(void *param)

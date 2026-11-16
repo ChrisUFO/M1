@@ -96,7 +96,7 @@ uint8_t bl_crc_check(uint32_t image_size)
         return BL_CODE_OK;
     }
 
-	 M1_LOG_E(M1_LOGDB_TAG, "crc32: 0x%X, cal_crc32: 0x%X, 32-bit image size: %ld\r\n", crc32, result, image_size);
+	 M1_LOG_E(M1_LOGDB_TAG, "crc32: 0x%lX, cal_crc32: 0x%lX, 32-bit image size: %ld\r\n", (unsigned long)crc32, (unsigned long)result, (long)image_size);
 
     return BL_CODE_CHK_ERROR;
 } // uint8_t bl_crc_check(uint32_t image_size)
@@ -427,7 +427,7 @@ static uint8_t bl_flash_binary(uint8_t *payload, size_t size)
         err = bl_flash_if_write(payload, s_bl_flash_add, size);
         if (err != BL_CODE_OK)
         {
-            M1_LOG_I(M1_LOGDB_TAG, "Writing flash error at 0x%X.\r\n", s_bl_flash_add);
+            M1_LOG_I(M1_LOGDB_TAG, "Writing flash error at 0x%lX.\r\n", (unsigned long)(uintptr_t)s_bl_flash_add);
             return err;
         }
         s_bl_write_acc += size;
@@ -503,7 +503,7 @@ uint8_t bl_flash_app(FIL *hfile)
         m1_wdt_reset();
 
         flash_err = BL_CODE_CHK_ERROR;
-		count = m1_fb_read_from_file(hfile, fw_payload, FW_IMAGE_CHUNK_SIZE);
+		count = m1_fb_read_from_file(hfile, (char *)fw_payload, FW_IMAGE_CHUNK_SIZE);
 		if ( !count || (count % 4 != 0) ) // Read failed?
 			break;
 
@@ -595,7 +595,7 @@ void bl_flash_stream_abort(void)
 /******************************************************************************/
 void fw_gui_progress_update(size_t remainder)
 {
-	uint8_t percent_txt[30];
+	char percent_txt[30];
 	uint8_t percent;
 	size_t percent_cnt;
 	static uint32_t image_size = 0;

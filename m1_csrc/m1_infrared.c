@@ -127,7 +127,6 @@ S_M1_IR_Tx_States infrared_transmit(uint8_t init, uint8_t tx_protocol)
 	static S_M1_IR_Tx_States ir_tx_state = IR_TX_INIT;
 	static uint8_t ir_protocol = IRMP_UNKNOWN_PROTOCOL;
 	uint16_t ir_ok;
-	BaseType_t ret;
 
 	if (init)
 	{
@@ -225,7 +224,7 @@ void infrared_learn_new_remote(void)
 	S_M1_Buttons_Status this_button_status;
 	S_M1_Main_Q_t q_item;
 	BaseType_t ret;
-	uint8_t ir_data[20], prev_protocol;
+	char ir_data[20], prev_protocol;
 	uint32_t ir_rx_frame_tn;
 
 	infrared_decode_sys_init();
@@ -331,7 +330,7 @@ void infrared_saved_remotes(void)
 	S_M1_Buttons_Status this_button_status;
 	S_M1_Main_Q_t q_item;
 	BaseType_t ret;
-	uint8_t ir_tx_complete, ir_data[20];
+	uint8_t ir_tx_complete; char ir_data[20];
 
 	// m1_gui_let_update_fw();
 

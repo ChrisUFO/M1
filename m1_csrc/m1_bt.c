@@ -1156,7 +1156,7 @@ static uint16_t bt_scan_parse_output(const char *resp_text)
 						strncpy(name, name_pos + 5, BLE_SCAN_NAME_MAX - 1U);
 						name[BLE_SCAN_NAME_MAX - 1U] = '\0';
 
-						strncpy(g_ble_scan_items[out_count].bssid, mac, BSSID_STR_SIZE - 1U);
+						memcpy(g_ble_scan_items[out_count].bssid, mac, strnlen(mac, BSSID_STR_SIZE - 1U));
                         g_ble_scan_items[out_count].rssi = rssi;
                         g_ble_scan_items[out_count].wire_index = (uint16_t)strtoul(start + 1, NULL, 10);
                         char *mp = strstr(mac_start, " MFG=");
@@ -1164,7 +1164,7 @@ static uint16_t bt_scan_parse_output(const char *resp_text)
                         g_ble_scan_items[out_count].company = mp ? (unsigned)strtoul(mp + 5, NULL, 10) : 65535U;
                         g_ble_scan_items[out_count].age_ms = ap ? (uint32_t)strtoul(ap + 5, NULL, 10) : 0;
 
-						strncpy(g_ble_scan_items[out_count].name, name, BLE_SCAN_NAME_MAX - 1U);
+						memcpy(g_ble_scan_items[out_count].name, name, strnlen(name, BLE_SCAN_NAME_MAX - 1U));
 						out_count++;
 					}
 				}
