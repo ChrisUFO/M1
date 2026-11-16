@@ -2,17 +2,16 @@
 # Exercises scripts/check_no_raw_bkp_writes.sh (issue #41-A structural guard).
 #
 # The guard is only worth having if it actually fails: this checks the real tree
-# passes, a seeded raw TAMP->BKP write in a scratch tree is detected, a clean
-# scratch tree passes, and the HAL's own implementation stays allowlisted.
+# passes, a seeded raw TAMP->BKP write in a scratch tree is detected, a seeded
+# HAL_RTCEx_BKUPWrite to DR1 is detected, a clean scratch tree passes, the HAL's
+# own implementation stays allowlisted, and the ESP-version DR2/DR3 use stays
+# allowed.
 # Portable POSIX sh (MinGW Git Bash + POSIX sh).
 set -u
 
 # Resolve the guard from THIS script's location, never from the caller's cwd:
 # `sh tools/m1cp_host_test/test_no_raw_bkp_writes.sh` run from the repo root must
-# behave exactly like `make -C tools/m1cp_host_test test`. With a cwd-relative
-# path the guard was not found from the repo root, every case read the non-zero
-# exit as "violation detected" and three assertions failed -- including the
-# alarming-looking "HAL implementation falsely flagged" (audit finding D2).
+# behave exactly like `make -C tools/m1cp_host_test test` (audit finding D2).
 SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1
 REPO_ROOT=$(CDPATH= cd -- "$SELF_DIR/../.." && pwd) || exit 1
 GUARD="$REPO_ROOT/scripts/check_no_raw_bkp_writes.sh"
@@ -32,14 +31,15 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 say_ok()  { echo "  ok   $1"; }
 say_bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
 
-# 1. The real tree must pass (no application source touches TAMP->BKP).
+# 1. The real tree must pass (no application source touches TAMP->BKP or aims
+#    the HAL backup-register API at DR0/DR1).
 if sh "$GUARD"; then
-    say_ok "real tree: no raw TAMP->BKP access"
+    say_ok "real tree: no raw/HAL backup-register access outside the accessors"
 else
     say_bad "real tree: guard reported a violation"
 fi
 
-# 2. A seeded violation must be detected.
+# 2. A seeded raw TAMP->BKP write must be detected.
 mkdir -p "$tmp/m1_csrc"
 printf 'void seeded(void) { TAMP->BKP1R = 0xDEADBEEF; }\n' > "$tmp/m1_csrc/seeded.c"
 if sh "$GUARD" --root "$tmp" >/dev/null 2>&1; then
@@ -48,8 +48,18 @@ else
     say_ok "seeded raw backup-register write detected"
 fi
 
-# 3. A clean tree passes (no false positives).
+# 3. A seeded HAL-API bypass (DR1 through HAL_RTCEx_BKUPWrite) must be detected.
 rm -f "$tmp/m1_csrc/seeded.c"
+printf 'void seeded_hal(void) { HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR1, 0); }\n' \
+    > "$tmp/m1_csrc/seeded_hal.c"
+if sh "$GUARD" --root "$tmp" >/dev/null 2>&1; then
+    say_bad "seeded HAL_RTCEx_BKUPWrite(RTC_BKP_DR1) was NOT detected"
+else
+    say_ok "seeded HAL-API bypass to DR1 detected"
+fi
+
+# 4. A clean tree passes (no false positives).
+rm -f "$tmp/m1_csrc/seeded_hal.c"
 printf 'void clean(void) { }\n' > "$tmp/m1_csrc/clean.c"
 if sh "$GUARD" --root "$tmp" >/dev/null 2>&1; then
     say_ok "clean tree passes"
@@ -57,7 +67,7 @@ else
     say_bad "clean tree rejected (false positive)"
 fi
 
-# 4. The HAL implementation is allowlisted.
+# 5. The HAL implementation is allowlisted.
 mkdir -p "$tmp/Drivers/STM32H5xx_HAL_Driver/Src"
 printf 'void hal(void) { *(__IO uint32_t *)(&(TAMP->BKP0R)) = 1U; }\n' \
     > "$tmp/Drivers/STM32H5xx_HAL_Driver/Src/hal.c"
@@ -66,6 +76,28 @@ if sh "$GUARD" --root "$tmp" >/dev/null 2>&1; then
 else
     say_bad "HAL implementation falsely flagged"
 fi
+
+# 6. The ESP32 version record (DR2/DR3 via the HAL API) must stay allowed --
+#    the V1 pattern must not over-block the one legitimate HAL user.
+printf 'void esp(void) { HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR2, 0); (void)HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR3); }\n' \
+    > "$tmp/m1_csrc/espver.c"
+if sh "$GUARD" --root "$tmp" >/dev/null 2>&1; then
+    say_ok "ESP-version DR2/DR3 usage allowed"
+else
+    say_bad "ESP-version DR2/DR3 usage falsely flagged"
+fi
+rm -f "$tmp/m1_csrc/espver.c"
+
+# 7. The accessors' own DR0/DR1 use in m1_system.c is allowed.
+mkdir -p "$tmp/m1_csrc"
+printf 'void acc(void) { HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR0 + 1U, 0); }\n' \
+    > "$tmp/m1_csrc/m1_system.c"
+if sh "$GUARD" --root "$tmp" >/dev/null 2>&1; then
+    say_ok "m1_system.c accessor use allowed"
+else
+    say_bad "m1_system.c accessor use falsely flagged"
+fi
+rm -f "$tmp/m1_csrc/m1_system.c"
 
 echo
 if [ "$fails" -eq 0 ]; then
