@@ -115,9 +115,9 @@ The exact error enumeration is `S_M1_M1_FW_CODES_t` in
 
 ## Boot failsafe
 
-Every boot now validates the RUNNING bank before the normal UI appears
+Every boot validates the RUNNING bank before the boot artwork is drawn
 (`startup_boot_failsafe()` in `m1_system.c`; it runs after the update state
-machine has been reconciled and before the boot artwork):
+machine has been reconciled and before `m1_gui_welcome_scr()`):
 
 1. `bl_crc_validate_active_bank()` computes the hardware CRC32 of the fixed
    span `[FW_START_ADDRESS, FW_CRC_ADDRESS)` (the same `0xFFC14` bytes the build
@@ -129,14 +129,31 @@ machine has been reconciled and before the boot artwork):
    - increments `boot_attempts` (saturating at 255) and records the fault class
      in `boot_fault_signature` (metadata magic / metadata header / image CRC) in
      the backup registers, so the failure survives a power cycle,
-   - shows the `FW CORRUPT!` recovery screen instead of the normal boot artwork,
+   - shows the `FW CORRUPT!` screen instead of the normal boot artwork,
    - logs the fault class and attempt count, then enters the recovery seam
      (`startup_boot_recovery_hook()`).
 
-The detection and accounting are automatic; the recovery action behind the seam
-is where USB DFU entry (`bl_jump_to_dfu()`) is wired in by the DFU unit of
-issue #41. Until that lands, the device stays in the visible recovery state and
-service DFU remains the supported way out.
+**What the failsafe does and does not do.** Detection and accounting are
+automatic; the *recovery action* is not. On a failure the boot stops at
+`FW CORRUPT!` and the fault is recorded, but:
+
+- the unvalidated image is **not** prevented from running — execution continues
+  into the application exactly as on a healthy boot,
+- `FW CORRUPT!` is **not** a lock-out screen: the normal UI is one key press
+  away. The message leaves the display mode in `M1_OPERATION_MODE_DISPLAY_ON`,
+  and the first OK press takes `m1_menu.c` into `menu_main_init()`, which
+  redraws the main menu over the banner,
+- no automatic recovery action runs until the DFU unit of issue #41 (#41-B)
+  fills that seam with `bl_jump_to_dfu()`; it currently only logs.
+
+Treat `FW CORRUPT!` as a diagnostic banner rather than containment. What it
+does give you is durable evidence: `boot_fault_signature` and `boot_attempts`
+survive a power cycle in DR1, so a technician can distinguish an erased metadata
+block (magic/header fault) from a genuinely corrupted image (CRC fault). The
+supported ways out of a failed bank for this release are service DFU and the
+SD-card update path (plus the interactive rollback offer below). Automatic DFU
+entry lands with #41-B, and on-device qualification of the whole corrupt-bank
+path is the issue #41 hardware gate (milestone "Post-merge stabilization").
 
 The manual alternate-bank rollback path is still interactive-only: it runs on
 the first power-up after an update reboot when the user presses BACK+DOWN, and
@@ -155,13 +172,20 @@ implemented. On-device qualification of the corrupt-bank boot path -- including
 the recovery screen and the eventual DFU entry -- is tracked as the issue #41
 hardware gate (milestone "Post-merge stabilization"); the host suite covers the
 span arithmetic, the CRC decision, every fault class, the counters and the swap
-guard.
+guard, and signs/injects a synthetic `0xFFC14`-byte bank with the build's own CRC
+algorithm (valid, flipped byte, zeroed magic, relocated CRC word).
 
 The boot path performs a READ-ONLY IWDG option-byte check
 (`startup_iwdg_option_byte_check()`) and logs whether the watchdog is
-software-started. The legacy fork silently rewrote the IWDG option bytes on
-every boot; that rewrite is deliberately not ported -- no `HAL_FLASHEx_OBProgram`
-and no `HAL_FLASH_OB_Launch` appear in the boot path.
+software-started. It reads the OPTSR *value* bit for the watchdog mode
+(`FLASH_OPTSR_IWDG_SW`, bit 3, exposed by the HAL as `OB_IWDG_SW`) -- not the
+similarly named `OB_USER_IWDG_SW`, which is the `USERType` selector that chooses
+which option byte `HAL_FLASHEx_OBProgram` writes and would report `BORH_EN`
+(bit 2) as the watchdog mode. The decision lives in
+`m1_boot_iwdg_is_hardware()` (`m1_boot_failsafe.h`) and is host-tested. The
+legacy fork silently rewrote the IWDG option bytes on every boot; that rewrite is
+deliberately not ported -- no `HAL_FLASHEx_OBProgram` and no
+`HAL_FLASH_OB_Launch` appear in the boot path.
 
 ## Recovery and rollback status
 

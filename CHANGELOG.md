@@ -19,8 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compile-time assert that the span equals the build's `0xFFC14` crop end).
   Failures are classified (metadata magic / metadata header / image CRC),
   counted in saturating `boot_attempts`, recorded in `boot_fault_signature`,
-  and put the device into a visible `FW CORRUPT!` recovery state with a seam
-  for DFU entry. A validating boot clears the accounting. `S_M1_BK_REGS_t`
+  and stop the boot at a visible `FW CORRUPT!` banner with a seam for DFU
+  entry. The banner is diagnostic, not containment: the unvalidated image is
+  not prevented from running and the normal UI is one key press away; no
+  automatic recovery action runs until #41-B fills the seam. A validating boot
+  clears the accounting. `S_M1_BK_REGS_t`
   now exposes those fields plus `swap_attempts` inside its existing 3 reserved
   bytes (still exactly 8 bytes = DR0/DR1, statically asserted; DR2/DR3 stay
   ESP-version-owned) via generalized `startup_config_write()`/
@@ -30,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bytes are inspected read-only (the legacy per-boot rewrite is deliberately
   not ported). New host tests (`test_m1cp_failsafe`, guard test) and
   `scripts/check_no_raw_bkp_writes.sh` cover the logic and ban raw `TAMP->BKP`
-  access outside the accessors
+  access and `HAL_RTCEx_BKUPWrite/Read` aimed at DR0/DR1 outside the accessors
 - Fork: CRC emitter parity harness (issue #40) — `scripts/verify_crc_parity.sh`
   generates four deterministic full-size (`0xFFC14`-byte) images from the
   committed spec in `tools/crc_test_vectors.py` (so no ~1 MiB binaries live in
