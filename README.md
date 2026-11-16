@@ -49,7 +49,7 @@ See [HARDWARE.md](HARDWARE.md) for more details.
 
 ## Building
 
-**See [documentation/mbt.md](documentation/mbt.md) for full build instructions** (STM32CubeIDE and VS Code setup, extensions, and optional post-build CRC).
+**See [documentation/mbt.md](documentation/mbt.md) for full build instructions** (STM32CubeIDE and VS Code setup, extensions, and the CRC post-build step). That step is not optional for provisioning: only the CRC-appended `_wCRC.bin` validates at boot — see [Provisioning](docs/protocols/firmware-update.md#provisioning-which-artifact-to-flash).
 
 ### Prerequisites
 
@@ -78,7 +78,10 @@ because the check finds no CRC word. Use `_wCRC.bin` over SWD, or copy
 [Provisioning](docs/protocols/firmware-update.md#provisioning-which-artifact-to-flash).
 
 **STM32CubeIDE:**  
-Open the project and build in the IDE.
+Open the project and build **Release** in the IDE. Only the IDE's Release
+configuration carries the CRC post-build step, so `_wCRC.bin` exists only there:
+a Debug build (and an IDE debug download) produces no CRC-appended image, and a
+device provisioned from it shows `FW CORRUPT!` on every boot.
 
 **VS Code:**  
 1. Configure the project (e.g. `gcc-14_2_build-release` or `gcc-14_2_build-debug`)  

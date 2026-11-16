@@ -114,7 +114,8 @@ The STM32 uses dual 1 MiB flash banks and option-byte bank swapping. Update code
 validates metadata and CRC, writes the inactive bank, and can request rollback.
 Every boot additionally validates the running bank against the fixed-span CRC the
 build embedded in it, keeps failure/boot-attempt and swap counters in the
-backup registers, and shows a recovery screen when the image does not validate.
+backup registers, and shows a `FW CORRUPT!` diagnostic banner (not a lock-out —
+the unvalidated image still runs) when the image does not validate.
 See [Firmware image and update](protocols/firmware-update.md).
 
 ## Architectural risks

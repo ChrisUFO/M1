@@ -105,6 +105,33 @@ static char *bound_block(const char *src, const char *sig) {
     }
 }
 
+/* Polarity pin for the intake gate. Walks back from an occurrence of the
+ * predicate call (so whitespace and line breaks do not matter) and requires the
+ * exact rejecting shape `if ( !predicate(...)`. This is what an inverted rewrite
+ * breaks while still containing the predicate text: bare `if (predicate(` , a
+ * nested `if (false && !predicate(` , or a double negation `if (!!predicate(` .
+ * Returns 1 only for the rejecting form. */
+static int rejects_on_predicate(const char *src, const char *call) {
+    const char *p = call;
+
+    if ((src == NULL) || (call == NULL)) return 0;
+    while ((p > src) && ((p[-1] == ' ') || (p[-1] == '\t') || (p[-1] == '\r') || (p[-1] == '\n'))) p--;
+    if ((p == src) || (p[-1] != '!')) return 0;      /* negated at all?          */
+    p--;
+    while ((p > src) && ((p[-1] == ' ') || (p[-1] == '\t') || (p[-1] == '\r') || (p[-1] == '\n'))) p--;
+    if ((p == src) || (p[-1] != '(')) return 0;      /* `if ( !call`             */
+    p--;
+    while ((p > src) && ((p[-1] == ' ') || (p[-1] == '\t') || (p[-1] == '\r') || (p[-1] == '\n'))) p--;
+    if ((p - src) < 2) return 0;
+    if ((p[-1] != 'f') || (p[-2] != 'i')) return 0;  /* the keyword `if`         */
+    if ((p - src) > 2) {
+        char before = p[-3];
+        if ((before != ' ') && (before != '\t') && (before != '\r') && (before != '\n') &&
+            (before != '{') && (before != '}') && (before != ';') && (before != ')')) return 0;
+    }
+    return 1;
+}
+
 /* Parse the first unsigned decimal integer that follows `key`, so a build/release
  * contract like `WCRC_EXPECTED_BYTES=1047576` can be pinned without depending on
  * the surrounding formatting. Returns 0 when the key is absent. */
@@ -152,6 +179,8 @@ int main(void) {
     ok(!m1_boot_image_size_is_canonical(0x00100004U),
        "1 MiB + CRC word rejected");
     ok(!m1_boot_image_size_is_canonical(0x000FFC16U),
+       "unaligned size (0xFFC16, 2 mod 4) rejected");
+    ok(!m1_boot_image_size_is_canonical(0x000FFC10U),
        "4-aligned-but-not-canonical size rejected (alignment is not the contract)");
     {
         /* exactly one accepted value in a window around the canonical size */
@@ -171,6 +200,9 @@ int main(void) {
             const char *gate = strstr(src, "m1_boot_image_size_is_canonical(image_size)");
             ok(gate != NULL, "SD intake calls the canonical-image predicate");
             if (gate != NULL) {
+                /* the call must be the REJECTION branch, not the acceptance one */
+                ok(rejects_on_predicate(src, gate),
+                   "SD intake rejects on !m1_boot_image_size_is_canonical(image_size)");
                 /* the rejection must carry the existing size-error code ... */
                 ok(strstr(gate, "M1_FW_IMAGE_SIZE_INVALID") != NULL &&
                    strstr(gate, "M1_FW_IMAGE_SIZE_INVALID") - gate < 600,
@@ -198,6 +230,8 @@ int main(void) {
             if (body != NULL) {
                 const char *gate = strstr(body, "m1_boot_image_size_is_canonical(image_size)");
                 ok(gate != NULL, "streamed intake calls the canonical-image predicate");
+                ok((gate != NULL) && rejects_on_predicate(body, gate),
+                   "streamed intake rejects on !m1_boot_image_size_is_canonical(image_size)");
                 ok(strstr(body, "BL_CODE_SIZE_ERROR") != NULL,
                    "streamed intake rejects with BL_CODE_SIZE_ERROR");
                 {
