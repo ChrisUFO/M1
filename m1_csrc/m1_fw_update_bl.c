@@ -28,6 +28,12 @@
 
 #define M1_LOGDB_TAG		"FW-BL"
 
+/* The host-buildable header can only carry the numeric IWDG_PR encoding; tie it
+ * to the HAL's ground truth here, in a translation unit that has the register
+ * definitions (IWDG_PRESCALER_256 == 0b110 on STM32H5). */
+_Static_assert(M1_DFU_IWDG_PRESCALER == (uint32_t)IWDG_PRESCALER_256,
+               "the DFU watchdog net must use IWDG_PRESCALER_256 (IWDG_PR == 6)");
+
 //************************** S T R U C T U R E S *******************************
 
 /***************************** V A R I A B L E S ******************************/
@@ -747,11 +753,21 @@ void fw_gui_progress_update(size_t remainder)
   *      resolves in the ROM's vector table.
   *   7. DSB/ISB, then ICACHE/DCACHE disabled with busy-wait. On H5, entering
   *      the BootROM with caches enabled can fail or hang silently.
-  *   8. 32 s IWDG safety net: slowest prescaler + max reload (~32.7 s). The
-  *      IWDG start key survives a software reset and the ROM never feeds it,
-  *      so the alternative is the application's ~4 s period resetting the unit
-  *      mid-enumeration.
+  *   8. 32 s IWDG safety net: START first, then UNLOCK/PR/RLR, wait for the
+  *      register update, feed. The start key survives a software reset and the
+  *      ROM never feeds the counter, so the alternative is the application's
+  *      ~4 s period resetting the unit mid-enumeration. Starting before
+  *      programming matters on the cold-boot strap route, which runs before
+  *      MX_IWDG_Init(): a stopped IWDG has its LSI off, so PR/RLR update flags
+  *      may never arrive (or the writes are dropped and 0xCCCC starts the
+  *      counter at its reset defaults) -- see stm32h5xx_hal_iwdg.c.
   *   9. __enable_irq(), MSP = ROM initial SP, jump to the ROM reset vector.
+  *
+  * Every hardware-flag spin in this function is bounded by
+  * M1_DFU_TEARDOWN_SPIN_LIMIT and falls through to the jump: from step 2 to
+  * step 8 the unit has interrupts disabled and no watchdog net, so an
+  * unbounded wait on a stuck flag would be a hang only a power cycle clears.
+  *
   *
   * Deliberately NOT ported: the legacy boot-time IWDG option-byte rewrite
   * (HAL_FLASHEx_OBProgram + HAL_FLASH_OB_Launch). It was a verified defect --
@@ -810,7 +826,9 @@ void bl_jump_to_dfu(void)
 	if ( (ICACHE->CR & ICACHE_CR_EN) != 0U )
 	{
 		ICACHE->CR &= ~ICACHE_CR_EN;
-		while ( (ICACHE->SR & ICACHE_SR_BUSYF) != 0U )
+		/* Bounded (see M1_DFU_TEARDOWN_SPIN_LIMIT): a stuck BUSYF must not
+		 * hang the unit with interrupts off and no net armed. */
+		for (i = 0U; ((ICACHE->SR & ICACHE_SR_BUSYF) != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT); i++)
 		{
 			;
 		}
@@ -818,22 +836,27 @@ void bl_jump_to_dfu(void)
 	if ( (DCACHE1->CR & DCACHE_CR_EN) != 0U )
 	{
 		DCACHE1->CR &= ~DCACHE_CR_EN;
-		while ( (DCACHE1->SR & DCACHE_SR_BUSYF) != 0U )
+		for (i = 0U; ((DCACHE1->SR & DCACHE_SR_BUSYF) != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT); i++)
 		{
 			;
 		}
 	}
 
-	/* 8. 32 s watchdog safety net (slowest prescaler, max reload). */
+	/* 8. 32 s watchdog safety net (LSI / 256 via IWDG_PR == 6, max reload).
+	 *    START FIRST, then configure -- the HAL's own order, and the only safe
+	 *    one on the cold-boot strap route where the IWDG/LSI is still stopped
+	 *    and PR/RLR write flags need LSI cycles to appear. The SR wait is
+	 *    bounded for the same reason as the cache waits above: fall through to
+	 *    the jump rather than spin forever before the net exists. */
+	IWDG->KR  = M1_DFU_IWDG_KEY_START;
 	IWDG->KR  = M1_DFU_IWDG_KEY_UNLOCK;
 	IWDG->PR  = M1_DFU_IWDG_PRESCALER;
 	IWDG->RLR = M1_DFU_IWDG_RELOAD;
-	while ( IWDG->SR != 0U )
+	for (i = 0U; (IWDG->SR != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT); i++)
 	{
 		;
 	}
 	IWDG->KR = M1_DFU_IWDG_KEY_RELOAD;
-	IWDG->KR = M1_DFU_IWDG_KEY_START;
 
 	/* 9. The ROM bootloader enumerates over USB on interrupts: re-enable them,
 	 *    take the ROM's stack pointer and jump to its reset vector. */
