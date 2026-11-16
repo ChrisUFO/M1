@@ -81,20 +81,58 @@
 
 #define POWER_UP_SYS_CONFIG_WAIT_TIME	100 // ms
 
-#define SYS_CONFIG_MAGIC_NUMBER    ((uint32_t)0x534A1F41)
+/* Bumped from 0x534A1F41 (pre-#41 layout) so backup registers laid out by an
+ * older firmware are re-initialised exactly once after this change. Distinct
+ * from FW_CONFIG_MAGIC_NUMBER_2, which happens to share the old value: that
+ * one marks the firmware metadata block in flash, not the backup registers. */
+#define SYS_CONFIG_MAGIC_NUMBER    ((uint32_t)0x534A1F42)
 
 #define LCD_SAVER_PERIOD			45000 // ms
 
+/* Backup-register (RTC/TAMP BKP) allocation, issue #41-A.
+ *
+ * S_M1_BK_REGS_t is packed into RTC backup registers DR0/DR1 ONLY: the struct
+ * is 8 bytes by contract (see the _Static_assert below), so bytes 0-3 land in
+ * DR0 and bytes 4-7 in DR1 (startup_bu_registers_init() writes exactly those
+ * two words). DR2/DR3 hold the ESP32 version record (m1_esp_version.c) and
+ * MUST NOT be written or bulk-initialised from the STM32 state here.
+ *
+ *   DR0 [31: 0] magic_number           SYS_CONFIG_MAGIC_NUMBER
+ *   DR1 [ 7: 0] device_op_status       S_M1_DEV_OP_STATUS_t (update state machine)
+ *   DR1 [15: 8] boot_attempts          failed boot CRC validations since the last
+ *                                      healthy boot (saturating at 255)
+ *   DR1 [23:16] boot_fault_signature   S_M1_BOOT_FAULT_t of the last failed
+ *                                      boot CRC validation (0 = none)
+ *   DR1 [31:24] swap_attempts          bank swaps since the last CRC-validated
+ *                                      boot (rollback loop guard)
+ *
+ * Access these bytes ONLY through startup_config_write()/startup_config_read()
+ * with the BK_REGS_SELECT_* selectors; scripts/check_no_raw_bkp_writes.sh
+ * fails the build checks if any source dereferences the TAMP BKP registers
+ * directly. Writing one byte always rewrites its whole 32-bit word from the
+ * in-RAM shadow (m1_device_stat.bu_regs), because DR1 carries four independent
+ * byte fields. */
 typedef struct {
 	uint32_t magic_number;
 	uint8_t device_op_status;
-	uint8_t reserved_1;
-	uint8_t reserved_2;
-	uint8_t reserved_3;
+	uint8_t boot_attempts;
+	uint8_t boot_fault_signature;
+	uint8_t swap_attempts;
 } S_M1_BK_REGS_t;
 
+/* DR2/DR3 are ESP-version-owned (m1_esp_version.c): this block must never grow
+ * past DR0/DR1. */
+_Static_assert(sizeof(S_M1_BK_REGS_t) == 8, "BK regs must stay 8 bytes (DR0/DR1); DR2/DR3 are ESP-owned");
+
+/* Selectors are logical byte offsets inside S_M1_BK_REGS_t (see the map above);
+ * startup_config_write()/startup_config_read() derive the physical register
+ * from them, so byte indices >= 4 must not be added by hand-extending a
+ * hard-coded DR0+1 write. */
 typedef enum {
-	BK_REGS_SELECT_DEV_OP_STAT = 1,
+	BK_REGS_SELECT_DEV_OP_STAT = 1,   /* byte 4 -> DR1, bits  7:0  */
+	BK_REGS_SELECT_BOOT_ATTEMPTS,     /* byte 5 -> DR1, bits 15:8  */
+	BK_REGS_SELECT_BOOT_FAULT_SIG,    /* byte 6 -> DR1, bits 23:16 */
+	BK_REGS_SELECT_SWAP_ATTEMPTS,     /* byte 7 -> DR1, bits 31:24 */
 	BK_REGS_SELECT_UNKNOWN
 } S_M1_BK_REGS_SELECT_t;
 
@@ -173,6 +211,7 @@ void startup_device_init(void);
 void startup_config_handler(void);
 void power_on_button_check(void);
 void startup_config_write(uint8_t config_byte, uint8_t config_val);
+uint8_t startup_config_read(uint8_t config_byte);
 void startup_info_screen_display(const char *scr_text);
 
 /* Wake the LCD backlight immediately and restart the normal inactivity timer.

@@ -14,6 +14,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdio.h>
 #include "stm32h5xx_hal.h"
 #include "main.h"
@@ -100,6 +101,67 @@ uint8_t bl_crc_check(uint32_t image_size)
 
     return BL_CODE_CHK_ERROR;
 } // uint8_t bl_crc_check(uint32_t image_size)
+
+
+
+/*============================================================================*/
+/**
+  * @brief  Validate the RUNNING bank image against the CRC the build embedded
+  *         in it (boot failsafe, issue #41-A).
+  *
+  * Address reasoning (checked against the linker script, the CRC emitter and
+  * the update path -- this is the assumption the whole failsafe rests on):
+  *   - The linker places .FW_CONFIG_SECTION at FW_CONFIG_RESERVED_ADDRESS
+  *     (0x080FFC00) and the build's CRC emitter cropped 0x0-0xFFC14 and stored
+  *     the CRC at 0x080FFC14 == FW_CRC_ADDRESS (build.sh CROP_END_BYTES,
+  *     CMakeLists.txt "-crop 0x0 0x000FFC14", m1_fw_update_bl.h static assert).
+  *   - Bank 2 is addressed by adding M1_FLASH_BANK_SIZE, and the option-byte
+  *     bank swap remaps whichever physical bank is ACTIVE to 0x08000000.
+  *     The bank we are executing from therefore always appears at
+  *     0x08000000..0x080FFFFF, with its metadata and CRC word at
+  *     0x080FFC00..0x080FFC17 -- i.e. exactly FW_CRC_ADDRESS.
+  *   - bl_crc_check() adds +M1_FLASH_BANK_SIZE on purpose: it validates the
+  *     OTHER bank (the freshly flashed rollback candidate) while running from
+  *     this one. Using that offset here would compare the running bank's
+  *     computed CRC against the inactive bank's stored CRC and fail (or, worse,
+  *     accidentally pass) for the wrong reason.
+  *   - The span is derived by address arithmetic only: no magic-number scan
+  *     (false positive on image data) and no image-size field (untrusted).
+  * @param  None
+  * @retval M1_BOOT_FAULT_NONE when the image validates; otherwise the fault
+  *         class (magic / header / CRC mismatch) for the boot failsafe.
+  */
+/*============================================================================*/
+S_M1_BOOT_FAULT_t bl_crc_validate_active_bank(void)
+{
+    uint32_t span_bytes, result;
+    uint32_t crc_init_seed = 0;
+    uint32_t magic_1, magic_2, crc32;
+
+    span_bytes = m1_boot_crc_span_bytes(FW_START_ADDRESS, FW_CRC_ADDRESS);
+    if ( (span_bytes == 0U) || ((span_bytes % 4U) != 0U) )
+    {
+        return M1_BOOT_FAULT_UNKNOWN; // static-asserted away; fail closed if not
+    }
+
+    /* Reuse the streamed CRC path the update verifier itself uses, so the boot
+     * check and the update path cannot disagree about polynomial, init value or
+     * word order. A CRC peripheral init failure leaves a wrong seed and thus a
+     * mismatch, which fails closed into the recovery state. */
+    (void)bl_get_crc_chunk(&crc_init_seed, 0, true, false); // CRC init
+    result = bl_get_crc_chunk((uint32_t *)(uintptr_t)FW_START_ADDRESS, span_bytes / FW_IMAGE_CRC_SIZE, false, true);
+
+    /* Metadata words live inside the validated span (0x080FFC00/0x080FFC10),
+     * so on a failed check they say WHY: erased/foreign metadata vs. intact
+     * metadata with corrupted code. */
+    magic_1 = *(const volatile uint32_t *)(uintptr_t)FW_CONFIG_RESERVED_ADDRESS;
+    magic_2 = *(const volatile uint32_t *)(uintptr_t)(FW_CONFIG_RESERVED_ADDRESS + offsetof(S_M1_FW_CONFIG_t, magic_number_2));
+    crc32   = *(const volatile uint32_t *)(uintptr_t)FW_CRC_ADDRESS;
+
+    return m1_boot_classify_fault(magic_1, FW_CONFIG_MAGIC_NUMBER_1,
+                                  magic_2, FW_CONFIG_MAGIC_NUMBER_2,
+                                  result, crc32);
+} // S_M1_BOOT_FAULT_t bl_crc_validate_active_bank(void)
 
 
 
