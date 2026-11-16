@@ -14,9 +14,13 @@
  * the existing "m1_mtest 5" debug telemetry command.
  *
  * One counter per call site (not one shared counter): each is written from
- * exactly one place, so a plain aligned uint32_t increment is safe without
- * disabling interrupts or a real atomic RMW -- no context ever needs to
- * race itself, and a naturally-aligned 32-bit load/store is a single bus
+ * exactly one ISR (no context ever races itself), except s_drop_subghz_rx
+ * which has two ISR writers (TIM1_CC and GPDMA1_Ch3 in m1_int_hdl.c) --
+ * both registered at the same NVIC main priority, so they cannot preempt
+ * one another and each increment completes atomically relative to the
+ * other. Either way a plain aligned uint32_t increment is safe without
+ * disabling interrupts or a real atomic RMW, and a naturally-aligned
+ * 32-bit load/store is a single bus
  * transaction on this MCU, so the m1_mtest 5 task-context reader can't see
  * a torn value either. Each counter saturates at UINT32_MAX instead of
  * wrapping silently.

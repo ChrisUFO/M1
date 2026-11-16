@@ -296,7 +296,14 @@ void USART1_IRQHandler(void)
 		{ // add device ID
 			logdb_rx_buffer[1] = TASK_NOTIFY_USART1;
 			//send the char to the command line task
-			xTaskNotifyFromISR(cmdLineTaskHandle, (uint32_t)logdb_rx_buffer[0], eSetValueWithOverwrite , &xHigherPriorityTaskWoken);
+			/* Notify-value packing fix (fork d3a0208, issue #27 family): pack the
+			 * source device id into bits 8+ alongside the char payload instead of
+			 * sending the raw byte alone, so the notified task can tell the notify
+			 * origin apart (matches TASK_NOTIFY_* semantics in m1_log_debug.h). */
+			xTaskNotifyFromISR(cmdLineTaskHandle,
+							  (uint32_t)logdb_rx_buffer[0] + ((uint32_t)TASK_NOTIFY_USART1 << 8),
+							  eSetValueWithOverwrite,
+							  &xHigherPriorityTaskWoken);
 		}
 		portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 #endif // #ifdef M1_DEBUG_CLI_ENABLE
@@ -346,6 +353,89 @@ void GPDMA1_Channel2_IRQHandler(void)
 
     usart_rxupdate_head_pointer();
     usart_rxdata_process_from_isr();
+}
+
+
+/******************************************************************************/
+/*
+ * DMA for Sub-GHz Rx mode
+ */
+/******************************************************************************/
+/* Ported from fork d3a0208 (issues #22/#26/#27): GPDMA1 Channel 3 moves the
+ * Sub-GHz RAW record capture off the per-edge TIM1_CC ISR. The DMA fills the
+ * double buffer in subghz_rx_dma_buffer[]; this handler only book-keeps the
+ * completed half/full block into subghz_rx_dma_block_q[] and notifies the
+ * record task via the main queue -- no RTOS context switch happens inline
+ * (xQueueSendFromISR + portYIELD_FROM_ISR defer it), preserving the fork's
+ * deferred-RTOS-context-switch safety property under heavy Sub-GHz load.
+ * Adaptation vs fork: queue-send failure also feeds main's ISR-drop
+ * diagnostics (m1_isr_drop_note_subghz_rx) per this base's convention. */
+void GPDMA1_Channel3_IRQHandler(void)
+{
+	S_M1_Main_Q_t q_item;
+	portBASE_TYPE xHigherPriorityTaskWoken = pdFALSE;
+	uint32_t flag_ht = __HAL_DMA_GET_FLAG(&hdma_subghz_rx, DMA_FLAG_HT);
+	uint32_t flag_tc = __HAL_DMA_GET_FLAG(&hdma_subghz_rx, DMA_FLAG_TC);
+	uint8_t notify = 0;
+
+	HAL_DMA_IRQHandler(&hdma_subghz_rx);
+
+	if ( flag_ht && (__HAL_DMA_GET_IT_SOURCE(&hdma_subghz_rx, DMA_IT_HT) != 0U) )
+	{
+		subghz_rx_dma_ht_count++;
+		if ( subghz_rx_dma_block_count < SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN )
+		{
+			subghz_rx_dma_block_q[subghz_rx_dma_block_head] = 0U;
+			subghz_rx_dma_block_head = (uint8_t)((subghz_rx_dma_block_head + 1U) % SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN);
+			subghz_rx_dma_block_count++;
+			notify = 1U;
+		}
+		else
+		{
+			subghz_rx_queue_drop_count++;
+		}
+	}
+
+	if ( flag_tc && (__HAL_DMA_GET_IT_SOURCE(&hdma_subghz_rx, DMA_IT_TC) != 0U) )
+	{
+		subghz_rx_dma_tc_count++;
+		if ( subghz_rx_dma_block_count < SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN )
+		{
+			subghz_rx_dma_block_q[subghz_rx_dma_block_head] = 1U;
+			subghz_rx_dma_block_head = (uint8_t)((subghz_rx_dma_block_head + 1U) % SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN);
+			subghz_rx_dma_block_count++;
+			notify = 1U;
+		}
+		else
+		{
+			subghz_rx_queue_drop_count++;
+		}
+
+		if ( subghz_record_mode_flag )
+		{
+			subghz_rx_dma_restart_from_isr();
+		}
+	}
+
+	if ( notify )
+	{
+		if ( subghz_rx_queue_notify_pending )
+		{
+			subghz_rx_throttle_count++;
+		}
+		else
+		{
+			subghz_rx_queue_notify_pending = 1;
+			q_item.q_evt_type = Q_EVENT_SUBGHZ_RX;
+			if ( xQueueSendFromISR(main_q_hdl, &q_item, &xHigherPriorityTaskWoken) != pdPASS )
+			{
+				subghz_rx_queue_notify_pending = 0;
+				subghz_rx_queue_drop_count++;
+				m1_isr_drop_note_subghz_rx();
+			}
+			portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+		}
+	}
 }
 
 
@@ -725,6 +815,16 @@ void TIM1_CC_IRQHandler(void)
 
 	/* Clear Capture Compare flag */
 	__HAL_TIM_CLEAR_FLAG(&timerhdl_subghz_rx, TIM_FLAG_CC1);
+
+	/* RAW record capture runs over GPDMA1 Channel 3 double-buffering (ported
+	 * from fork d3a0208, issue #22): in record mode the DMA owns capture and
+	 * the CNT must NOT be reset here (task-side processing computes pulse
+	 * deltas across captured CCR1 values). Defensive guard mirroring the
+	 * fork: if this ISR is ever entered while recording, leave immediately. */
+	if ( subghz_record_mode_flag )
+	{
+		return;
+	}
 
 	//cap_val =  HAL_TIM_ReadCapturedValue(htim, IR_DECODE_TIMER_RX_CHANNEL);
 	//cap_val = __HAL_TIM_GET_COMPARE(htim, IR_DECODE_TIMER_RX_CHANNEL); // read compare counter
