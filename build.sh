@@ -14,6 +14,11 @@ fi
 echo "Updating submodules..."
 git submodule update --init --recursive
 
+# Portable md5_of/sha256_of (Git-Bash/Windows, Linux, macOS) -- one shared
+# implementation, see scripts/portable_hash.sh.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+. "$SCRIPT_DIR/scripts/portable_hash.sh"
+
 BUILD_DIR="build"
 OUTPUT_DIR="artifacts"
 # Derive the artifact stem from the single source of truth
@@ -71,6 +76,26 @@ echo "Compiling..."
 cmake --build $BUILD_DIR --parallel $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 echo "Collecting artifacts to ./$OUTPUT_DIR"
+# The CRC-bearing image is a release contract: 0xFFC14 bytes of application
+# image plus the 4-byte little-endian CRC word the CRC emitter appends. Assert
+# the exact size before anything is copied to artifacts/, in plain and
+# --release mode alike, so a silently skipped or truncated CRC step fails here
+# rather than at flash time.
+WCRC_EXPECTED_BYTES=1047576 # 0xFFC18 == crop end 0xFFC14 + 4-byte CRC word
+WCRC_FILE="$BUILD_DIR/${ARTIFACT_STEM}_wCRC.bin"
+if [ ! -f "$WCRC_FILE" ]; then
+    echo "Error: CRC-bearing image is missing: $WCRC_FILE" >&2
+    echo "       The CMake CRC step did not run (see the 'CRC emitter:' status line)." >&2
+    exit 1
+fi
+WCRC_SIZE=$(wc -c < "$WCRC_FILE" | tr -d ' ')
+if [ "$WCRC_SIZE" != "$WCRC_EXPECTED_BYTES" ]; then
+    echo "Error: $WCRC_FILE is $WCRC_SIZE bytes, expected $WCRC_EXPECTED_BYTES" \
+         "(0xFFC18 = crop end 0xFFC14 + 4-byte CRC word)." >&2
+    exit 1
+fi
+echo "Verified: ${ARTIFACT_STEM}_wCRC.bin is $WCRC_SIZE bytes (0xFFC18)"
+
 for artifact in \
     "$ARTIFACT_STEM.bin" \
     "$ARTIFACT_STEM.elf" \
@@ -115,8 +140,8 @@ if [ "$RELEASE_MODE" = "1" ]; then
 
     ARTIFACT_BIN="$OUTPUT_DIR/${ARTIFACT_STEM}_wCRC.bin"
 
-    MD5_HASH=$(md5 -q "$ARTIFACT_BIN" 2>/dev/null || md5sum "$ARTIFACT_BIN" 2>/dev/null | cut -d' ' -f1)
-    SHA256_HASH=$(shasum -a 256 "$ARTIFACT_BIN" 2>/dev/null | cut -d' ' -f1)
+    MD5_HASH=$(md5_of "$ARTIFACT_BIN")
+    SHA256_HASH=$(sha256_of "$ARTIFACT_BIN")
     SIZE_BYTES=$(wc -c < "$ARTIFACT_BIN" | tr -d ' ')
     BRANCH=$(git branch --show-current)
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
