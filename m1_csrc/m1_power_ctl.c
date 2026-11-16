@@ -200,6 +200,7 @@ void power_off(void)
 /*============================================================================*/
 static void battery_info_timer(TimerHandle_t xTimer)
 {
+	(void)xTimer; /* Unused: stub for future work. May need removal later. */
 	S_M1_Main_Q_t q_item;
 
 	q_item.q_evt_type = Q_EVENT_BATTERY_UPDATED;
@@ -261,7 +262,7 @@ static void battery_info_gui_create(uint8_t param)
 /*============================================================================*/
 static void battery_info_gui_destroy(uint8_t param)
 {
-
+	(void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 
@@ -274,6 +275,7 @@ static void battery_info_gui_destroy(uint8_t param)
 /*============================================================================*/
 static void battery_info_gui_update(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	char stat_msg[32], stat_msg2[16];
 	S_M1_Power_Status_t SystemPowerStatus;
 
@@ -463,7 +465,7 @@ static void power_reboot_gui_create(uint8_t param)
 /*============================================================================*/
 static void power_reboot_gui_destroy(uint8_t param)
 {
-
+	(void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 /*============================================================================*/
@@ -475,6 +477,7 @@ static void power_reboot_gui_destroy(uint8_t param)
 /*============================================================================*/
 static void power_reboot_gui_update(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	/* Graphic work starts here */
 	u8g2_FirstPage(&m1_u8g2);
 	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
@@ -584,7 +587,7 @@ static void power_shutdown_gui_create(uint8_t param)
 /*============================================================================*/
 static void power_shutdown_gui_destroy(uint8_t param)
 {
-
+	(void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 /*============================================================================*/
@@ -596,6 +599,7 @@ static void power_shutdown_gui_destroy(uint8_t param)
 /*============================================================================*/
 void power_shutdown_gui_update(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	/* Graphic work starts here */
 	u8g2_FirstPage(&m1_u8g2);
 	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);

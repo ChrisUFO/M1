@@ -482,6 +482,7 @@ static void lfrfid_read_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_read_destroy(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	fb_net_read_stop(); // migrated: LF-RFID read exit
 }
 
@@ -696,6 +697,7 @@ static void lfrfid_read_submenu_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_read_submenu_destroy(uint8_t param)
 {
+(void)param; /* Unused: stub for future work. May need removal later. */
 
 }
 
@@ -799,6 +801,7 @@ static void lfrfid_read_save_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_read_save_destroy(uint8_t param)
 {
+(void)param; /* Unused: stub for future work. May need removal later. */
 
 }
 
@@ -811,6 +814,7 @@ static void lfrfid_read_save_destroy(uint8_t param)
 /*============================================================================*/
 static void lfrfid_read_save_update(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	char data_buffer[64];
 	BaseType_t ret;
 	uint8_t error;
@@ -939,6 +943,7 @@ static void lfrfid_read_emulate_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_read_emulate_destroy(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	if (s_lfrfid_read_emu_feedback_acquired)
 	{
 		(void)m1_app_send_q_message(lfrfid_q_hdl, Q_EVENT_UI_LFRFID_EMULATE_STOP);
@@ -956,6 +961,7 @@ static void lfrfid_read_emulate_destroy(uint8_t param)
 /*============================================================================*/
 static void lfrfid_read_emulate_update(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	if (lfrfid_state == LFRFID_STATE_ERROR)
 	{
 		m1_u8g2_firstpage();
@@ -1086,6 +1092,7 @@ static void lfrfid_read_write_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_read_write_destroy(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	fb_net_write_stop();
 }
 
@@ -1322,6 +1329,7 @@ static int lfrfid_saved_browse_kp_handler(void)
 /*============================================================================*/
 static void lfrfid_saved_browse_create(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	m1_uiView_display_update(0);
 }
 
@@ -1334,6 +1342,7 @@ static void lfrfid_saved_browse_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_browse_destroy(uint8_t param)
 {
+(void)param; /* Unused: stub for future work. May need removal later. */
 
 }
 
@@ -1541,6 +1550,7 @@ static void lfrfid_saved_submenu_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_submenu_destroy(uint8_t param)
 {
+(void)param; /* Unused: stub for future work. May need removal later. */
 
 }
 
@@ -1655,6 +1665,7 @@ static void lfrfid_saved_emulate_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_emulate_destroy(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	if (s_lfrfid_saved_emu_feedback_acquired)
 	{
 		(void)m1_app_send_q_message(lfrfid_q_hdl, Q_EVENT_UI_LFRFID_EMULATE_STOP);
@@ -1785,6 +1796,7 @@ static void lfrfid_saved_write_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_write_destroy(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	fb_net_write_stop();
 }
 
@@ -1940,6 +1952,7 @@ static void lfrfid_saved_edit_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_edit_destroy(uint8_t param)
 {
+(void)param; /* Unused: stub for future work. May need removal later. */
 
 }
 
@@ -1952,6 +1965,7 @@ static void lfrfid_saved_edit_destroy(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_edit_update(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	char data_buffer[64];
 	uint8_t data_size;
 	uint8_t val, error;
@@ -2095,6 +2109,7 @@ static void lfrfid_saved_rename_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_rename_destroy(uint8_t param)
 {
+(void)param; /* Unused: stub for future work. May need removal later. */
 
 }
 
@@ -2107,6 +2122,7 @@ static void lfrfid_saved_rename_destroy(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_rename_update(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	char new_file[64];
 	char old_file[64];
 	BaseType_t ret;
@@ -2252,6 +2268,7 @@ static void lfrfid_saved_delete_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_delete_destroy(uint8_t param)
 {
+(void)param; /* Unused: stub for future work. May need removal later. */
 
 }
 
@@ -2410,6 +2427,7 @@ static void lfrfid_saved_info_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_info_destroy(uint8_t param)
 {
+(void)param; /* Unused: stub for future work. May need removal later. */
 
 }
 
@@ -2422,6 +2440,7 @@ static void lfrfid_saved_info_destroy(uint8_t param)
 /*============================================================================*/
 static void lfrfid_saved_info_update(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	char *hex;
 	char *fc;
 	char *card_num;
@@ -2584,6 +2603,7 @@ static void lfrfid_addm_submenu_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_addm_submenu_destroy(uint8_t param)
 {
+(void)param; /* Unused: stub for future work. May need removal later. */
 
 }
 
@@ -2693,6 +2713,7 @@ static void lfrfid_addm_edit_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_addm_edit_destroy(uint8_t param)
 {
+(void)param; /* Unused: stub for future work. May need removal later. */
 
 }
 
@@ -2899,6 +2920,7 @@ static void lfrfid_addm_save_create(uint8_t param)
 /*============================================================================*/
 static void lfrfid_addm_save_destroy(uint8_t param)
 {
+(void)param; /* Unused: stub for future work. May need removal later. */
 
 }
 
@@ -2911,6 +2933,7 @@ static void lfrfid_addm_save_destroy(uint8_t param)
 /*============================================================================*/
 static void lfrfid_addm_save_update(uint8_t param)
 {
+	(void)param; /* Unused: stub for future work. May need removal later. */
 	char data_buffer[64];
 	BaseType_t ret;
 	uint8_t error;
@@ -3055,6 +3078,7 @@ static void lfrfid_util_menu_create(uint8_t param)
 
 static void lfrfid_util_menu_destroy(uint8_t param)
 {
+(void)param; /* Unused: stub for future work. May need removal later. */
 }
 
 static void lfrfid_util_menu_update(uint8_t param)
