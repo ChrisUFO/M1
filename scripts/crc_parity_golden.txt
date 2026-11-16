@@ -1,0 +1,33 @@
+# CRC emitter parity golden expectations (issue #40).
+#
+# The authoritative values in this table were produced by the canonical
+# srecord pipeline -- NOT by the Python emulator:
+#
+#   srec_cat <in>.bin -binary -crop 0x0 0x000FFC14 \
+#       -STM32_Little_Endian 0x000FFC14 -o <out>_wCRC.bin -binary
+#
+# (SRecord from Debian/Ubuntu; the invocation is byte-for-byte the one
+# CMakeLists.txt uses when srec_cat is on PATH.)
+#
+# Inputs are generated deterministically by tools/crc_test_vectors.py:
+#   zeros       0x00 fill
+#   ff          0xFF fill
+#   ramp        byte i = i mod 256
+#   xorshift32  xorshift32 seed 0x12345678, serialized as 32-bit LE words
+# Every input is exactly 1047572 bytes (0xFFC14). Every expected output is
+# exactly 1047576 bytes (0xFFC18): the cropped image followed by the 32-bit
+# CRC-32/MPEG-2 result, little-endian, at offset 0x000FFC14.
+#
+# Columns (whitespace separated):
+#   name  input_sha256  output_sha256  crc_le_bytes
+# crc_le_bytes is the 4-byte CRC field in on-disk (= little-endian) byte order,
+# so "5688a4fc" is the word 0xFCA48856.
+#
+# scripts/verify_crc_parity.sh regenerates the inputs, checks these input
+# digests (generator drift), re-runs the emitter, and compares its output
+# digests + CRC field against this file. When srec_cat is installed it also
+# re-runs the authoritative pipeline and byte-compares the two emitters.
+zeros      ed8930110fc56a74b7087374f9dd0651cfbbcdaec1aa1f9f4ba638ea22a0c2ad  b835d808f340938d589d012c700729df4b643bbadb39add37f7e75e1f60fb85b  5688a4fc
+ff         5cb71e8f297d473888d07fd59a0e2d0786e1c3b1b38c3f6de59f835ca6ea30fa  61968d8b748f172cf8238a304f219cd8c3a09a640458382da60b998507f4770b  ff583fd9
+ramp       89574818405ee48320a019efcf6d499affc0fa45f90f2378418d812e717c5e51  1738b1077f43a504a2944dfa94b52cc7681fb8dfbccfda31ddffe57bce8c3c50  e6a4588e
+xorshift32 d6a7c359a40908c6b130fb85c752c7a62546001f067819777eaabfcb2237b20e  ed00c490a3bc8d3bb46e36460e40aea0c7cbe69225dfeede9dc67523fa25f721  31b91c1b
