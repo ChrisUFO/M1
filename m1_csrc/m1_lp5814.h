@@ -98,8 +98,8 @@ enum LED_PORT {
 #define LP5814_PAUSE							0x01		// Pause Autonomous Animation
 
 #define LP5814_FLAG_CLR							0x13
-#define LP5814_FLAG_TSD							0b10		// Clear TSD
-#define LP5814_FLAG_POR							0b01		// Clear POR
+#define LP5814_FLAG_TSD							0x02		// Clear TSD
+#define LP5814_FLAG_POR							0x01		// Clear POR
 
 
 // 0x14 ~ 0x17

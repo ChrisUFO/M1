@@ -38,20 +38,20 @@
 #define SI446X_STATE_NOCHANGE           0 // No change, remain in current state.
 #define SI446X_STATE_SLEEP              1 // SLEEP or STANDBY state
 
-#define START_TX_COMPLETE_STATE_MASK			0b11110000
-#define START_TX_COMPLETE_STATE_NOCHANGE		0b00000000 // Do not change from previously sent START_TX_COMPLETE_STATE.
-#define START_TX_COMPLETE_STATE_SLEEP         	0b00010000 // SLEEP or STANDBY state
-#define START_TX_COMPLETE_STATE_READY         	0b00110000 // READY state.
-#define START_TX_COMPLETE_STATE_TX            	0b01110000 // TX state
-#define START_TX_COMPLETE_STATE_RX            	0b10000000 // RX state
+#define START_TX_COMPLETE_STATE_MASK			0xF0
+#define START_TX_COMPLETE_STATE_NOCHANGE		0x00 // Do not change from previously sent START_TX_COMPLETE_STATE.
+#define START_TX_COMPLETE_STATE_SLEEP         	0x10 // SLEEP or STANDBY state
+#define START_TX_COMPLETE_STATE_READY         	0x30 // READY state.
+#define START_TX_COMPLETE_STATE_TX            	0x70 // TX state
+#define START_TX_COMPLETE_STATE_RX            	0x80 // RX state
 
-#define MODEM_MOD_TYPE_MASK				0b00000111
-#define MODEM_MOD_TYPE_CW				0b00000000
-#define MODEM_MOD_TYPE_OOK				0b00000001
-#define MODEM_MOD_TYPE_FSK				0b00000010
-#define MODEM_MOD_TYPE_GFSK				0b00000011
-#define MODEM_MOD_TYPE_2FSK				0b00000100
-#define MODEM_MOD_TYPE_2GFSK			0b00000101
+#define MODEM_MOD_TYPE_MASK				0x07
+#define MODEM_MOD_TYPE_CW				0x00
+#define MODEM_MOD_TYPE_OOK				0x01
+#define MODEM_MOD_TYPE_FSK				0x02
+#define MODEM_MOD_TYPE_GFSK				0x03
+#define MODEM_MOD_TYPE_2FSK				0x04
+#define MODEM_MOD_TYPE_2GFSK			0x05
 
 #define RADIO_PACKET_LEN_MAX			25 // This number must match the one set in WDS!
 #define RF_PACKET_LEN_MAX				40
