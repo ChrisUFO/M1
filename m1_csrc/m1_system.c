@@ -735,6 +735,46 @@ static void startup_iwdg_option_byte_check(void)
 
 /*============================================================================*/
 /*
+ * Recovery offer screen (issue #41-B): the FW CORRUPT! diagnosis AND the DFU
+ * offer are drawn in the SAME u8g2 page. Drawing the offer through
+ * startup_info_screen_display() would clear the display buffer
+ * (u8g2_FirstPage()) and wipe the banner out for the whole 5 s offer -- exactly
+ * while the technician is deciding what to do.
+ */
+/*============================================================================*/
+static void startup_recovery_offer_display(void)
+{
+	char offer_txt[24];
+	uint8_t w;
+
+	/* The visible bound is derived from the policy constant, so it can never
+	 * disagree with the decision helper. */
+	snprintf(offer_txt, sizeof(offer_txt), "OK=USB DFU %us",
+	         (unsigned)(M1_DFU_RECOVERY_OFFER_WINDOW_MS / 1000U));
+
+	u8g2_SetPowerSave(&m1_u8g2, false);
+	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+	u8g2_FirstPage(&m1_u8g2);
+	u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_B);
+
+	w = (uint8_t)u8g2_GetStrWidth(&m1_u8g2, "FW CORRUPT!");
+	u8g2_DrawStr(&m1_u8g2, (uint8_t)((M1_LCD_DISPLAY_WIDTH - w) / 2U), 26, "FW CORRUPT!");
+
+	w = (uint8_t)u8g2_GetStrWidth(&m1_u8g2, offer_txt);
+	u8g2_DrawStr(&m1_u8g2, (uint8_t)((M1_LCD_DISPLAY_WIDTH - w) / 2U), 46, offer_txt);
+
+	m1_u8g2_nextpage(); // Update display RAM
+
+	fb_sleep_timer_wake(); // keep normal awake brightness manager-owned
+
+	m1_device_stat.op_mode = M1_OPERATION_MODE_DISPLAY_ON;
+	m1_device_stat.active_timestamp = HAL_GetTick();
+} // static void startup_recovery_offer_display(void)
+
+
+
+/*============================================================================*/
+/*
  * Recovery seam for a failed boot CRC validation -- DFU offer (issue #41-B)
  *
  * Filled by PR-DFU. On a failed validation the device does NOT silently
@@ -743,21 +783,29 @@ static void startup_iwdg_option_byte_check(void)
  * hook offers USB DFU entry on top of that.
  *
  * POLICY -- bounded offer, never an unbounded wait:
- *   - The offer is shown for M1_DFU_RECOVERY_OFFER_WINDOW_MS (5 s) only. The
- *     decision each poll is the pure m1_dfu_recovery_action() (m1_dfu_entry.h),
- *     which cannot return WAIT once the window has elapsed.
- *   - A deliberate OK press (two consecutive 50 ms polls, i.e. ~100 ms of
- *     contact, so a single noisy sample cannot trigger it) calls
- *     firmware_update_enter_usb_dfu(): the request is persisted in DR1 and the
- *     device resets, and the request is honoured on the next boot by
- *     startup_config_handler().
- *   - On timeout the FW CORRUPT! banner is restored and the pre-existing
- *     behaviour resumes (the normal UI is reachable), with the choice logged.
- *     So a flat battery or a stuck key can delay the boot by at most the
- *     window plus one poll interval, never hang it. The choice itself is
+ *   - The offer is shown for M1_DFU_RECOVERY_OFFER_WINDOW_MS (5 s) only, with
+ *     the FW CORRUPT! diagnosis still on screen. The decision each poll is the
+ *     pure m1_dfu_recovery_poll() (m1_dfu_entry.h), which cannot return WAIT
+ *     once the window has elapsed.
+ *   - Acceptance is EDGE-triggered: the key level is sampled when the offer
+ *     opens and a press only counts after a released -> pressed transition, so
+ *     a held, shorted or stuck OK key cannot select DFU. A deliberate press
+ *     (~100 ms, i.e. two consecutive 50 ms polls, so a single noisy sample
+ *     cannot trigger it) calls firmware_update_enter_usb_dfu(): the request is
+ *     persisted in DR1 and the device resets, and the request is honoured on
+ *     the next boot by startup_config_handler().
+ *   - On timeout the offer line is cleared back to the FW CORRUPT! banner and
+ *     the pre-existing behaviour resumes (the normal UI is reachable), with the
+ *     choice logged. So a flat battery or a stuck key can delay the boot by at
+ *     most the window plus one poll interval, never hang it -- and a stuck key
+ *     cannot cycle failsafe -> DFU -> failsafe either. The choice itself is
  *     recorded in the log (the DFU choice also persists the op-status request);
  *     DR1 has no free byte left -- magic/op-status/boot_attempts/fault/swap --
  *     so no extra persisted state is invented for it.
+ *   - PD12/PD13 are user-owned external connector pins (pin 6/7, see
+ *     docs/hardware.md), not DFU LEDs: they are driven only on ENTER, on the
+ *     way into the reset, so merely offering or timing out never leaves an
+ *     external circuit driven high.
  *   - The five-second window exceeds the application watchdog's ~4 s period,
  *     so the poll loop kicks the IWDG (m1_wdt_kick(), documented for exactly
  *     this kind of long bounded operation) instead of starving it.
@@ -770,48 +818,42 @@ static void startup_iwdg_option_byte_check(void)
 static void startup_boot_recovery_hook(uint8_t boot_attempts)
 {
 	uint32_t start_ms, elapsed_ms;
-	uint8_t pressed_polls;
-	char offer_txt[24];
+	S_M1_DFU_RECOVERY_POLL_t poll;
 	S_M1_DFU_RECOVERY_ACTION_t action;
+	bool key_down;
 
 	M1_LOG_I(M1_LOGDB_TAG, "Boot failsafe: press OK within %u ms for USB DFU entry "
 	         "(boot attempt %u).\r\n",
 	         (unsigned)M1_DFU_RECOVERY_OFFER_WINDOW_MS, (unsigned)boot_attempts);
 
-	/* Derive the on-screen timeout from the policy constant, so the visible
-	 * bound can never disagree with the decision helper. */
-	snprintf(offer_txt, sizeof(offer_txt), "OK=USB DFU %us",
-	         (unsigned)(M1_DFU_RECOVERY_OFFER_WINDOW_MS / 1000U));
-	startup_info_screen_display(offer_txt);
-	startup_dfu_indicate();
+	/* Banner and offer in ONE page: u8g2_FirstPage() clears the buffer, so the
+	 * diagnostic line must be drawn together with the offer or it vanishes. */
+	startup_recovery_offer_display();
+
+	/* Seed the edge trigger from the level at offer start: a key already down
+	 * (held/shorted) must never count as a press for this offer. */
+	key_down = (HAL_GPIO_ReadPin(BUTTON_OK_GPIO_Port, BUTTON_OK_Pin)==GPIO_PIN_RESET);
+	poll = m1_dfu_recovery_poll_start(key_down);
 
 	start_ms = HAL_GetTick();
-	pressed_polls = 0U;
 	for (;;)
 	{
 		/* The offer window is longer than the application watchdog period;
 		 * keep the counter fed for its duration only. */
 		m1_wdt_kick();
 
-		if ( HAL_GPIO_ReadPin(BUTTON_OK_GPIO_Port, BUTTON_OK_Pin)==GPIO_PIN_RESET )
-		{
-			if ( pressed_polls < 2U )
-			{
-				pressed_polls++;
-			}
-		} // if ( HAL_GPIO_ReadPin(...)==GPIO_PIN_RESET )
-		else
-		{
-			pressed_polls = 0U;
-		}
-
+		key_down = (HAL_GPIO_ReadPin(BUTTON_OK_GPIO_Port, BUTTON_OK_Pin)==GPIO_PIN_RESET);
 		elapsed_ms = (uint32_t)(HAL_GetTick() - start_ms);
-		action = m1_dfu_recovery_action(pressed_polls >= 2U, elapsed_ms);
+		action = m1_dfu_recovery_poll(&poll, key_down, elapsed_ms);
 
 		if ( action==M1_DFU_RECOVERY_ENTER )
 		{
 			M1_LOG_I(M1_LOGDB_TAG, "Boot failsafe: DFU entry selected after %u ms; "
 			         "recording the request and resetting.\r\n", (unsigned)elapsed_ms);
+			/* Indication only on ENTER: the pins are driven immediately before
+			 * the reset that tears them down again, so nothing user-facing is
+			 * asserted while merely offering DFU (or on fall-through). */
+			startup_dfu_indicate();
 			firmware_update_enter_usb_dfu(); // persists the request, then resets
 		} // if ( action==M1_DFU_RECOVERY_ENTER )
 
@@ -823,8 +865,9 @@ static void startup_boot_recovery_hook(uint8_t boot_attempts)
 		vTaskDelay(pdMS_TO_TICKS(50));
 	} // for (;;)
 
-	/* Timeout: restore the PR-FS banner so the visible state is the diagnostic
-	 * one, and fall through to the pre-existing behaviour. */
+	/* Timeout: clear the offer line back to the PR-FS banner so the visible
+	 * state is the diagnostic one, and fall through to the pre-existing
+	 * behaviour. */
 	startup_info_screen_display("FW CORRUPT!");
 	M1_LOG_I(M1_LOGDB_TAG, "Boot failsafe: no DFU request within %u ms; "
 	         "continuing with the recovery banner.\r\n", (unsigned)elapsed_ms);
@@ -834,9 +877,13 @@ static void startup_boot_recovery_hook(uint8_t boot_attempts)
 
 /*============================================================================*/
 /*
- * DFU-mode indication (PD12/PD13 high), shared by the honoured software request
- * and the recovery offer. The pre-HAL hardware-strap path in main.c drives the
- * same two pins with raw registers (HAL does not exist yet at that point).
+ * DFU-mode indication: PD12/PD13 are user-owned external connector pins
+ * (pins 6-7, docs/hardware.md; also the GPIO menu's "Pin PD12"/"Pin PD13" via
+ * m1_ext_gpio[]), NOT dedicated LEDs. They are driven high only at the moment
+ * of entering DFU, immediately before the reset that releases them, so an
+ * attached external circuit is never left driven by a mere offer or a timeout.
+ * The pre-HAL hardware-strap path in main.c drives the same two pins with raw
+ * registers (HAL does not exist yet at that point).
  */
 /*============================================================================*/
 static void startup_dfu_indicate(void)
@@ -935,21 +982,26 @@ void startup_config_handler(void)
 	} // if ( m1_device_stat.bu_regs.magic_number != SYS_CONFIG_MAGIC_NUMBER )
 	else
 	{
-		if ( m1_device_stat.bu_regs.device_op_status==DEV_OP_STATUS_USB_DFU_REQUEST )
+		if ( m1_dfu_request_is_pending(m1_device_stat.bu_regs.device_op_status,
+		                                (uint8_t)DEV_OP_STATUS_USB_DFU_REQUEST) )
 		{
 			/* Software DFU request (issue #41-B): honoured FIRST -- before the
 			 * update state machine and before the boot failsafe -- so an
 			 * explicit request is never reinterpreted as an interrupted
 			 * update. The request is CONSUMED before the jump (persisted back
-			 * to NO_OP) so it can never re-fire: an honoured request that
-			 * reset the device again would be a DFU boot loop with no way
-			 * back to the application, and a power loss during the ROM
-			 * session must not keep the unit out of its application. */
-			startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_NO_OP);
+			 * to NO_OP through the same pure transition the host test covers)
+			 * so it can never re-fire: an honoured request that reset the
+			 * device again would be a DFU boot loop with no way back to the
+			 * application, and a power loss during the ROM session must not
+			 * keep the unit out of its application. */
+			startup_config_write(BK_REGS_SELECT_DEV_OP_STAT,
+			                     m1_dfu_request_next(m1_device_stat.bu_regs.device_op_status, false,
+			                                         (uint8_t)DEV_OP_STATUS_USB_DFU_REQUEST,
+			                                         (uint8_t)DEV_OP_STATUS_NO_OP));
 			M1_LOG_I(M1_LOGDB_TAG, "USB DFU request honoured; entering ROM bootloader.\r\n");
 			startup_dfu_indicate();
 			bl_jump_to_dfu(); // non-returning: teardown + 32 s net + ROM jump
-		} // if ( m1_device_stat.bu_regs.device_op_status==DEV_OP_STATUS_USB_DFU_REQUEST )
+		} // if ( m1_dfu_request_is_pending(...) )
 		else if ( m1_device_stat.bu_regs.device_op_status==DEV_OP_STATUS_FW_UPDATE_ACTIVE )
 		{
 			startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_NO_OP);

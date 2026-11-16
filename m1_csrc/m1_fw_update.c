@@ -19,6 +19,7 @@
 #include "main.h"
 #include "m1_fw_update.h"
 #include "m1_fw_update_bl.h"
+#include "m1_dfu_entry.h"     /* pure USB DFU request transition (issue #41-B) */
 #include "m1_esp_version.h"   /* installed Core version for the update screen */
 #include "m1_storage.h"
 #include "m1_file_browser.h"   /* m1_fb_set_sort_enabled (folders-first picker) */
@@ -544,7 +545,13 @@ void firmware_update_get_image_file(void)
 /*============================================================================*/
 void firmware_update_enter_usb_dfu(void)
 {
-	startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_USB_DFU_REQUEST);
+	/* Raise the request through the same pure transition the boot handler uses
+	 * to consume it (m1_dfu_entry.h), so the host-tested request state machine
+	 * is the shipped one. The request wins over any stored status. */
+	startup_config_write(BK_REGS_SELECT_DEV_OP_STAT,
+	                     m1_dfu_request_next(m1_device_stat.bu_regs.device_op_status, true,
+	                                         (uint8_t)DEV_OP_STATUS_USB_DFU_REQUEST,
+	                                         (uint8_t)DEV_OP_STATUS_NO_OP));
 	M1_LOG_I(M1_LOGDB_TAG, "USB DFU requested; resetting to enter the ROM bootloader.\r\n");
 
 	/* Best effort: the log is emitted from a task, so give it a moment before
