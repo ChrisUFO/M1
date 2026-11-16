@@ -735,9 +735,11 @@ static void startup_iwdg_option_byte_check(void)
  * Recovery seam for a failed boot CRC validation
  *
  * PR-DFU (#41-B) fills USB DFU entry (bl_jump_to_dfu()) into this hook. Until
- * then the device stays in the visible recovery state: the message drawn by
- * the caller remains on screen, the counters are persisted in DR1, and this
- * function is the single place a recovery action will be attached.
+ * then this hook only logs. Be precise about what that means: the FW CORRUPT!
+ * banner drawn by the caller does NOT block execution, and the normal UI is
+ * one OK press away, so a corrupt image is still able to run. The counters are
+ * persisted in DR1, and this function is the single place a recovery action
+ * will be attached.
  */
 /*============================================================================*/
 static void startup_boot_recovery_hook(uint8_t boot_attempts)
