@@ -96,6 +96,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ORDER/confinement source seams. On-device DFU enumeration/rollback
   demonstration is deferred to the issue #41 hardware gate (milestone
   "Post-merge stabilization")
+- Fork: USB CDC RX drop/high-watermark diagnostics restored on the adopted
+  base's stream-buffer path (issue #44, part A) — the fork's `CDC_CLI_Rx*`
+  counters were lost with its (deliberately not resurrected) CDC rewrite, so
+  they now live on upstream's `USB/Class/CDC/Src/usbd_cdc_if.c` path
+  (`UserRxBufferFS` -> `usbRxBuffer` -> `h_usb_rx_streambuf`):
+  `CDC_CLI_RxDroppedBytes()` counts host bytes that never reached the stream
+  buffer (refused in a callback because it was full, partially or wholly, plus
+  bytes lost to an intermediate `usbRxBuffer` overflow), counted once per byte
+  at arrival so retried carry-over is never re-counted;
+  `CDC_CLI_RxHighWatermark()` is the maximum occupancy observed after each
+  send (monotonic until reset); `CDC_CLI_RxBufferedBytes()` is the live
+  pending level; `CDC_CLI_RxResetStats()` zeroes both under
+  `taskENTER_CRITICAL()` so the RX interrupt cannot resurrect a pre-reset
+  value. Counters are `volatile uint32_t` (single aligned writes/reads, no
+  torn values) and diagnostic only: no buffering, copy, back-pressure or pause
+  decision reads them, and `CDC_Receive_FS()` gained no blocking call. The
+  arithmetic is pure and host-tested (`m1_csrc/m1_cdc_rx_stats.h`,
+  `test_cdc_rx_stats`: full buffer, partial fit, intermediate-buffer overflow,
+  carry-over, watermark monotonicity, buffered-now, reset, plus source seams
+  that pin the ISR call site, the reset critical section and the absence of
+  blocking calls); the new `cdcstats`/`cdcreset` CLI commands expose the same
+  legacy output text. ROM cost: **+832 B flash / +32 B RAM** (FLASH 724368 ->
+  725200 B, RAM 326184 -> 326216 B, same toolchain, `./build.sh` on this tree
+  versus `main` @ `517b339`); `_wCRC.bin` is still 1047576 bytes.
+  On-device "counters become non-zero during a CDC stress transfer" is
+  hardware-gated and deferred to the issue #44 hardware gate (milestone
+  "Post-merge stabilization"); see `docs/protocols/usb-cdc.md`
 - Fork: CRC emitter parity harness (issue #40) — `scripts/verify_crc_parity.sh`
   generates four deterministic full-size (`0xFFC14`-byte) images from the
   committed spec in `tools/crc_test_vectors.py` (so no ~1 MiB binaries live in
