@@ -81,8 +81,37 @@ echo "Collecting artifacts to ./$OUTPUT_DIR"
 # the exact size before anything is copied to artifacts/, in plain and
 # --release mode alike, so a silently skipped or truncated CRC step fails here
 # rather than at flash time.
+#
+# Both sides of that sum are asserted. Checking only the 0xFFC18 total would
+# accept a cropped image: both emitters crop at 0xFFC14, so an application
+# image that grew past 0xFFC14 (e.g. a new field in S_M1_FW_CONFIG_t, whose
+# size the build's hard-coded 0xFFC14 is only coupled to by convention) would
+# be silently truncated to exactly 0xFFC18 and still pass. Asserting the plain
+# image is exactly 0xFFC14 and that the wCRC prefix equals it closes that hole.
+CROP_END_BYTES=1047572 # 0xFFC14 == crop end == app image size == CRC offset
 WCRC_EXPECTED_BYTES=1047576 # 0xFFC18 == crop end 0xFFC14 + 4-byte CRC word
+PLAIN_FILE="$BUILD_DIR/${ARTIFACT_STEM}.bin"
 WCRC_FILE="$BUILD_DIR/${ARTIFACT_STEM}_wCRC.bin"
+if [ ! -f "$PLAIN_FILE" ]; then
+    echo "Error: application image is missing: $PLAIN_FILE" >&2
+    echo "       The link/objcopy step did not run." >&2
+    exit 1
+fi
+PLAIN_SIZE=$(wc -c < "$PLAIN_FILE" | tr -d ' ')
+if [ "$PLAIN_SIZE" != "$CROP_END_BYTES" ]; then
+    echo "Error: $PLAIN_FILE is $PLAIN_SIZE bytes, expected $CROP_END_BYTES" \
+         "(0xFFC14 = CRC crop end / append offset)." >&2
+    if [ "${PLAIN_SIZE:-0}" -gt "$CROP_END_BYTES" ]; then
+        echo "       The image grew past the crop end, so the CRC emitter would" >&2
+        echo "       truncate the tail (S_M1_FW_CONFIG_t / linker section vs." >&2
+        echo "       the hard-coded 0xFFC14 moved out of sync)." >&2
+    else
+        echo "       The image is shorter than the CRC offset, so the CRC step" >&2
+        echo "       did not run on a complete image." >&2
+    fi
+    exit 1
+fi
+echo "Verified: ${ARTIFACT_STEM}.bin is $PLAIN_SIZE bytes (0xFFC14)"
 if [ ! -f "$WCRC_FILE" ]; then
     echo "Error: CRC-bearing image is missing: $WCRC_FILE" >&2
     echo "       The CMake CRC step did not run (see the 'CRC emitter:' status line)." >&2
@@ -94,7 +123,13 @@ if [ "$WCRC_SIZE" != "$WCRC_EXPECTED_BYTES" ]; then
          "(0xFFC18 = crop end 0xFFC14 + 4-byte CRC word)." >&2
     exit 1
 fi
-echo "Verified: ${ARTIFACT_STEM}_wCRC.bin is $WCRC_SIZE bytes (0xFFC18)"
+if ! head -c "$CROP_END_BYTES" "$WCRC_FILE" | cmp -s - "$PLAIN_FILE"; then
+    echo "Error: ${ARTIFACT_STEM}_wCRC.bin does not start with ${ARTIFACT_STEM}.bin" >&2
+    echo "       The CRC step cropped/replaced the application image instead of" >&2
+    echo "       appending to it." >&2
+    exit 1
+fi
+echo "Verified: ${ARTIFACT_STEM}_wCRC.bin is $WCRC_SIZE bytes (0xFFC18), prefix == ${ARTIFACT_STEM}.bin"
 
 for artifact in \
     "$ARTIFACT_STEM.bin" \
