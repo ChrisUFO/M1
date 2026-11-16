@@ -165,8 +165,8 @@ void SI446x_Wait_CTS(void)
 {
 	// Check CTS pin
 	// GPIO1 is CTS by default after a POR
-	while ( HAL_GPIO_ReadPin(SI4463_GPIO1_GPIO_Port, SI4463_GPIO1_Pin)==GPIO_PIN_RESET )
-		; // Let wait here until CTS getting ready
+	for ( uint32_t timeout = 0xFFFF; (timeout > 0) && (HAL_GPIO_ReadPin(SI4463_GPIO1_GPIO_Port, SI4463_GPIO1_Pin)==GPIO_PIN_RESET); timeout-- )
+		; // Let wait here until CTS getting ready (bounded to avoid a hang on a stuck CTS pin)
 } // void SI446x_Wait_CTS(void)
 #endif // #ifdef M1_APP_RADIO_POLL_CTS_ON_GPIO
 
