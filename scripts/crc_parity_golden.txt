@@ -27,6 +27,15 @@
 # digests (generator drift), re-runs the emitter, and compares its output
 # digests + CRC field against this file. When srec_cat is installed it also
 # re-runs the authoritative pipeline and byte-compares the two emitters.
+#
+# Regeneration is gated: the ONLY sanctioned way to rewrite this table is
+#
+#   sh scripts/verify_crc_parity.sh --update-golden
+#
+# on a host where srec_cat is on PATH. The script refuses without srec_cat and
+# verifies the emulator agrees byte-for-byte before writing, because a table
+# re-baselined from the Python emulator would grade the emulator against itself
+# and make the one host-independent parity check circular.
 zeros      ed8930110fc56a74b7087374f9dd0651cfbbcdaec1aa1f9f4ba638ea22a0c2ad  b835d808f340938d589d012c700729df4b643bbadb39add37f7e75e1f60fb85b  5688a4fc
 ff         5cb71e8f297d473888d07fd59a0e2d0786e1c3b1b38c3f6de59f835ca6ea30fa  61968d8b748f172cf8238a304f219cd8c3a09a640458382da60b998507f4770b  ff583fd9
 ramp       89574818405ee48320a019efcf6d499affc0fa45f90f2378418d812e717c5e51  1738b1077f43a504a2944dfa94b52cc7681fb8dfbccfda31ddffe57bce8c3c50  e6a4588e
