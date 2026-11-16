@@ -207,6 +207,7 @@ void pd_unsetBit(uint8_t *reg, uint8_t mask)
 void pd_fusb302_init(void)
 {
 	uint8_t reg = pd_getID();
+	(void)reg; /* Unused: diagnostics-only reads (ID + two measurements). */
 	reg = pd_measure(0);
 	reg = pd_measure(1);
 } // void pd_fusb302_init(void)
