@@ -166,7 +166,9 @@ static int every_loop_is_capped(const char *src) {
             if (len >= sizeof(header)) return 0;
             memcpy(header, p, len);
             header[len] = '\0';
-            if (strstr(header, "M1_DFU_TEARDOWN_SPIN_LIMIT") == NULL &&
+            /* Any *_SPIN_LIMIT budget counts (the IWDG update wait has its
+             * own, larger one), plus the compile-time NVIC loop bound. */
+            if (strstr(header, "SPIN_LIMIT") == NULL &&
                 strstr(header, "sizeof(NVIC->ICER)") == NULL) {
                 char window[201];
                 size_t wlen = (size_t)(p - src);
@@ -230,6 +232,27 @@ int main(void) {
        "IWDG PR/RLR unlock, reload and start keys are the STM32 keys");
     ok(M1_DFU_TEARDOWN_SPIN_LIMIT >= 1000U,
        "teardown flag spins have a finite, generous iteration cap");
+
+    /* ---- IWDG prescaler/reload synchronisation budget ---------------------
+     * IWDG->SR.PVU/RVU clear only after the write reaches the LSI domain, on a
+     * prescaled LSI edge: one 256/32 kHz = 8 ms period at PR 6, i.e. a
+     * millisecond-class wait, not "a handful of cycles". ST budgets it in
+     * HAL_IWDG_DEFAULT_TIMEOUT (1024*1000/LSI + startup + 1 ms = 33 ms here),
+     * and feeding 0xAAAA before the flags clear takes the PREVIOUS PR/RLR --
+     * ~0.5 s on the strap route. The arithmetic below is the budget the firmware
+     * is compiled with, checked independently of the code that uses it. */
+    ok(M1_DFU_HAL_IWDG_TIMEOUT_MS == (1024U * 1000U / M1_DFU_LSI_NOMINAL_HZ) + 1U,
+       "ST's budget for the IWDG update wait is 33 ms at the nominal 32 kHz LSI");
+    ok(M1_DFU_IWDG_SYNC_BUDGET_MS >= 3U * M1_DFU_HAL_IWDG_TIMEOUT_MS,
+       "the IWDG sync budget is at least 3x ST's own budget");
+    ok(M1_DFU_IWDG_SYNC_SPIN_LIMIT > M1_DFU_TEARDOWN_SPIN_LIMIT,
+       "the IWDG update wait has its own, much larger cap than the cache waits");
+    ok(((unsigned long long)M1_DFU_IWDG_SYNC_SPIN_LIMIT * M1_DFU_SYNC_MIN_POLL_CYCLES * 1000ULL) /
+       (unsigned long long)M1_DFU_SYNC_CLOCK_HZ >= (unsigned long long)M1_DFU_IWDG_SYNC_BUDGET_MS,
+       "the IWDG poll cap still covers the sync budget at the fastest clock with the cheapest poll");
+    ok(((unsigned long long)M1_DFU_TEARDOWN_SPIN_LIMIT * M1_DFU_SYNC_MIN_POLL_CYCLES * 1000ULL) /
+       (unsigned long long)M1_DFU_SYNC_CLOCK_HZ < (unsigned long long)M1_DFU_HAL_IWDG_TIMEOUT_MS,
+       "the shared cache cap would be BELOW ST's budget for this wait -- which is why it has its own");
 
     /* ---- software request state machine ----------------------------------
      * Both shipped call sites use these transitions (raise before the reset in
@@ -339,14 +362,16 @@ int main(void) {
         ok(src != NULL, "read m1_csrc/m1_fw_update_bl.c");
         if (src != NULL) {
             char *body = bound_block(src, "void bl_jump_to_dfu(void)");
-            char *rcc = bound_block(src, "static void bl_rcc_teardown_bounded(void)");
+            char *rcc = bound_block(src, "static bool bl_rcc_teardown_bounded(void)");
             char *wait = bound_block(src, "static void bl_rcc_wait_flag(volatile uint32_t *reg, uint32_t mask, uint32_t want)");
             char *tail = bound_block(src, "static void bl_rom_handover(uint32_t sp_val, uint32_t reset_vector)");
+            char *fail = bound_block(src, "static void bl_dfu_teardown_failed(void)");
 
             ok(body != NULL, "bl_jump_to_dfu() is defined");
             ok(rcc != NULL, "the bounded RCC teardown helper is defined");
             ok(wait != NULL, "the capped RCC flag wait is defined");
             ok(tail != NULL, "bl_rom_handover() (the PSP->MSP tail) is defined");
+            ok(fail != NULL, "the loud teardown-failure exit is defined");
 
             if (body != NULL) {
                 static const char *const order[] = {
@@ -354,7 +379,8 @@ int main(void) {
                     "SysTick->CTRL = 0U;",
                     /* Pended core exceptions are not covered by ICER/ICPR. */
                     "SCB->ICSR = SCB_ICSR_PENDSTCLR_Msk | SCB_ICSR_PENDSVCLR_Msk;",
-                    "bl_rcc_teardown_bounded();",
+                    "if ( !bl_rcc_teardown_bounded() )",
+                    "bl_dfu_teardown_failed();",
                     /* The ROM must not inherit the running HAL tick timebase. */
                     "TIM6->CR1 &= ~TIM_CR1_CEN;",
                     "CLEAR_BIT(RCC->APB1LENR, RCC_APB1LENR_TIM6EN);",
@@ -376,11 +402,11 @@ int main(void) {
                     "bl_rom_handover(sp_val, jump_address);"
                 };
                 ok(in_order(body, order, sizeof(order) / sizeof(order[0])),
-                   "teardown order: irq off -> SysTick+ICSR -> RCC -> TIM6 -> NVIC -> VTOR -> barriers -> caches -> IWDG start/unlock/PR/RLR/feed -> handover");
+                   "teardown order: irq off -> SysTick+ICSR -> RCC (+post-condition) -> TIM6 -> NVIC -> VTOR -> barriers -> caches -> IWDG start/unlock/PR/RLR/check/feed -> handover");
                 ok(strstr(body, "m1_dfu_sp_plausible") != NULL,
                    "jump validates the ROM initial SP before using it");
-                ok(strstr(body, "NVIC_SystemReset") != NULL,
-                   "implausible ROM vector resets instead of branching");
+                ok(strstr(body, "bl_dfu_teardown_failed()") != NULL,
+                   "an implausible ROM vector or a failed teardown resets instead of branching");
                 ok(strstr(body, "HAL_FLASHEx_OBProgram(") == NULL &&
                    strstr(body, "HAL_FLASH_OB_Launch(") == NULL &&
                    strstr(body, "HAL_FLASH_Unlock(") == NULL,
@@ -402,6 +428,9 @@ int main(void) {
                    "the teardown brings HSI up, drops the PLLs and resets the muxes");
                 ok(strstr(rcc, "RCC_CR_LSION") == NULL,
                    "LSI is left running: it clocks the IWDG safety net armed later");
+                ok(strstr(rcc, "READ_BIT(RCC->CFGR1, RCC_CFGR1_SWS) == 0U") != NULL &&
+                   strstr(rcc, "READ_BIT(RCC->CR, RCC_CR_PLL1RDY) == 0U") != NULL,
+                   "the teardown verifies its post-condition (SYSCLK on HSI, PLL1 off) instead of discarding it");
                 ok(strstr(wait, "(READ_BIT(*reg, mask) != want) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") != NULL,
                    "the RCC flag wait is iteration-capped, not an infinite spin");
             }
@@ -412,8 +441,23 @@ int main(void) {
                    "the ICACHE busy wait is bounded");
                 ok(strstr(body, "((DCACHE1->SR & DCACHE_SR_BUSYF) != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") != NULL,
                    "the DCACHE busy wait is bounded");
-                ok(strstr(body, "(IWDG->SR != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") != NULL,
-                   "the watchdog register-update wait is bounded, not an infinite spin");
+                ok(strstr(body, "(IWDG->SR != 0U) && (i < M1_DFU_IWDG_SYNC_SPIN_LIMIT)") != NULL,
+                   "the watchdog register-update wait is bounded by its OWN budget, not the cache cap");
+                ok(strstr(body, "(IWDG->SR != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") == NULL,
+                   "the watchdog wait no longer shares the tens-of-cycles cache cap");
+                {
+                    /* On expiry the code must NOT reach the 0xAAAA feed: reloading
+                     * before PVU/RVU clear takes the previous PR/RLR and silently
+                     * disarms the net. The loud exit must sit between the wait and
+                     * the feed. */
+                    const char *spin = strstr(body, "i < M1_DFU_IWDG_SYNC_SPIN_LIMIT");
+                    const char *loud = strstr(body, "if ( IWDG->SR != 0U )");
+                    const char *feed = strstr(body, "IWDG->KR = M1_DFU_IWDG_KEY_RELOAD;");
+                    const char *reset = loud != NULL ? strstr(loud, "bl_dfu_teardown_failed();") : NULL;
+                    ok(spin != NULL && loud != NULL && reset != NULL && feed != NULL &&
+                       spin < loud && loud < reset && reset < feed,
+                       "an unsettled IWDG update check resets instead of feeding the previous PR/RLR");
+                }
                 ok(strstr(body, "while ( IWDG->SR != 0U )") == NULL,
                    "no unbounded IWDG->SR spin remains in the jump");
                 ok(every_loop_is_capped(body),
@@ -426,6 +470,12 @@ int main(void) {
             if (wait != NULL) {
                 ok(every_loop_is_capped(wait),
                    "no loop in the RCC flag wait lacks an iteration bound");
+            }
+            if (fail != NULL) {
+                /* The only unbounded loop allowed anywhere here is the
+                 * post-SYSRESETREQ idle spin inside the failure exit. */
+                ok(strstr(fail, "NVIC_SystemReset();") != NULL && every_loop_is_capped(fail),
+                   "the failure exit resets first and its idle spin is the only unbounded loop (deliberate)");
             }
             /* The PSP -> MSP handover. Without the CONTROL.SPSEL clear, the ROM
              * executes on the abandoned FreeRTOS task stack: MSP writes do not
@@ -460,6 +510,7 @@ int main(void) {
             free(rcc);
             free(wait);
             free(tail);
+            free(fail);
             ok(strstr(src, "#ifndef M1CP_HOST_TEST") != NULL,
                "CMSIS-touching jump is guarded out of host builds");
         }

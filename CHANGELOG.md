@@ -48,10 +48,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   start-then-configure (`0xCCCC` -> `0x5555` -> `PR`/`RLR` -> `IWDG->SR` wait ->
   `0xAAAA`, the HAL's own order) so it is guaranteed on the cold-boot strap
   route, where the IWDG/LSI is still stopped because the jump runs before
-  `MX_IWDG_Init()`; every hardware-flag wait in the teardown (`IWDG->SR`,
-  `ICACHE`/`DCACHE1` `BUSYF`, and every RCC ready/switch flag) is
-  iteration-capped and falls through to the jump, so a stuck flag cannot hang
-  the unit with interrupts disabled and no net armed. Three entry routes, all
+  `MX_IWDG_Init()`; every hardware-flag wait in the teardown is iteration-capped
+  -- the `ICACHE`/`DCACHE1` `BUSYF` and RCC ready/switch waits at
+  `M1_DFU_TEARDOWN_SPIN_LIMIT` (they fall through to the jump), the `IWDG->SR`
+  prescaler/reload synchronisation at its own millisecond-class budget
+  (`M1_DFU_IWDG_SYNC_SPIN_LIMIT`, ~4x ST's `HAL_IWDG_DEFAULT_TIMEOUT`, because
+  that wait is LSI-domain) -- so a stuck flag cannot hang the unit with
+  interrupts disabled and no net armed. The two teardown steps whose failure
+  would be worse than a reset fail loudly instead of falling through: the clock
+  teardown verifies its post-condition (SYSCLK on HSI, PLL1 off) and the IWDG
+  wait refuses to feed `0xAAAA` -- which would reload with the *previous*
+  `PR`/`RLR` and silently disarm the net -- so both reset the unit through
+  `bl_dfu_teardown_failed()`. Three entry routes, all
   ending in that one
   non-returning function: the PE11 (UP button) hardware strap sampled with raw
   registers in `Core/Src/main.c` before `HAL_Init()`/`MX_IWDG_Init()` (speaker
@@ -67,8 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at offer start seeds a released->pressed latch), so a flat battery or a
   stuck key can only delay a failed boot, never hang it and never cycle it into
   DFU; the poll loop kicks the IWDG inside the 5 s window and falls back to the
-  existing banner behaviour on timeout. ROM cost of the unit: **+1656 B flash /
-  +/-0 B RAM** (text 713884 -> 715540 B, data/bss unchanged; measured with
+  existing banner behaviour on timeout. ROM cost of the unit: **+1712 B flash /
+  +/-0 B RAM** (text 713884 -> 715596 B, data/bss unchanged; measured with
   `arm-none-eabi-size` on a clean `main` @ `8033236` build and this tree, same
   toolchain). The legacy boot-time IWDG option-byte rewrite is deliberately not
   ported: no DFU entry path programs option bytes. Decisions live in the

@@ -334,7 +334,12 @@ in `tools/m1cp_host_test/test_m1cp_dfu.c`):
    registers at their reset values, LSI left running for the watchdog net
    below. `HAL_RCC_DeInit()` is deliberately **not** used: its internal waits
    poll `HAL_GetTick()`, whose only tick source (TIM6) step 2 masked, so its
-   timeouts never expire and a stuck ready flag would spin forever,
+   timeouts never expire and a stuck ready flag would spin forever -- and on
+   the strap route (before `HAL_Init()`) it additionally returns `HAL_ERROR`
+   at its first `HAL_InitTick()` (no valid `uwTickPrio` yet), i.e. it never
+   tears the tree down at all. The helper's post-condition is **verified**, not
+   discarded: SYSCLK on HSI and PLL1 off, otherwise the teardown fails loudly
+   (step 10's reset) instead of handing the ROM a clock it cannot service,
 5. TIM6 (the HAL tick timebase) stopped and ungated,
 6. `NVIC->ICER`/`NVIC->ICPR` cleared for every interrupt,
 7. `SCB->VTOR = M1_SYSTEM_MEMORY_BASE`,
@@ -343,25 +348,37 @@ in `tools/m1cp_host_test/test_m1cp_dfu.c`):
    H5),
 9. 32 s IWDG safety net (prescaler /256, reload 4095 -> 32.768 s at the
    nominal 32 kHz LSI). The sequence is **start-then-configure** --
-   `KR=0xCCCC` (start), `KR=0x5555` (unlock), `PR`, `RLR`, bounded wait for the
+   `KR=0xCCCC` (start), `KR=0x5555` (unlock), `PR`, `RLR`, wait for the
    register update (`IWDG->SR`), `KR=0xAAAA` (feed) -- matching
    `stm32h5xx_hal_iwdg.c`. On the cold-boot strap route the IWDG/LSI is still
    stopped (this runs before `MX_IWDG_Init()`), so configuring first would leave
    the update flags waiting on LSI cycles that never come, or drop the writes and
-   start at the reset-default ~0.5 s period,
+   start at the reset-default ~0.5 s period. That update wait is LSI-domain (one
+   *prescaled* LSI period = 8 ms at /256, plus LSI startup), so it uses its own
+   millisecond-class budget (`M1_DFU_IWDG_SYNC_SPIN_LIMIT`, ~4x
+   `HAL_IWDG_DEFAULT_TIMEOUT`) rather than the tens-of-cycles cap the cache
+   waits use. If it still expires the teardown **resets** instead of feeding
+   `0xAAAA`: reloading before `PVU`/`RVU` clear takes the *previous* `PR`/`RLR`
+   (same HAL file), which would silently turn the net back into ~0.5 s on the
+   strap route / ~4 s on the application route,
 10. `CONTROL.SPSEL` cleared with MSP = the ROM initial SP, then interrupts
    re-enabled, then the branch to the ROM reset vector -- one register-only
    sequence. The SPSEL clear is required, not cosmetic: under FreeRTOS thread
    mode runs on **PSP**, so a bare `__set_MSP()` would leave the ROM executing
    on the abandoned task stack instead of the SP just validated.
 
-Every hardware-flag spin in steps 4, 8 and 9 (`RCC` ready/switch flags,
-`IWDG->SR`, `ICACHE->SR.BUSYF`, `DCACHE1->SR.BUSYF`) is capped at a fixed
-iteration count (`M1_DFU_TEARDOWN_SPIN_LIMIT`) and falls through to the jump.
-Between step 2 and step 9 the unit runs with interrupts disabled and, on the
-strap route, **no** watchdog net, so an unbounded wait on a stuck flag would be
-a hang that only removing power clears; falling through leaves the ROM either
-enumerating or the unit resetting.
+Every hardware-flag spin in steps 4, 8 and 9 is capped: the `RCC`
+ready/switch flags and the `ICACHE`/`DCACHE1` `BUSYF` waits by
+`M1_DFU_TEARDOWN_SPIN_LIMIT` (tens-of-cycles flags), the `IWDG->SR` update
+wait by its own, larger `M1_DFU_IWDG_SYNC_SPIN_LIMIT`. The cache and RCC waits
+fall through to the jump (best effort); the two waits whose expiry would leave
+the unit in a state *worse* than a reset -- the clock tree post-condition and
+the watchdog sync -- fail loudly through `bl_dfu_teardown_failed()`
+(`NVIC_SystemReset()`), so the unit reboots instead of jumping into the ROM
+with a clock it cannot service or a silently disarmed net. Between step 2 and
+step 9 the unit runs with interrupts disabled and, on the strap route, **no**
+watchdog net, so an unbounded wait on a stuck flag would be a hang that only
+removing power clears.
 
 The legacy fork did not tear the clock tree down; it is done here because
 the issue #41 acceptance criterion requires the application clock tree to be

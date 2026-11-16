@@ -731,6 +731,30 @@ void fw_gui_progress_update(size_t remainder)
 #ifndef M1CP_HOST_TEST
 
 /*============================================================================*/
+/* Loud, recoverable failure exit for the teardown.
+ *
+ * When a teardown step cannot be completed (the clock tree did not settle, or
+ * the IWDG prescaler/reload synchronisation never became visible) the unit must
+ * NOT continue into the ROM: it would either run on a clock tree the ROM cannot
+ * service or, worse, carry a watchdog net reloaded with the previous PR/RLR
+ * values -- a silently disarmed net. Requesting an immediate reset is the only
+ * bounded, deterministic and observable option here (no logging is possible
+ * with interrupts disabled on a boot path): the reset is recoverable (the unit
+ * reboots, the strap/request is honoured again), it leaves a reset-cause flag,
+ * and it cannot hang.
+ *
+ * The trailing spin is never reached in practice -- SYSRESETREQ does not return
+ * -- and exists only so the function is honest if a debugger holds the reset
+ * request. It is the one loop in this translation unit without an iteration
+ * bound, and the host seam allows it for exactly that reason. */
+static void bl_dfu_teardown_failed(void) __attribute__((noreturn));
+static void bl_dfu_teardown_failed(void)
+{
+	NVIC_SystemReset();
+	for (;;) { __NOP(); } // not reached
+} // static void bl_dfu_teardown_failed(void)
+
+/*============================================================================*/
 /* Bounded RCC teardown for the ROM handover.
  *
  * This replaces HAL_RCC_DeInit(). The HAL version waits on HAL_GetTick(), and
@@ -757,10 +781,11 @@ void fw_gui_progress_update(size_t remainder)
  * stopping it would kill the very net that makes an abandoned session
  * recoverable.
  *
- * A flag that never settles is not fatal: the teardown falls through to the
- * jump (best effort) exactly like the cache and IWDG->SR waits, and the ROM
- * either enumerates or the IWDG resets the unit.
- */
+ * A flag that never settles is not fatal *inside the waits*: each wait falls
+ * through after M1_DFU_TEARDOWN_SPIN_LIMIT, exactly like the cache and IWDG->SR
+ * waits. What must not happen is jumping with the tree half torn down, so the
+ * caller verifies the post-condition below and resets if it does not hold --
+ * see bl_dfu_teardown_failed(). */
 
 /* Bounded poll of one RCC register field. `want` is the masked value meaning
  * "settled"; the loop gives up after M1_DFU_TEARDOWN_SPIN_LIMIT polls. */
@@ -774,7 +799,11 @@ static void bl_rcc_wait_flag(volatile uint32_t *reg, uint32_t mask, uint32_t wan
 	}
 } // void bl_rcc_wait_flag(...)
 
-static void bl_rcc_teardown_bounded(void)
+/* Ends in the clock state a hardware reset leaves; returns false when the
+ * essential post-condition does not hold -- SYSCLK is not running from HSI, or
+ * PLL1 (the PLL the application used as SYSCLK) is still ready. The caller must
+ * not jump in that case: the ROM would inherit a clock tree it cannot service. */
+static bool bl_rcc_teardown_bounded(void)
 {
 	/* HSI on and ready BEFORE anything is switched off: the CPU is running
 	 * from PLL1 here, so stopping the active SYSCLK source first would stop
@@ -827,7 +856,14 @@ static void bl_rcc_teardown_bounded(void)
 	/* The HAL keeps the SYSCLK frequency in this variable: nothing after this
 	 * point may still believe it is running at the application's 150 MHz. */
 	SystemCoreClock = HSI_VALUE;
-} // void bl_rcc_teardown_bounded(void)
+
+	/* Verified post-condition, not a discarded return value: SYSCLK must now be
+	 * HSI (SWS == 0, which also implies HSIRDY) and PLL1 -- the source the
+	 * application ran from -- must be off (PLL1RDY == 0). A stuck flag that the
+	 * capped waits above gave up on shows up here instead of being ignored. */
+	return (READ_BIT(RCC->CFGR1, RCC_CFGR1_SWS) == 0U) &&
+	       (READ_BIT(RCC->CR, RCC_CR_PLL1RDY) == 0U);
+} // bool bl_rcc_teardown_bounded(void)
 
 /*============================================================================*/
 /* PSP -> MSP handover into the ST ROM, and the jump.
@@ -921,13 +957,17 @@ static void bl_rom_handover(uint32_t sp_val, uint32_t reset_vector)
   *   8. DSB/ISB, then ICACHE/DCACHE disabled with busy-wait. On H5, entering
   *      the BootROM with caches enabled can fail or hang silently.
   *   9. 32 s IWDG safety net: START first, then UNLOCK/PR/RLR, wait for the
-  *      register update, feed. The start key survives a software reset and the
-  *      ROM never feeds the counter, so the alternative is the application's
-  *      ~4 s period resetting the unit mid-enumeration. Starting before
-  *      programming matters on the cold-boot strap route, which runs before
-  *      MX_IWDG_Init(): a stopped IWDG has its LSI off, so PR/RLR update flags
-  *      may never arrive (or the writes are dropped and 0xCCCC starts the
-  *      counter at its reset defaults) -- see stm32h5xx_hal_iwdg.c.
+  *      register update, feed. 0xCCCC starts a stopped IWDG and is a no-op on a
+  *      running one, and the ROM never feeds the counter, so the alternative is
+  *      the route's previous period resetting the unit mid-enumeration (~4 s on
+  *      the application route). Starting before programming matters on the
+  *      cold-boot strap route, which runs before MX_IWDG_Init(): a stopped IWDG
+  *      has its LSI off, so PR/RLR update flags need LSI cycles to appear --
+  *      see stm32h5xx_hal_iwdg.c. The update wait is LSI-domain (one prescaled
+  *      period), so it has its own millisecond-class budget
+  *      (M1_DFU_IWDG_SYNC_SPIN_LIMIT); if it still expires the teardown resets
+  *      rather than feeding 0xAAAA, which would reload with the previous
+  *      PR/RLR and silently disarm the net.
   *  10. Thread-mode stack back to MSP with the ROM's own initial SP, interrupts
   *      re-enabled, jump to the ROM reset vector. That last step is
   *      register-only on purpose: clearing CONTROL.SPSEL changes the stack the
@@ -935,11 +975,15 @@ static void bl_rom_handover(uint32_t sp_val, uint32_t reset_vector)
   *      writing a frame that no longer belongs to this context. See
   *      bl_rom_handover().
   *
-  * Every hardware-flag spin reachable from this function -- the ones below and
-  * the RCC waits inside bl_rcc_teardown_bounded() -- is bounded by
-  * M1_DFU_TEARDOWN_SPIN_LIMIT and falls through to the jump: from step 2 to
-  * step 9 the unit has interrupts disabled and no watchdog net, so an
-  * unbounded wait on a stuck flag would be a hang only a power cycle clears.
+  * Every hardware-flag spin reachable from this function is bounded: the RCC
+  * waits inside bl_rcc_teardown_bounded() and the two cache waits by
+  * M1_DFU_TEARDOWN_SPIN_LIMIT, the IWDG->SR update wait by its own
+  * M1_DFU_IWDG_SYNC_SPIN_LIMIT. From step 2 to step 9 the unit has interrupts
+  * disabled and (on the strap route) no watchdog net, so an unbounded wait on a
+  * stuck flag would be a hang only a power cycle clears. The cache and RCC waits
+  * fall through to the jump (best effort); the two waits whose failure would
+  * leave the unit in a state worse than a reset (the clock tree, the watchdog
+  * net) fail loudly through bl_dfu_teardown_failed() instead.
   *
   *
   * Deliberately NOT ported: the legacy boot-time IWDG option-byte rewrite
@@ -962,8 +1006,7 @@ void bl_jump_to_dfu(void)
 	sp_val = *(volatile const uint32_t *)(uintptr_t)M1_SYSTEM_MEMORY_BASE;
 	if ( !m1_dfu_sp_plausible(sp_val) )
 	{
-		NVIC_SystemReset();
-		for (;;) { __NOP(); } // not reached
+		bl_dfu_teardown_failed(); // nothing sane to jump to: loud reset
 	}
 
 	/* 2. No interrupts from here on until the ROM is ready for them. */
@@ -980,8 +1023,13 @@ void bl_jump_to_dfu(void)
 	__ISB();
 
 	/* 4. Application clock tree down: back to HSI, PLLs off (bounded, and
-	 *    tick-free -- see bl_rcc_teardown_bounded()). */
-	bl_rcc_teardown_bounded();
+	 *    tick-free -- see bl_rcc_teardown_bounded()). Its post-condition is
+	 *    checked, not discarded: a tree that did not settle means the ROM would
+	 *    inherit a clock it cannot service, so fail loudly instead of jumping. */
+	if ( !bl_rcc_teardown_bounded() )
+	{
+		bl_dfu_teardown_failed();
+	}
 
 	/* 5. TIM6 is this project's HAL tick timebase: stop the counter, drop its
 	 *    pending update flag and release its clock gate. Its NVIC line is
@@ -1030,16 +1078,27 @@ void bl_jump_to_dfu(void)
 	/* 9. 32 s watchdog safety net (LSI / 256 via IWDG_PR == 6, max reload).
 	 *    START FIRST, then configure -- the HAL's own order, and the only safe
 	 *    one on the cold-boot strap route where the IWDG/LSI is still stopped
-	 *    and PR/RLR write flags need LSI cycles to appear. The SR wait is
-	 *    bounded for the same reason as the cache waits above: fall through to
-	 *    the jump rather than spin forever before the net exists. */
+	 *    and PR/RLR write flags need LSI cycles to appear. The wait for the
+	 *    register update is the one spin in this function that waits on the LSI
+	 *    domain (one prescaled LSI period = 8 ms at PR == 6), so it uses its own
+	 *    budget (M1_DFU_IWDG_SYNC_SPIN_LIMIT, ~4x ST's HAL_IWDG_DEFAULT_TIMEOUT)
+	 *    rather than the tens-of-cycles cache cap. */
 	IWDG->KR  = M1_DFU_IWDG_KEY_START;
 	IWDG->KR  = M1_DFU_IWDG_KEY_UNLOCK;
 	IWDG->PR  = M1_DFU_IWDG_PRESCALER;
 	IWDG->RLR = M1_DFU_IWDG_RELOAD;
-	for (i = 0U; (IWDG->SR != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT); i++)
+	for (i = 0U; (IWDG->SR != 0U) && (i < M1_DFU_IWDG_SYNC_SPIN_LIMIT); i++)
 	{
 		;
+	}
+	if ( IWDG->SR != 0U )
+	{
+		/* The PR/RLR writes never became visible. Feeding 0xAAAA now would
+		 * reload with the PREVIOUS PR/RLR -- ~0.5 s on the strap route, where
+		 * the counter was just started at its reset defaults -- i.e. it would
+		 * silently disarm the 32 s net in exactly the corner case the net
+		 * exists for. Fail loudly instead (reset, no feed). */
+		bl_dfu_teardown_failed();
 	}
 	IWDG->KR = M1_DFU_IWDG_KEY_RELOAD;
 

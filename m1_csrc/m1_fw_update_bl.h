@@ -162,10 +162,16 @@ void bl_swap_banks(void);
  * startup_config_handler()); this function only performs the teardown:
  *
  *   interrupts off -> SysTick (+ pended core exceptions) -> RCC back to the
- *   reset state (bounded raw-register teardown) -> TIM6 stopped -> NVIC
- *   ICER/ICPR -> VTOR = system memory -> DSB/ISB -> ICACHE/DCACHE off ->
- *   32 s IWDG net -> CONTROL.SPSEL cleared with MSP = ROM initial SP ->
- *   interrupts on -> jump to the ROM reset vector
+ *   reset state (bounded raw-register teardown, post-condition verified) ->
+ *   TIM6 stopped -> NVIC ICER/ICPR -> VTOR = system memory -> DSB/ISB ->
+ *   ICACHE/DCACHE off -> 32 s IWDG net -> CONTROL.SPSEL cleared with MSP = ROM
+ *   initial SP -> interrupts on -> jump to the ROM reset vector
+ *
+ * A clock teardown that does not settle, or an IWDG prescaler/reload
+ * synchronisation that never becomes visible, resets the unit through
+ * bl_dfu_teardown_failed() instead of jumping: the ROM must never inherit a
+ * clock tree it cannot service, and the net must never be reloaded with the
+ * previous PR/RLR values.
  *
  * The CONTROL.SPSEL step is not cosmetic: from a FreeRTOS task the thread
  * stack is PSP, so a bare __set_MSP() would leave the ROM running on the

@@ -122,8 +122,9 @@ honoured once and cleared before the jump), and a bounded 5 s offer shown on the
 same recovery banner (edge-triggered OK acceptance, so a stuck key falls
 through) — all ending in the same non-returning ROM jump with its
 interrupt/SysTick/NVIC/VTOR/cache teardown (every flag wait iteration-capped,
-clock tree back to the HSI reset state, thread stack switched from PSP to MSP
-with the ROM initial SP) and a 32.768 s
+clock tree back to the HSI reset state with a verified post-condition, thread
+stack switched from PSP to MSP with the ROM initial SP; a clock teardown or
+watchdog-sync failure resets instead of jumping) and a 32.768 s
 watchdog safety net (LSI/256, reload 4095). None of these paths writes option
 bytes.
 See [Firmware image and update](protocols/firmware-update.md).

@@ -57,9 +57,14 @@ static inline bool m1_dfu_sp_plausible(uint32_t sp)
 
 /* ---- 32 s watchdog safety net ------------------------------------------- */
 
-/* The IWDG start key (0xCCCC) survives a software reset, so the watchdog keeps
- * counting through the ST ROM bootloader, which has no interrupt handler to
- * feed it. Before jumping, the counter is re-armed at its slowest setting:
+/* The IWDG start key (0xCCCC) starts a stopped IWDG and is a no-op on one that
+ * is already running, so the arming below is valid on every entry route: the
+ * cold-boot strap route reaches it before MX_IWDG_Init() (IWDG and its LSI
+ * still stopped) and the software routes carry the running ~4 s application
+ * watchdog. Nothing resets the part between that arming and the ROM session --
+ * including units whose IWDG is enable-by-option-byte -- and the ROM has no
+ * interrupt handler to feed the counter, so the counter is re-armed at its
+ * slowest setting before the jump:
  * LSI / 256 with the maximum reload value, i.e.
  *
  *     (0xFFF + 1) * 256 / 32000 Hz = 32.768 s
@@ -69,10 +74,11 @@ static inline bool m1_dfu_sp_plausible(uint32_t sp)
  * watchdog resetting the unit mid-enumeration.
  *
  * IWDG_PR is a 4-bit field on STM32H5 and the LSI divider is 4 << PR
- * (IWDG_PRESCALER_256 == 0b110 == 6, stm32h5xx_hal_iwdg.h). The divider below
- * is derived FROM the encoding, so the timeout arithmetic and the value written
- * to IWDG->PR cannot diverge; PR == 7 would be /512 (65.536 s), which is what
- * shipped before this was centralised. */
+ * (IWDG_PRESCALER_256 == 0b110 == 6, stm32h5xx_hal_iwdg.h); RM0481 Table
+ * "IWDG prescaler" gives the same encoding. The divider below is derived FROM
+ * the encoding, so the timeout arithmetic and the value written to IWDG->PR
+ * cannot diverge; PR == 7 would be /512 (65.536 s), which is what shipped
+ * before this was centralised. */
 #define M1_DFU_IWDG_PRESCALER	((uint32_t)0x06U)	/* IWDG_PR = 0b110 -> /256 */
 #define M1_DFU_IWDG_DIVIDER		((uint32_t)(4U << M1_DFU_IWDG_PRESCALER))
 #define M1_DFU_IWDG_RELOAD		((uint32_t)0x0FFFU)	/* 4095 */
@@ -86,16 +92,58 @@ _Static_assert(M1_DFU_IWDG_DIVIDER == 256U,
 #define M1_DFU_IWDG_KEY_RELOAD	((uint32_t)0xAAAAU)	/* feed */
 #define M1_DFU_IWDG_KEY_START	((uint32_t)0xCCCCU)	/* start if stopped */
 
-/* Fixed iteration cap for every hardware-flag spin in the jump teardown
- * (RCC ready/switch flags, IWDG->SR update flags, ICACHE->SR.BUSYF,
- * DCACHE1->SR.BUSYF). The teardown
- * runs with interrupts disabled and -- on the cold-boot strap route -- before
- * the watchdog net is armed, so an unbounded spin on a stuck hardware flag
- * would hang the unit until power is removed. Hitting the cap falls through to
- * the jump (best effort): the ROM either enumerates or the unit resets, which
- * is strictly better than a silent hang. ~100 000 NOP-free polls is orders of
- * magnitude longer than the handful of LSI/cache cycles each flag needs. */
+/* Iteration cap for the hardware-flag spins that only wait on the AHB/APB
+ * register interface: RCC ready/switch flags, ICACHE->SR.BUSYF and
+ * DCACHE1->SR.BUSYF. Those settle in tens of cycles, so 100 000 polls is
+ * several orders of magnitude of margin. The teardown runs with interrupts
+ * disabled and -- on the cold-boot strap route -- before the watchdog net is
+ * armed, so an unbounded spin on a stuck flag would hang the unit until power
+ * is removed. Hitting the cap falls through to the jump (best effort): the ROM
+ * either enumerates or the unit resets, which is strictly better than a silent
+ * hang.
+ *
+ * The IWDG->SR wait does NOT use this cap: it waits for an LSI-domain
+ * synchronisation with a millisecond budget of its own, see
+ * M1_DFU_IWDG_SYNC_SPIN_LIMIT below. */
 #define M1_DFU_TEARDOWN_SPIN_LIMIT	((uint32_t)100000U)
+
+/* ---- IWDG prescaler/reload synchronisation budget ----------------------- */
+
+/* IWDG->SR.PVU/RVU clear only once the PR/RLR writes have reached the LSI
+ * domain: the status needs up to 5 LSI periods AND is synchronised on a
+ * *prescaled* LSI rising edge (stm32h5xx_hal_iwdg.c: "a synchronisation is
+ * added on prescaled LSI clock rising edge"), i.e. one full 256/32 kHz = 8 ms
+ * period at PR == 6, plus the LSI startup time. ST budgets exactly this wait in
+ * HAL_IWDG_DEFAULT_TIMEOUT, evaluated at the highest prescaler:
+ *
+ *     (1024 * 1000 / 32000) + (0 + 1) = 33 ms
+ *
+ * Feeding 0xAAAA before PVU/RVU clear reloads with the PREVIOUS PR/RLR (same
+ * file: "else previous value will be taken"), which would silently replace the
+ * 32.768 s net with whatever the route had before -- ~0.5 s on the strap route
+ * (the counter was just started at its reset defaults) and ~4 s on the
+ * application route. That is a silent net removal, not a degraded wait, so this
+ * wait gets its own budget (128 ms, ~4x ST's) instead of the tens-of-cycles
+ * cache cap, and expiry fails loudly instead of feeding stale values (see
+ * bl_jump_to_dfu()).
+ *
+ * The cap is expressed in polls. At the fastest clock this can run at (the
+ * 64 MHz HSI reset clock) one poll costs at least 6 cycles -- volatile load,
+ * two compares, decrement, branch -- so 2 000 000 polls is >= 187 ms, well past
+ * the 128 ms budget; at a slower clock or a costlier poll it only grows. */
+#define M1_DFU_HAL_IWDG_TIMEOUT_MS	((uint32_t)33U)		/* ST's own budget for this wait */
+#define M1_DFU_IWDG_SYNC_BUDGET_MS	((uint32_t)128U)	/* ~4x ST's budget */
+#define M1_DFU_SYNC_MIN_POLL_CYCLES	((uint32_t)6U)		/* conservative poll cost */
+#define M1_DFU_SYNC_CLOCK_HZ		((uint32_t)64000000U)	/* HSI reset clock */
+#define M1_DFU_IWDG_SYNC_SPIN_LIMIT	((uint32_t)2000000U)
+
+_Static_assert(M1_DFU_IWDG_SYNC_BUDGET_MS >= 3U * M1_DFU_HAL_IWDG_TIMEOUT_MS,
+               "the IWDG sync wait must be sized at or above ST's own budget");
+_Static_assert((uint64_t)M1_DFU_IWDG_SYNC_SPIN_LIMIT * M1_DFU_SYNC_MIN_POLL_CYCLES * 1000U
+               >= (uint64_t)M1_DFU_IWDG_SYNC_BUDGET_MS * M1_DFU_SYNC_CLOCK_HZ,
+               "the poll cap must cover the IWDG sync budget at the fastest clock");
+_Static_assert(M1_DFU_IWDG_SYNC_SPIN_LIMIT > M1_DFU_TEARDOWN_SPIN_LIMIT,
+               "the IWDG sync wait needs its own, larger budget than the cache waits");
 
 /* LSI is nominally 32 kHz; the exact value is only used for the log line and
  * this helper's window assertion, never for the reload value itself. */
