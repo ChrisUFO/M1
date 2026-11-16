@@ -997,10 +997,15 @@ void startup_config_handler(void)
 /*
  * This function writes one byte field of S_M1_BK_REGS_t to its backup register
  *
- * The struct is 8 bytes (DR0/DR1 only); a selector names a byte offset inside
- * it, and the physical register follows from that offset: bytes 0-3 live in
- * RTC_BKP_DR0, bytes 4-7 in RTC_BKP_DR1. DR2/DR3 hold the ESP32 version
- * record and are never touched here (issue #41-A).
+ * The struct is 8 bytes (DR0/DR1 only). The selector is an OPAQUE id: the switch
+ * below maps it to a named field, and the physical register follows from that
+ * field's byte offset inside the struct -- bytes 0-3 live in RTC_BKP_DR0, bytes
+ * 4-7 in RTC_BKP_DR1. The selector's numeric value is NOT an offset
+ * (BK_REGS_SELECT_DEV_OP_STAT is 1 for source compatibility although its field
+ * sits at byte 4), so never reimplement this as `(uint8_t *)&bu_regs + selector`:
+ * that writes byte 1 of magic_number in DR0 and forces a magic-mismatch re-init,
+ * wiping the update state and the boot accounting. DR2/DR3 hold the ESP32
+ * version record and are never touched here (issue #41-A).
  *
  * DR1 carries four independent byte fields, so a single-byte update always
  * rewrites the whole 32-bit word taken from the in-RAM shadow -- writing a

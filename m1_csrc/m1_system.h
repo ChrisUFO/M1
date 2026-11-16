@@ -124,15 +124,22 @@ typedef struct {
  * past DR0/DR1. */
 _Static_assert(sizeof(S_M1_BK_REGS_t) == 8, "BK regs must stay 8 bytes (DR0/DR1); DR2/DR3 are ESP-owned");
 
-/* Selectors are logical byte offsets inside S_M1_BK_REGS_t (see the map above);
- * startup_config_write()/startup_config_read() derive the physical register
- * from them, so byte indices >= 4 must not be added by hand-extending a
- * hard-coded DR0+1 write. */
+/* Selectors are OPAQUE ids, not byte offsets: each one is mapped in the switch
+ * of startup_config_write()/startup_config_read() to a named field of
+ * S_M1_BK_REGS_t, and the accessor then derives the physical register from that
+ * field's byte offset inside the struct (bytes 0-3 -> RTC_BKP_DR0, 4-7 ->
+ * RTC_BKP_DR1). A new field therefore needs a new selector plus its switch case,
+ * never a new numeric value and never a hand-computed DR0+n address.
+ *
+ * BK_REGS_SELECT_DEV_OP_STAT must stay 1 (not 4) for source compatibility with
+ * the legacy single-field accessor; do not "fix" it to the field's byte offset,
+ * and do not renumber the others, which are persisted-ABI-neutral but still
+ * referenced by name only. */
 typedef enum {
-	BK_REGS_SELECT_DEV_OP_STAT = 1,   /* byte 4 -> DR1, bits  7:0  */
-	BK_REGS_SELECT_BOOT_ATTEMPTS,     /* byte 5 -> DR1, bits 15:8  */
-	BK_REGS_SELECT_BOOT_FAULT_SIG,    /* byte 6 -> DR1, bits 23:16 */
-	BK_REGS_SELECT_SWAP_ATTEMPTS,     /* byte 7 -> DR1, bits 31:24 */
+	BK_REGS_SELECT_DEV_OP_STAT = 1,   /* 1 for source compat; field at byte 4 -> DR1[ 7: 0] */
+	BK_REGS_SELECT_BOOT_ATTEMPTS,     /* field at byte 5 -> DR1[15: 8] */
+	BK_REGS_SELECT_BOOT_FAULT_SIG,    /* field at byte 6 -> DR1[23:16] */
+	BK_REGS_SELECT_SWAP_ATTEMPTS,     /* field at byte 7 -> DR1[31:24] */
 	BK_REGS_SELECT_UNKNOWN
 } S_M1_BK_REGS_SELECT_t;
 
