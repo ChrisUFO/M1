@@ -64,9 +64,12 @@ prefix, so without that comparison it would ship.
 
 `./build.sh --release` writes `<artifact>_wCRC.manifest.txt` next to the
 binaries, and only after the [CRC emitter parity](#crc-emitter-parity) gate
-passes. A manifest left by an earlier run is removed as the release starts and
-the new one is written aside and renamed into place, so an aborted release never
-leaves a manifest beside freshly built (or previously built) binaries. Keys:
+passes. A manifest left by an earlier run is removed as the build starts — in
+plain mode too, because a plain build overwrites the `artifacts/` binaries but
+never writes a manifest, so a leftover one would describe bytes that are no
+longer there — and the new one is written aside and renamed into place, so an
+aborted build never leaves a manifest beside freshly built (or previously built)
+binaries. Keys:
 `binary`, `commit`, `dirty`, `branch`, `flags`, `source_date_epoch`,
 `source_date_utc`, `build_timestamp_utc`, `size_bytes`, `md5`, `sha256`,
 `flash_text`, `flash_data`, `ram_bss`. Hashing is portable: `md5sum` is

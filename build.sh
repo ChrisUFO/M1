@@ -49,13 +49,15 @@ if [ "$RELEASE_MODE" = "1" ] && [ "$GIT_DIRTY" = "1" ]; then
     exit 1
 fi
 
-if [ "$RELEASE_MODE" = "1" ]; then
-    # A manifest from an earlier release must never survive beside freshly built
-    # binaries: if this run aborts (parity gate, missing artifact, ...), the
-    # directory must not look like a completed release to someone who hands it
-    # off without reading the exit status.
-    rm -f "$MANIFEST"
-fi
+# A manifest from an earlier release must never survive beside freshly built
+# binaries: it still carries the previous release's sha256/md5/size/commit. This
+# applies to plain builds too -- they overwrite the artifacts/ binaries but never
+# write a manifest, so a leftover one would describe bytes that are no longer
+# there. Removing it before configure/build also covers aborts anywhere later
+# (compile, size/prefix assertions, parity gate): the directory must never look
+# like a completed release to someone who hands it off without reading the exit
+# status.
+rm -f "$MANIFEST"
 
 # Deterministic release metadata: derive SOURCE_DATE_EPOCH from the SOURCE
 # COMMIT's own committer timestamp (identical for a given commit on any machine
