@@ -68,6 +68,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Fork: `./build.sh --release` now runs the CRC emitter parity harness on the
+  image the release ships (`build/<artifact>.bin`) and refuses to write the
+  release manifest if it fails, so emitter equivalence and golden-table
+  integrity are gated by the only automated build path the repo has; plain
+  `./build.sh` builds skip it to keep local iteration fast (issue #40)
 - Fork: version namespace frozen to 0.9.0.0-UFO, single-sourced from
   `m1_csrc/m1_fw_update_bl.h` and derived into the CMake project name,
   `build.sh` artifact stem, the about-box/boot-banner label, and the

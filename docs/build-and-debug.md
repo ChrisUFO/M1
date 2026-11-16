@@ -56,7 +56,8 @@ outgrew the crop end would be silently truncated to exactly `0xFFC18`.
 ### Release manifest
 
 `./build.sh --release` writes `<artifact>_wCRC.manifest.txt` next to the
-binaries. Keys: `binary`, `commit`, `dirty`, `branch`, `flags`,
+binaries, and only after the [CRC emitter parity](#crc-emitter-parity) gate
+passes. Keys: `binary`, `commit`, `dirty`, `branch`, `flags`,
 `source_date_epoch`, `source_date_utc`, `build_timestamp_utc`, `size_bytes`,
 `md5`, `sha256`, `flash_text`, `flash_data`, `ram_bss`. Hashing is portable:
 `md5sum` is preferred with `md5 -q` as the macOS fallback, and `sha256sum` with
@@ -128,6 +129,14 @@ release path actually ships; the synthetic vectors only cover the content space.
 
 The script exits non-zero on any mismatch and prints a one-line
 `RESULT: PASS/FAIL` summary.
+
+`./build.sh --release` runs this harness on `build/<artifact>.bin` — the image
+that build just produced — before writing the release manifest, and aborts the
+release if any check fails. That is the only automated invocation the repository
+has (there is no CI), so a release always proves emitter equivalence and
+golden-table integrity on the artifact it ships. Plain `./build.sh` builds skip
+the harness deliberately: it generates four ~1 MiB images and would slow local
+iteration.
 
 `scripts/crc_parity_golden.txt` may only be re-baselined with
 `sh scripts/verify_crc_parity.sh --update-golden` on a host where `srec_cat` is

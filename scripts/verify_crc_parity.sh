@@ -64,7 +64,11 @@ fail() {
 }
 
 usage() {
-    sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+    # Print only the leading comment block: skip the shebang, strip the comment
+    # marker, and stop at the first non-comment line. A hard-coded line range
+    # silently leaked source code ("set -eu", assignments) into --help as soon
+    # as the header shrank, so derive the end from the block itself.
+    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
 }
 
 PYTHON=""

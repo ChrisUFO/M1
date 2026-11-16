@@ -173,6 +173,24 @@ if [ "$RELEASE_MODE" = "1" ]; then
     fi
     echo "Verified: embedded commit literal '$GIT_COMMIT' present in $ELF_FILE"
 
+    # Emitter parity gate (issue #40: "cross-platform build+vector test"): the
+    # byte-equivalence guarantee is only as fresh as its last run, and this
+    # repo has no CI workflow to run it. The release path is the only automated
+    # invocation there is, so gate it here -- both emitters must agree on the
+    # image this release ships, and the golden table must still match the
+    # generator. It runs against the real build output ($PLAIN_FILE, i.e.
+    # build/<artifact>.bin) before the manifest is written, so a manifest can
+    # only ever describe parity-verified artifacts. Plain developer builds skip
+    # this deliberately: it generates four ~1 MiB images and would slow every
+    # local iteration.
+    if ! sh "$SCRIPT_DIR/scripts/verify_crc_parity.sh" "$PLAIN_FILE"; then
+        echo "Error: CRC emitter parity harness failed -- refusing to write a release" >&2
+        echo "       manifest for unverified output. See the FAIL lines above: the" >&2
+        echo "       emitters, the golden table, or the shipped image disagree." >&2
+        exit 1
+    fi
+    echo "Verified: CRC emitter parity harness passed on $PLAIN_FILE"
+
     ARTIFACT_BIN="$OUTPUT_DIR/${ARTIFACT_STEM}_wCRC.bin"
 
     MD5_HASH=$(md5_of "$ARTIFACT_BIN")
