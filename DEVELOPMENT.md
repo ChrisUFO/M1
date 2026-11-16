@@ -68,6 +68,13 @@ not ours to churn, and warning noise there must not gate the build.
 `cmake/m1_01/CMakeLists.txt`. That is the entire procedure — the property
 and the target consume the same list and cannot drift apart.
 
+**Machine-check both directions before merging.** Forward (no vendor file
+gated): `ninja -C out/build/gcc-14_2_build-release -t commands | grep Werror`
+must list only `m1_csrc` compile lines. Reverse (no compiled app source
+ungated): `ninja -C out/build/gcc-14_2_build-release -t commands | grep m1_csrc | grep -v Werror`
+must be empty — an app source added to the build but missed by the gate
+shows up here.
+
 **Emergency escape hatch.** If a broken warning must be temporarily
 tolerated to unblock a release: keep the file in `M1_APP_SOURCES` and add a
 targeted `-Wno-error=<class>` to that one file's entry by splitting it out
