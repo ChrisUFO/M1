@@ -375,10 +375,8 @@ void gpio_usb_uart_bridge(void)
                     {
                         xStreamBufferReset(h_uart_rx_streambuf);
                     }
-                    if (h_usb_rx_streambuf != NULL)
-                    {
-                        xStreamBufferReset(h_usb_rx_streambuf);
-                    }
+                    // Host bytes still pending are accounted as unrecoverable loss.
+                    CDC_CLI_RxDiscardPendingBytes();
 
                     m1_logdb_deinit();
 

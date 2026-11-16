@@ -26,6 +26,7 @@
 #include "m1_log_debug.h"
 #include "m1_usb_cdc_msc.h"
 #include "m1_manager_protocol.h"   /* M1CP tee-and-gate seam */
+#include "m1_cdc_rx_stats.h"       /* CDC RX diagnostics accounting (#44-A) */
 
 /** @addtogroup STM32_USB_DEVICE_LIBRARY
   * @{
@@ -52,6 +53,15 @@ extern uint8_t DEBUG_esp32_reset_pin;
 
 __ALIGN_BEGIN static uint8_t usbRxBuffer[USB_RX_BUF_SIZE] __ALIGN_END;
 static volatile uint16_t usbRxBufIndex = 0;
+
+/* RX diagnostics for the stream-buffer path (#44, part A). Diagnostic only: no
+ * control flow, backpressure decision or buffer copy reads these values, and
+ * the RX data path behaves exactly as it did without them. Written in
+ * CDC_Receive_FS() (interrupt context), read by the CLI task, zeroed from the
+ * CLI task under a critical section.
+ * dropped_bytes and lost_bytes mean different things -- see
+ * m1_cdc_rx_stats.h. */
+static m1_cdc_rx_stats_t cdc_rx_stats;
 
 #define LOGCLI_RX_FIFO_SIZE 256U
 static uint8_t logcli_rx_fifo[LOGCLI_RX_FIFO_SIZE];
@@ -403,9 +413,12 @@ volatile uint32_t dbg_cdc_rx_last_mode = 0;
 static int8_t CDC_Receive_FS(uint8_t *Buf, uint32_t *Len)
 {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    size_t sentBytes;
+    size_t sentBytes = 0U;
     size_t freeSpace;
     size_t ReceivedBytesBuf;
+    size_t pendingBefore;
+    size_t appendedBytes = 0U;
+    size_t rejectedBytes = 0U;
 
     dbg_cdc_rx_total++;
     dbg_cdc_rx_last_len = *Len;
@@ -424,9 +437,11 @@ static int8_t CDC_Receive_FS(uint8_t *Buf, uint32_t *Len)
           return USBD_OK;
         }
         /* Input 64 bytes of data into usbRxBuffer */
+        pendingBefore = (size_t)usbRxBufIndex;   /* carry-over from earlier callbacks */
         if ((usbRxBufIndex + *Len) < USB_RX_BUF_SIZE)
         {
             memcpy(&usbRxBuffer[usbRxBufIndex], Buf, *Len);
+            appendedBytes = (size_t)(*Len);
             usbRxBufIndex += *Len;
 
             // debug-m1
@@ -434,10 +449,12 @@ static int8_t CDC_Receive_FS(uint8_t *Buf, uint32_t *Len)
         }
         else
         {
-            /* Handle usbRxBuffer overflow */
+            /* Handle usbRxBuffer overflow: these host bytes are lost before any
+             * send attempt (counted as unrecoverable loss below). */
             //printf("Overflow - CDC RX Buffer!\r\n");
             // debug-m1
             DEBUG_ovf_cnt++;
+            rejectedBytes = (size_t)(*Len);
         }
 
         /* Check for empty space in the stream buffer */
@@ -474,6 +491,19 @@ static int8_t CDC_Receive_FS(uint8_t *Buf, uint32_t *Len)
                 }
             }
         }
+
+        /* RX diagnostics (#44, part A): count what this callback could not hand
+         * to the stream buffer, separated into retryable refusals and
+         * unrecoverable loss, and track the worst occupancy seen. Pure
+         * arithmetic on counts (m1_cdc_rx_stats.h) -- no buffer access, no
+         * blocking call, no effect on the data path. */
+        m1_cdc_rx_stats_record(&cdc_rx_stats,
+                               m1_cdc_rx_refused_bytes(rejectedBytes,
+                                                       appendedBytes,
+                                                       sentBytes,
+                                                       pendingBefore),
+                               m1_cdc_rx_unrecoverable_bytes(rejectedBytes),
+                               (size_t)xStreamBufferBytesAvailable(h_usb_rx_streambuf));
 
         if (freeSpace == 0)
         {
@@ -549,6 +579,108 @@ static int8_t CDC_Receive_FS(uint8_t *Buf, uint32_t *Len)
     } //if ((m1_usbcdc_mode == CDC_MODE_VCP) || (m1_usbcdc_mode == CDC_MODE_ESP32))
 
     return (USBD_OK);
+}
+
+
+/*============================================================================*/
+/*
+ * USB CDC RX diagnostics accessors (issue #44, part A)
+ *
+ * These report the counters maintained by CDC_Receive_FS() for upstream's
+ * stream-buffer path (CDC_MODE_VCP / CDC_MODE_ESP32: UserRxBufferFS ->
+ * usbRxBuffer -> h_usb_rx_streambuf). Diagnostic only -- nothing in the RX
+ * path branches on them. The cumulative counters are safe to call from task
+ * context: each value is a single aligned 32-bit read of a `volatile` field.
+ * CDC_CLI_RxBufferedBytes() is the exception: it samples the stream buffer's
+ * head/tail pair and is a gauge, not an exact value.
+ *
+ * Kept under the legacy CDC_CLI_Rx* names so the CLI (and any future
+ * diagnostics) does not need a translation layer. The legacy fork counters of
+ * the same name measured true drops on the CDC_MODE_LOG_CLI branch; these
+ * observe the bridge path and separate retryable refusals from real loss.
+ */
+/*============================================================================*/
+
+/** Cumulative host bytes REFUSED AT ARRIVAL on the stream-buffer path: the
+ *  callback could not hand them to h_usb_rx_streambuf because it was full
+ *  (partially or wholly), plus bytes lost when the intermediate usbRxBuffer had
+ *  no room. This is back-pressure, NOT proven loss: bytes that stay queued in
+ *  usbRxBuffer are retried and delivered on a later drain (the overflow bytes
+ *  are the loss-only part, also counted by CDC_CLI_RxLostBytes()). Counted once
+ *  per byte, at arrival, so retried carry-over is never re-counted. Legacy name,
+ *  kept for API/CLI parity. Cleared by CDC_CLI_RxResetStats(). */
+uint32_t CDC_CLI_RxDroppedBytes(void)
+{
+    return cdc_rx_stats.dropped_bytes;
+}
+
+/** Cumulative host bytes that can never be delivered: bytes that did not fit
+ *  the intermediate usbRxBuffer (see CDC_Receive_FS()) plus bytes still pending
+ *  in h_usb_rx_streambuf when a bridge-mode exit emptied it
+ *  (CDC_CLI_RxDiscardPendingBytes()). This is the loss-only counter: it stays
+ *  at 0 while the bridge merely back-pressures. Cleared by
+ *  CDC_CLI_RxResetStats(). */
+uint32_t CDC_CLI_RxLostBytes(void)
+{
+    return cdc_rx_stats.lost_bytes;
+}
+
+/** Largest number of bytes observed waiting in h_usb_rx_streambuf (sampled
+ *  after each callback's send) since the last CDC_CLI_RxResetStats(). Monotonic
+ *  across drain cycles, so it shows the worst back-pressure episode seen; it
+ *  stays at that value until the next reset. Usable capacity is
+ *  RXSTREAMBUF_USB_SIZE - 1 bytes (FreeRTOS keeps one byte free to tell full
+ *  from empty, i.e. 2047). */
+uint32_t CDC_CLI_RxHighWatermark(void)
+{
+    return cdc_rx_stats.high_watermark;
+}
+
+/** Bytes pending in h_usb_rx_streambuf right now (0 when it does not exist,
+ *  i.e. before USB init). SAMPLED gauge, not exact: xStreamBufferBytesAvailable()
+ *  reads the volatile head/tail pair without a critical section, so a
+ *  concurrent drain can make it off by one burst. Never use it as a
+ *  synchronisation signal. */
+uint32_t CDC_CLI_RxBufferedBytes(void)
+{
+    if (h_usb_rx_streambuf == NULL)
+    {
+        return 0U;
+    }
+
+    return (uint32_t)xStreamBufferBytesAvailable(h_usb_rx_streambuf);
+}
+
+/** Zero the counters and the high watermark. Called from the CLI task, so the
+ *  update is wrapped in a critical section to stay atomic with respect to
+ *  CDC_Receive_FS(): the interrupt cannot resume between the stores and write a
+ *  pre-reset value back over the zeroed counter. */
+void CDC_CLI_RxResetStats(void)
+{
+    taskENTER_CRITICAL();
+    m1_cdc_rx_stats_reset(&cdc_rx_stats);
+    taskEXIT_CRITICAL();
+}
+
+/** Bridge-mode exit: whatever h_usb_rx_streambuf still holds is host data that
+ *  the consumer will never see, so account it as unrecoverable loss before
+ *  emptying the buffer. Task context only (a mode switch). The occupancy sample
+ *  and the counter update are atomic w.r.t. the RX interrupt; a packet that
+ *  arrives between the reset and the endpoint teardown is discarded uncounted,
+ *  so the reported figure is a lower bound for that last instant. */
+void CDC_CLI_RxDiscardPendingBytes(void)
+{
+    if (h_usb_rx_streambuf == NULL)
+    {
+        return;
+    }
+
+    taskENTER_CRITICAL();
+    m1_cdc_rx_stats_add_lost(&cdc_rx_stats,
+                             (uint32_t)xStreamBufferBytesAvailable(h_usb_rx_streambuf));
+    taskEXIT_CRITICAL();
+
+    (void)xStreamBufferReset(h_usb_rx_streambuf);
 }
 
 

@@ -520,7 +520,10 @@ void m1_logdb_deinit(void)
 
     /* clear global variable & buffer */
     xStreamBufferReset(h_uart_rx_streambuf);
-    xStreamBufferReset(h_usb_rx_streambuf);
+    /* Bytes still pending in the CDC bridge RX buffer will never reach the
+     * consumer: account them as unrecoverable loss, then empty the buffer
+     * (#44-A). */
+    CDC_CLI_RxDiscardPendingBytes();
 
     head_usartx_dma = 0;
     tail_usartx_dma = 0;

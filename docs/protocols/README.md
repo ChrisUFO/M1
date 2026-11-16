@@ -21,7 +21,7 @@
 | Sub-GHz Security+ 2.0 | Partial/code-defined | `m1_secplus_v2_decode.c`, engineering log | Supported subset and interoperability limits |
 | Sub-GHz raw capture/replay | Code-defined | `Sub_Ghz/`, storage code | On-disk schema, units, sample limits, migration |
 | Infrared capture/replay | Code-defined plus fixtures | `Infrared/`, 112 `IR-Data` samples | Supported matrix and stored representation |
-| USB CDC | Code-defined | `USB/Class/CDC/`, `m1_usb_cdc_msc.c` | Host behavior, baud semantics, buffering, errors |
+| USB CDC | Code-defined | `USB/Class/CDC/`, `m1_usb_cdc_msc.c`; [RX diagnostics](usb-cdc.md) | Host behavior, baud semantics, buffering, errors |
 | USB MSC | Code-defined | `USB/Class/MSC/`, storage code | Media ownership, eject/removal, corruption recovery |
 | CLI over UART/USB | Code-defined | `m1_cli.c`, `cli_app.c` | Command reference, permissions, output/error contract |
 | External GPIO | Spreadsheet-defined | external GPIO ODS, `m1_gpio.*` | Electrical limits and application-level behavior |
