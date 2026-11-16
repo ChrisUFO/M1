@@ -77,6 +77,10 @@ volatile uint32_t dbg_cli_newline = 0;
 
 BaseType_t cmd_clearScreen(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
 BaseType_t cmd_clearScreen_help(void);
+BaseType_t cmd_cdcstats(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_cdcstats_help(void);
+BaseType_t cmd_cdcreset(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_cdcreset_help(void);
 void vRegisterCLICommands(void);
 void cliWrite(const char *str);
 void handleNewline(const char *const pcInputString, char *cOutputBuffer, uint8_t *cInputIndex);
@@ -97,6 +101,20 @@ const CLI_Command_Definition_t xCommandList[] = {
         .pxCommandInterpreter = cmd_m1_mtest, /* The function to run. */
 		.pxCommandHelper = cmd_m1_mtest_help, /* Help for the function. */
         .cExpectedNumberOfParameters = -1 /* variable parameters are expected. */
+    },
+    {
+        .pcCommand = "cdcstats", /* The command string to type. */
+        .pcHelpString = "cdcstats:\r\n Shows USB CDC RX diagnostics (dropped bytes, high watermark, buffered now)\r\n\r\n",
+        .pxCommandInterpreter = cmd_cdcstats, /* The function to run. */
+        .pxCommandHelper = cmd_cdcstats_help, /* Help for the function. */
+        .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
+    },
+    {
+        .pcCommand = "cdcreset", /* The command string to type. */
+        .pcHelpString = "cdcreset:\r\n Resets USB CDC RX diagnostic counters\r\n\r\n",
+        .pxCommandInterpreter = cmd_cdcreset, /* The function to run. */
+        .pxCommandHelper = cmd_cdcreset_help, /* Help for the function. */
+        .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
     },
     {
         .pcCommand = NULL /* simply used as delimeter for end of array*/
@@ -214,6 +232,77 @@ BaseType_t cmd_clearScreen_help(void)
 {
     return pdFALSE;
 } // BaseType_t cmd_clearScreen_help(void)
+
+
+
+/*============================================================================*/
+/*
+ * CLI command: USB CDC RX diagnostics (issue #44, part A)
+ *
+ * Reports the counters maintained on upstream's CDC stream-buffer RX path
+ * (VCP / ESP32 bridge modes). Read-only: `cdcreset` clears them.
+ */
+/*============================================================================*/
+BaseType_t cmd_cdcstats(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                   "USB CLI RX Diagnostics:\r\n"
+                   "  Dropped bytes: %lu\r\n"
+                   "  High watermark: %lu bytes\r\n"
+                   "  Buffered now: %lu bytes\r\n",
+                   (unsigned long)CDC_CLI_RxDroppedBytes(),
+                   (unsigned long)CDC_CLI_RxHighWatermark(),
+                   (unsigned long)CDC_CLI_RxBufferedBytes());
+    return pdFALSE;
+} // BaseType_t cmd_cdcstats(...)
+
+
+
+/*============================================================================*/
+/*
+ * Help for the CLI command: USB CDC RX diagnostics
+ *
+ */
+/*============================================================================*/
+BaseType_t cmd_cdcstats_help(void)
+{
+    return pdFALSE;
+} // BaseType_t cmd_cdcstats_help(void)
+
+
+
+/*============================================================================*/
+/*
+ * CLI command: reset the USB CDC RX diagnostic counters
+ *
+ */
+/*============================================================================*/
+BaseType_t cmd_cdcreset(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    CDC_CLI_RxResetStats();
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                   "USB CLI RX diagnostics reset.\r\n");
+    return pdFALSE;
+} // BaseType_t cmd_cdcreset(...)
+
+
+
+/*============================================================================*/
+/*
+ * Help for the CLI command: reset the USB CDC RX diagnostic counters
+ *
+ */
+/*============================================================================*/
+BaseType_t cmd_cdcreset_help(void)
+{
+    return pdFALSE;
+} // BaseType_t cmd_cdcreset_help(void)
 
 
 
