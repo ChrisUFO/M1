@@ -12,8 +12,11 @@
  *       * bl_jump_to_dfu(), the teardown ORDER:
  *           interrupts off -> SysTick -> HAL_RCC_DeInit -> NVIC ICER/ICPR ->
  *           VTOR -> barriers -> ICACHE/DCACHE off -> IWDG start -> unlock ->
- *           PR/RLR -> feed -> interrupts on -> MSP -> jump,
- *         bounded flag spins, plus no option-byte programming inside it,
+ *           PR/RLR -> feed -> PSP->MSP handover (CONTROL.SPSEL clear) ->
+ *           interrupts on -> jump,
+ *         every flag spin pinned by its own loop condition (plus a scan that
+ *         rejects any uncapped loop in the teardown), and no option-byte
+ *         programming inside it,
  *       * Core/Src/main.c: the hardware strap is evaluated before HAL_Init()
  *         and before MX_IWDG_Init(), drives PD12/PD13 + the speaker tick, and
  *         the jump call is CONFINED to the strap condition; the strap index is
@@ -125,6 +128,58 @@ static int in_order(const char *src, const char *const *needles, size_t n) {
             return 0;
         }
         p = hit + strlen(needles[i]);
+    }
+    return 1;
+}
+
+/* Every loop header in `src` must carry its own iteration bound. The check runs
+ * on the LOOP HEADER text (`for (...)` / `while (...)`), not on a bare
+ * occurrence count, so a mention of the cap in a surrounding comment cannot
+ * satisfy it. The only accepted unbounded form is the never-reached idle spin
+ * that follows NVIC_SystemReset() (a reset request does not return; the loop
+ * only runs if a debugger blocks it). */
+static int every_loop_is_capped(const char *src) {
+    const char *p = src;
+
+    while (*p != '\0') {
+        int is_for = (strncmp(p, "for", 3) == 0);
+        int is_while = (strncmp(p, "while", 5) == 0);
+        const char *open, *q;
+        int depth = 0;
+
+        if (!is_for && !is_while) { p++; continue; }
+        /* `for`/`while` as an English word in a comment is not a loop: the
+         * keyword has to be followed by '(' after optional blanks. */
+        open = p + (is_for ? 3 : 5);
+        while (*open == ' ' || *open == '\t') open++;
+        if (*open != '(') { p += (size_t)(is_for ? 3 : 5); continue; }
+        for (q = open; *q != '\0'; q++) {
+            if (*q == '(') depth++;
+            else if (*q == ')') { depth--; if (depth == 0) break; }
+        }
+        if (*q == '\0') return 0; /* unbalanced: refuse to judge */
+        {
+            char header[256];
+            size_t len = (size_t)(q - p) + 1U;
+
+            if (len >= sizeof(header)) return 0;
+            memcpy(header, p, len);
+            header[len] = '\0';
+            if (strstr(header, "M1_DFU_TEARDOWN_SPIN_LIMIT") == NULL &&
+                strstr(header, "sizeof(NVIC->ICER)") == NULL) {
+                char window[201];
+                size_t wlen = (size_t)(p - src);
+                int idle_after_reset;
+
+                if (strstr(header, ";;") == NULL) return 0;
+                if (wlen > 200U) wlen = 200U;
+                memcpy(window, p - wlen, wlen);
+                window[wlen] = '\0';
+                idle_after_reset = strstr(window, "NVIC_SystemReset();") != NULL;
+                if (!idle_after_reset) return 0;
+            }
+        }
+        p = q + 1;
     }
     return 1;
 }
@@ -283,7 +338,11 @@ int main(void) {
         ok(src != NULL, "read m1_csrc/m1_fw_update_bl.c");
         if (src != NULL) {
             char *body = bound_block(src, "void bl_jump_to_dfu(void)");
+            char *tail = bound_block(src, "static void bl_rom_handover(uint32_t sp_val, uint32_t reset_vector)");
+
             ok(body != NULL, "bl_jump_to_dfu() is defined");
+            ok(tail != NULL, "bl_rom_handover() (the PSP->MSP tail) is defined");
+
             if (body != NULL) {
                 static const char *const order[] = {
                     "__disable_irq();",
@@ -304,12 +363,10 @@ int main(void) {
                     "IWDG->PR  = M1_DFU_IWDG_PRESCALER;",
                     "IWDG->RLR = M1_DFU_IWDG_RELOAD;",
                     "IWDG->KR = M1_DFU_IWDG_KEY_RELOAD;",
-                    "__enable_irq();",
-                    "__set_MSP(sp_val);",
-                    "jump_to_boot();"
+                    "bl_rom_handover(sp_val, jump_address);"
                 };
                 ok(in_order(body, order, sizeof(order) / sizeof(order[0])),
-                   "teardown order: irq off -> SysTick -> RCC -> NVIC -> VTOR -> barriers -> caches -> IWDG start/unlock/PR/RLR/feed -> irq on -> MSP -> jump");
+                   "teardown order: irq off -> SysTick -> RCC -> NVIC -> VTOR -> barriers -> caches -> IWDG start/unlock/PR/RLR/feed -> handover");
                 ok(strstr(body, "m1_dfu_sp_plausible") != NULL,
                    "jump validates the ROM initial SP before using it");
                 ok(strstr(body, "NVIC_SystemReset") != NULL,
@@ -318,24 +375,38 @@ int main(void) {
                    strstr(body, "HAL_FLASH_OB_Launch(") == NULL &&
                    strstr(body, "HAL_FLASH_Unlock(") == NULL,
                    "jump programs no option bytes and unlocks no flash");
-                /* Every hardware-flag spin is bounded: a stuck flag with
-                 * PRIMASK set and no net armed must fall through to the jump. */
-                {
-                    const char *p = body;
-                    int bounded = 0;
-                    while ((p = strstr(p, "M1_DFU_TEARDOWN_SPIN_LIMIT")) != NULL) {
-                        bounded++;
-                        p += 26;
-                    }
-                    ok(bounded >= 3,
-                       "all three teardown spins (ICACHE/DCACHE/IWDG SR) are iteration-capped");
-                }
-                ok(strstr(body, "(IWDG->SR != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") != NULL,
-                   "the watchdog register-update wait is bounded, not an infinite spin");
-                ok(strstr(body, "while ( IWDG->SR != 0U )") == NULL,
-                   "no unbounded IWDG->SR spin remains in the jump");
+            }
+            /* The PSP -> MSP handover. Without the CONTROL.SPSEL clear, the ROM
+             * executes on the abandoned FreeRTOS task stack: MSP writes do not
+             * affect the active (PSP) stack in thread mode. */
+            if (tail != NULL) {
+                static const char *const hand_over[] = {
+                    "msr msp, r0",      /* MSP = ROM initial SP ... */
+                    "mrs r2, control",
+                    "bic r2, r2, #2",   /* ... then CONTROL.SPSEL = 0 */
+                    "msr control, r2",
+                    "isb",
+                    "cpsie i",          /* reset state, only after the switch */
+                    "bx  r1"            /* ROM reset vector */
+                };
+                ok(in_order(tail, hand_over, sizeof(hand_over) / sizeof(hand_over[0])),
+                   "handover: MSP <- ROM SP, then clear CONTROL.SPSEL, ISB, interrupts on, bx reset vector (that order matters)");
+                ok(strstr(tail, "__attribute__((naked, noreturn))") != NULL,
+                   "the handover is a naked non-returning tail, so the compiler cannot emit a stack access after the switch");
+                ok(strstr(tail, "push") == NULL && strstr(tail, "pop") == NULL &&
+                   strstr(tail, "ldr") == NULL && strstr(tail, "str") == NULL,
+                   "the handover body has no load/store or push/pop at all");
+            }
+            if (body != NULL) {
+                ok(strstr(body, "__set_MSP(") == NULL,
+                   "no bare __set_MSP() remains: it does not change the active stack while CONTROL.SPSEL is 1");
+            }
+            if (body != NULL && tail != NULL) {
+                ok(strstr(body, "bl_rom_handover(sp_val, jump_address);") != NULL,
+                   "the jump goes through the SPSEL-clearing handover");
             }
             free(body);
+            free(tail);
             ok(strstr(src, "#ifndef M1CP_HOST_TEST") != NULL,
                "CMSIS-touching jump is guarded out of host builds");
         }

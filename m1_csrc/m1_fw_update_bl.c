@@ -728,6 +728,63 @@ void fw_gui_progress_update(size_t remainder)
 
 
 
+#ifndef M1CP_HOST_TEST
+
+/*============================================================================*/
+/* PSP -> MSP handover into the ST ROM, and the jump.
+ *
+ * FreeRTOS runs every task on PSP: the CM33 port sets CONTROL.SPSEL = 1 in
+ * thread mode and fences each task with PSPLIM (see the port's portasm.c).
+ * __set_MSP() is a plain MSR MSP, so from a task it only writes a register the
+ * executing context does not use -- the ROM reset vector would then run on the
+ * abandoned task stack instead of the ROM initial SP that step 1 just
+ * sanity-checked, and the first stack growth past the stale PSPLIM faults with
+ * no handler in place. Only the pre-scheduler strap route (main(), before
+ * osKernelStart) is already on MSP, which is why the legacy fork's plain
+ * __set_MSP() was never wrong: it never jumped from a task.
+ *
+ * Clearing CONTROL.SPSEL makes MSP the active stack INSTANTLY, so from that
+ * write onwards every stack access -- a spilled local, a pushed return frame --
+ * would touch a frame that no longer belongs to this context: undefined
+ * behaviour, and on the way into a bootloader, a corrupt handover. The switch,
+ * the MSP load and the branch therefore have to be one register-only sequence,
+ * which is why this is a naked tail:
+ *
+ *   - r0/r1 hold sp_val and the reset vector from function entry (AAPCS), and
+ *     nothing here pushes, pops or spills before or after the CONTROL write;
+ *   - MSP is loaded BEFORE SPSEL is cleared, so the switch lands directly on
+ *     the ROM's own stack rather than on a half-built one (the opposite order
+ *     would leave SP on the application's MSP for the width of the write);
+ *   - ISB orders the CONTROL write against what follows (the write is
+ *     self-synchronising for the next instruction on CM33, but the next
+ *     instruction here is a branch, and the barrier removes any doubt);
+ *   - PRIMASK is cleared here rather than in the C body: the ROM reset handler
+ *     expects the hardware-reset state (interrupts enabled) and enumerates over
+ *     USB on interrupts, and doing it here means no interrupt can ever be taken
+ *     with SPSEL still 1 and MSP still the application's. Step 6 has disabled
+ *     and un-pended every NVIC line and step 3 removed the pended core
+ *     exceptions, so there is no enabled source left that could take one in the
+ *     single-instruction window before the branch.
+ *
+ * The shipped ELF was disassembled to confirm there is no load/store between
+ * the CONTROL write and the bx; tools/m1cp_host_test pins the seam in source. */
+static void bl_rom_handover(uint32_t sp_val, uint32_t reset_vector) __attribute__((naked, noreturn));
+static void bl_rom_handover(uint32_t sp_val, uint32_t reset_vector)
+{
+	(void)sp_val;       /* lives in r0 from here to the bx (see above) */
+	(void)reset_vector; /* lives in r1 */
+
+	__asm volatile (
+		"msr msp, r0        \n\t" /* ROM initial SP, not yet the active stack */
+		"mrs r2, control    \n\t"
+		"bic r2, r2, #2     \n\t" /* CONTROL.SPSEL = 0: thread mode uses MSP */
+		"msr control, r2    \n\t"
+		"isb                \n\t"
+		"cpsie i            \n\t" /* the ROM expects the reset state */
+		"bx  r1             \n\t" /* ROM reset vector, system memory */
+	);
+} // static void bl_rom_handover(...)
+
 /*============================================================================*/
 /**
   * @brief  Robust, NON-RETURNING jump to the STM32H573 system-memory (ROM) DFU
@@ -761,7 +818,12 @@ void fw_gui_progress_update(size_t remainder)
   *      MX_IWDG_Init(): a stopped IWDG has its LSI off, so PR/RLR update flags
   *      may never arrive (or the writes are dropped and 0xCCCC starts the
   *      counter at its reset defaults) -- see stm32h5xx_hal_iwdg.c.
-  *   9. __enable_irq(), MSP = ROM initial SP, jump to the ROM reset vector.
+  *  10. Thread-mode stack back to MSP with the ROM's own initial SP, interrupts
+  *      re-enabled, jump to the ROM reset vector. That last step is
+  *      register-only on purpose: clearing CONTROL.SPSEL changes the stack the
+  *      executing context uses, so any C running after it would be reading and
+  *      writing a frame that no longer belongs to this context. See
+  *      bl_rom_handover().
   *
   * Every hardware-flag spin in this function is bounded by
   * M1_DFU_TEARDOWN_SPIN_LIMIT and falls through to the jump: from step 2 to
@@ -779,12 +841,10 @@ void fw_gui_progress_update(size_t remainder)
   * compile this translation unit (see the header prototype's note).
   */
 /*============================================================================*/
-#ifndef M1CP_HOST_TEST
 void bl_jump_to_dfu(void)
 {
 	uint32_t sp_val;
 	uint32_t jump_address;
-	void (*jump_to_boot)(void);
 	uint32_t i;
 
 	/* 1. Boot-vector sanity: initial SP must look like H5 SRAM. */
@@ -818,7 +878,6 @@ void bl_jump_to_dfu(void)
 
 	/* 7. Barriers, then caches off (BootROM entry is unsafe with caches on). */
 	jump_address = *(volatile const uint32_t *)(uintptr_t)(M1_SYSTEM_MEMORY_BASE + 4U);
-	jump_to_boot = (void (*)(void))jump_address;
 
 	__DSB();
 	__ISB();
@@ -858,16 +917,11 @@ void bl_jump_to_dfu(void)
 	}
 	IWDG->KR = M1_DFU_IWDG_KEY_RELOAD;
 
-	/* 9. The ROM bootloader enumerates over USB on interrupts: re-enable them,
-	 *    take the ROM's stack pointer and jump to its reset vector. */
-	__enable_irq();
-
-	__set_MSP(sp_val);
-	jump_to_boot();
-
-	while (1)
-	{
-		__NOP();
-	}
+	/* 10. Take the ROM's stack pointer, switch the thread-mode stack back to
+	 *     MSP, re-enable interrupts (the ROM enumerates over USB on them) and
+	 *     branch to its reset vector. The three must be one register-only
+	 *     sequence -- see bl_rom_handover() for the PSP->MSP trap. It does not
+	 *     return, so there is deliberately no fallback loop after it. */
+	bl_rom_handover(sp_val, jump_address);
 } // void bl_jump_to_dfu(void)
 #endif /* M1CP_HOST_TEST */

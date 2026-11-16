@@ -163,7 +163,12 @@ void bl_swap_banks(void);
  *
  *   interrupts off -> SysTick -> RCC back to HSI (HAL_RCC_DeInit) -> NVIC
  *   ICER/ICPR -> VTOR = system memory -> DSB/ISB -> ICACHE/DCACHE off ->
- *   32 s IWDG net -> interrupts on -> MSP -> jump
+ *   32 s IWDG net -> CONTROL.SPSEL cleared with MSP = ROM initial SP ->
+ *   interrupts on -> jump to the ROM reset vector
+ *
+ * The CONTROL.SPSEL step is not cosmetic: from a FreeRTOS task the thread
+ * stack is PSP, so a bare __set_MSP() would leave the ROM running on the
+ * abandoned task stack.
  *
  * No option bytes are programmed here (the legacy boot-time IWDG option-byte
  * rewrite is deliberately not ported; see startup_iwdg_option_byte_check()).
