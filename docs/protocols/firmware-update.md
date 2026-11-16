@@ -259,8 +259,11 @@ longer boots far enough to run the application's recovery screen.
 
 On a strap hit the unit:
 
-1. gives a speaker tick (SPK_CTRL = PC7 driven high ~100 ms, then low),
-2. lights PD12 and PD13,
+1. gives a speaker tick (SPK_CTRL = PC7 driven high ~23 ms -- the emitted loop
+   is 300 000 iterations at 64 MHz -- then low),
+2. drives PD12/PD13 high: these are **user-owned external connector pins 6-7**
+   (`docs/hardware.md`, also the GPIO menu's "Pin PD12"/"Pin PD13" via
+   `m1_ext_gpio[]`), **not** dedicated DFU LEDs,
 3. calls `bl_jump_to_dfu()`.
 
 The strap decision is the pure `m1_dfu_strap_active()` (`m1_dfu_entry.h`),
@@ -289,13 +292,19 @@ loop. Existing enum values keep their persisted numbers
 ### 3. Recovery-screen offer
 
 When the boot CRC validation fails, `startup_boot_recovery_hook()`
-(`m1_system.c`) shows `OK=USB DFU 5s` under the `FW CORRUPT!` banner and offers
-DFU entry for a **bounded** window:
+(`m1_system.c`) shows `FW CORRUPT!` and `OK=USB DFU 5s` **together in one
+screen** (`startup_recovery_offer_display()`, one `u8g2` page, so the
+diagnostic line is not cleared by drawing the offer) and offers DFU entry for a
+**bounded** window:
 
-- the decision each poll is the pure `m1_dfu_recovery_action()`
-  (`m1_dfu_entry.h`): a deliberate OK press (~100 ms, i.e. two consecutive
-  50 ms polls, so one noisy sample cannot trigger it) selects DFU, and once the
-  5 s window has elapsed the helper can never return "keep waiting";
+- the decision each poll is the pure `m1_dfu_recovery_poll()`
+  (`m1_dfu_entry.h`). Acceptance is **edge-triggered**: the key level is sampled
+  when the offer opens and a press only counts after a released -> pressed
+  transition, so a deliberate OK press (~100 ms, i.e. two consecutive 50 ms
+  polls, so one noisy sample cannot trigger it) selects DFU while a held,
+  shorted or stuck key never does. A press that lands on the last poll of the
+  window is still honoured, and once the 5 s window has elapsed the helper can
+  never return "keep waiting";
 - the poll loop kicks the IWDG (`m1_wdt_kick()`, documented for long bounded
   operations) because 5 s exceeds the ~4 s application watchdog period;
 - a press calls `firmware_update_enter_usb_dfu()` (recorded request + reset);
@@ -303,9 +312,12 @@ DFU entry for a **bounded** window:
   behaviour resumes (the normal UI stays reachable), with the choice logged.
 
 So a flat battery or a stuck key can delay a failed boot by at most the window
-plus one poll interval -- never hang it -- and a failing image still cannot
+plus one poll interval -- never hang it, and never cycle it into DFU: a stuck
+OK key falls through at 5 s every time -- and a failing image still cannot
 silently present itself as healthy: the banner is drawn and the failure is
-persisted in `boot_attempts` / `boot_fault_signature`.
+persisted in `boot_attempts` / `boot_fault_signature`. PD12/PD13 (external
+connector pins 6-7) are driven only at the moment of ENTER, on the way into the
+reset, so offering or timing out never leaves an external circuit asserted.
 
 ### Teardown order
 
@@ -318,12 +330,26 @@ in `tools/m1cp_host_test/test_m1cp_dfu.c`):
 4. `HAL_RCC_DeInit()` -- application clock tree down to HSI, PLLs off,
 5. `NVIC->ICER`/`NVIC->ICPR` cleared for every interrupt,
 6. `SCB->VTOR = M1_SYSTEM_MEMORY_BASE`,
-7. `__DSB()` / `__ISB()`, then ICACHE and DCACHE disabled with busy-wait
-   (BootROM entry with caches enabled can fail or hang silently on H5),
+7. `__DSB()` / `__ISB()`, then ICACHE and DCACHE disabled with a **bounded**
+   busy-wait (BootROM entry with caches enabled can fail or hang silently on
+   H5),
 8. 32 s IWDG safety net (prescaler /256, reload 4095 -> 32.768 s at the
-   nominal 32 kHz LSI), register update awaited, fed, started,
+   nominal 32 kHz LSI). The sequence is **start-then-configure** --
+   `KR=0xCCCC` (start), `KR=0x5555` (unlock), `PR`, `RLR`, bounded wait for the
+   register update (`IWDG->SR`), `KR=0xAAAA` (feed) -- matching
+   `stm32h5xx_hal_iwdg.c`. On the cold-boot strap route the IWDG/LSI is still
+   stopped (this runs before `MX_IWDG_Init()`), so configuring first would leave
+   the update flags waiting on LSI cycles that never come, or drop the writes and
+   start at the reset-default ~0.5 s period,
 9. `__enable_irq()` (the ROM bootloader enumerates over USB on interrupts),
    `__set_MSP(rom_sp)`, jump to the ROM reset vector.
+
+Every hardware-flag spin in steps 7-8 (`IWDG->SR`, `ICACHE->SR.BUSYF`,
+`DCACHE1->SR.BUSYF`) is capped at a fixed iteration count
+(`M1_DFU_TEARDOWN_SPIN_LIMIT`) and falls through to the jump. Between step 2 and
+step 8 the unit runs with interrupts disabled and **no** watchdog net, so an
+unbounded wait on a stuck flag would be a hang that only removing power clears;
+falling through leaves the ROM either enumerating or the unit resetting.
 
 The legacy fork did not call `HAL_RCC_DeInit()`; it is included here because
 the issue #41 acceptance criterion requires the application clock tree to be
@@ -338,14 +364,16 @@ read-only with respect to option bytes.
 None of this is executable in CI. It is tracked as the issue #41 hardware gate
 (milestone "Post-merge stabilization"):
 
-1. **Strap entry**: hold UP at power-on -> speaker tick, PD12/PD13 lit, the ROM
-   DFU enumerates (`dfu-util -l` / STM32CubeProgrammer).
+1. **Strap entry**: hold UP at power-on -> speaker tick (~23 ms), PD12/PD13
+   (external connector pins 6-7) driven high, the ROM DFU enumerates
+   (`dfu-util -l` / STM32CubeProgrammer).
 2. **Strap release**: without the strap the unit boots the application.
 3. **Software request**: `dfu` -> device resets -> ROM DFU enumerates.
 4. **Single-shot**: power-cycle during/after the ROM session -> the unit boots
    the application, not back into DFU.
 5. **Watchdog net**: with no USB host attached, the ROM session is not cut off
-   before ~30 s, and an abandoned session recovers on its own afterwards.
+   before ~30 s (the programmed net is 32.768 s, LSI/256 with reload 4095), and
+   an abandoned session recovers on its own afterwards.
 6. **Teardown**: after the jump no application interrupt fires; SysTick/VTOR
    point into system memory; ICACHE/DCACHE show disabled.
 7. **Corrupt bank**: flash an image with one flipped byte -> `FW CORRUPT!` +

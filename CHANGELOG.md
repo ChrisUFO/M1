@@ -22,7 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and stop the boot at a visible `FW CORRUPT!` banner with a seam for DFU
   entry. The banner is diagnostic, not containment: the unvalidated image is
   not prevented from running and the normal UI is one key press away; no
-  automatic recovery action runs until #41-B fills the seam. A validating boot
+  automatic recovery action ran until #41-B filled that seam (the bounded DFU
+  offer below). A validating boot
   clears the accounting. `S_M1_BK_REGS_t`
   now exposes those fields plus `swap_attempts` inside its existing 3 reserved
   bytes (still exactly 8 bytes = DR0/DR1, statically asserted; DR2/DR3 stay
@@ -38,27 +39,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the DFU half) — the fork's ROM-bootloader jump
   (`bl_jump_to_dfu()`, `m1_fw_update_bl.c`) with its full teardown order
   (interrupts off, SysTick, `HAL_RCC_DeInit` back to HSI, NVIC ICER/ICPR,
-  `SCB->VTOR` = system memory, DSB/ISB, ICACHE/DCACHE off with busy-wait), a
-  32.768 s IWDG safety net (prescaler /256, reload 4095) so the ROM can
-  enumerate instead of being reset by the ~4 s application watchdog, then
-  interrupts back on, MSP and jump. Three entry routes, all ending in that one
+  `SCB->VTOR` = system memory, DSB/ISB, ICACHE/DCACHE off), a 32.768 s IWDG
+  safety net (LSI/256 -- `IWDG_PR` 6, divider derived from the register
+  encoding -- with reload 4095) so the ROM can enumerate instead of being reset
+  by the ~4 s application watchdog, then interrupts back on, MSP and jump. The
+  net is armed start-then-configure (`0xCCCC` -> `0x5555` -> `PR`/`RLR` ->
+  `IWDG->SR` wait -> `0xAAAA`, the HAL's own order) so it is guaranteed on the
+  cold-boot strap route, where the IWDG/LSI is still stopped because the jump
+  runs before `MX_IWDG_Init()`; every hardware-flag wait in the teardown
+  (`IWDG->SR`, `ICACHE`/`DCACHE1` `BUSYF`) is iteration-capped and falls
+  through to the jump, so a stuck flag cannot hang the unit with interrupts
+  disabled and no net armed. Three entry routes, all ending in that one
   non-returning function: the PE11 (UP button) hardware strap sampled with raw
   registers in `Core/Src/main.c` before `HAL_Init()`/`MX_IWDG_Init()` (speaker
-  tick on PC7, PD12/PD13 indication), a persisted software request
+  tick on PC7, ~23 ms; PD12/PD13 driven high -- user-owned external connector
+  pins 6-7, not LEDs), a persisted software request
   (`DEV_OP_STATUS_USB_DFU_REQUEST`, appended before `UNKNOWN` so existing
   values keep their numbers; written by the new public
   `firmware_update_enter_usb_dfu()` which the `dfu` CLI command will use, and
   honoured as the first op-status branch and cleared before the jump so it is
   single-shot and cannot create a DFU boot loop), and a bounded recovery-screen
-  offer (`OK=USB DFU 5s`) on a failed boot CRC validation that kicks the IWDG
-  inside its window and falls back to the existing `FW CORRUPT!` banner
-  behaviour on timeout — a flat battery or stuck key can delay a failed boot,
-  never hang it. The legacy boot-time IWDG option-byte rewrite is deliberately
-  not ported: no DFU entry path programs option bytes. Decisions live in the
+  offer (`OK=USB DFU 5s`, drawn in the same screen as `FW CORRUPT!`) on a
+  failed boot CRC validation. OK acceptance there is edge-triggered (the level
+  at offer start seeds a released->pressed latch), so a flat battery or a
+  stuck key can only delay a failed boot, never hang it and never cycle it into
+  DFU; the poll loop kicks the IWDG inside the 5 s window and falls back to the
+  existing banner behaviour on timeout. ROM cost of the unit: **+1720 B flash /
+  +/-0 B RAM** (text 713884 -> 715604 B, data/bss unchanged; measured with
+  `arm-none-eabi-size` on a clean `main` @ `8033236` build and this tree, same
+  toolchain). The legacy boot-time IWDG option-byte rewrite is deliberately not
+  ported: no DFU entry path programs option bytes. Decisions live in the
   host-testable `m1_csrc/m1_dfu_entry.h`; the new `test_m1cp_dfu` host target
-  covers strap polarity, SP sanity, watchdog arithmetic/keys, the
-  request→recognised→cleared transition, the bounded recovery policy and the
-  teardown ORDER as a source seam. On-device DFU enumeration/rollback
+  covers strap polarity, the IWDG register encoding and timeout, SP sanity, the
+  request raise/consume transition, the edge-triggered bounded recovery policy
+  (including the stuck-key case), the banner+offer screen and the teardown
+  ORDER/confinement source seams. On-device DFU enumeration/rollback
   demonstration is deferred to the issue #41 hardware gate (milestone
   "Post-merge stabilization")
 - Fork: CRC emitter parity harness (issue #40) — `scripts/verify_crc_parity.sh`
