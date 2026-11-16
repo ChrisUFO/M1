@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: Sub-GHz Rx DMA deferred-context ingestion ported onto the adopted
+  base (issue #52, closes the #22/#26/#27 stability carry from d3a0208) —
+  GPDMA1 Channel 3 double-buffered RAW record capture (TIM1_CH1 request)
+  replaces the per-edge TIM1_CC ISR while recording: the DMA ISR only
+  queues completed half/full blocks and notifies the record task
+  (deferred RTOS context switching preserved), with task-side pulse-delta
+  processing, D-Cache invalidation, throttle/drop/half/total counters and
+  restart-from-ISR plumbing; the scanner keeps the per-edge path. Also
+  re-lands the USART1 ISR notify-value packing fix. The fork-base
+  validation record is re-landed explicitly stale-marked
+  (`documentation/stability_phase5_validation.md` — hardware re-validation
+  on this base pending) with the carried/adapted/superseded port-notes
+  accounting
 - Fork: scoped warning hygiene restored on the adopted base (issue #39) —
   the genuine warning fixes embedded in the dropped zero-warning restyle are
   recovered from the merge ledger (`recovered-warning-fix` tags, 34 entries)
