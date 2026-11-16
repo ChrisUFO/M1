@@ -113,6 +113,56 @@ The implementation performs the following high-level sequence:
 The exact error enumeration is `S_M1_M1_FW_CODES_t` in
 `m1_fw_update_bl.h`.
 
+## Canonical image size (update intake)
+
+Update intake accepts exactly one image size: `0xFFC18` bytes (`1047576`) — the
+`0xFFC14`-byte signed span above followed by its 4-byte CRC word. That is the
+only shape the build's CRC emitter produces (`<artifact>_wCRC.bin`) and the only
+span the boot failsafe validates, so the update path and the boot check cannot
+disagree about what a valid image is:
+
+- **SD-card path** (`m1_fw_update.c`): any other size — empty, the plain
+  `0xFFC14` image without its CRC word, a foreign or crafted `.bin`, anything
+  longer — is rejected with `M1_FW_IMAGE_SIZE_INVALID` (`Invalid image size!`)
+  before the pre-flight CRC pass and before anything is erased or programmed.
+  The log line reports the actual and the required size.
+- **Streamed M1CP path** (`bl_flash_stream_begin()`): the same check rejects the
+  client-declared size with `BL_CODE_SIZE_ERROR` before the target bank is
+  erased.
+
+The decision is `m1_boot_image_size_is_canonical()` over
+`M1_BOOT_IMAGE_FILE_SIZE_CANONICAL` (`m1_boot_failsafe.h`), and
+`m1_fw_update_bl.h` static-asserts that constant against
+`FW_CRC_ADDRESS - FW_START_ADDRESS + FW_IMAGE_CRC_SIZE`, so the intake size and
+the failsafe's span cannot drift apart silently. Host test:
+`tools/m1cp_host_test/test_update_intake_size.c`.
+
+Without the gate, a shorter self-consistent file gets past the pre-flight
+verifier (which hashes the file over its own length) and the whole target bank is
+erased and programmed before the fixed-address post-flash check can object — and
+if that check passes by coincidence (the stale word left at `0xFFC14` happens to
+equal the short image's CRC), the image is swapped in and every later boot
+reports `FW CORRUPT!`.
+
+## Provisioning: which artifact to flash
+
+Only `<artifact>_wCRC.bin` self-validates. It is the `0xFFC14` application image
+plus the CRC word at `0x080FFC14`; the plain `.bin`, the `.hex`, and the ELF all
+stop at `0x080FFC14`. The boot failsafe reads `0x080FFC14` unconditionally, so a
+device provisioned over SWD or by an IDE download from any artifact without the
+CRC word reads erased `0xFFFFFFFF` there and shows `FW CORRUPT!` on every boot,
+with `boot_attempts` counting up in the backup registers.
+
+The banner is a diagnostic rather than containment — the application still runs
+— but on such a device it is a false alarm, and it masks genuine corruption.
+Provision with `_wCRC.bin`: download it over SWD/IDE, or copy it to the SD card
+and install it through the update menu.
+
+An erased or absent CRC word is reported as `boot_fault_signature` =
+`CRC_MISMATCH` (`3`). The fault class separates metadata faults from image
+faults; it does not distinguish "never provisioned" from "image corrupted",
+because a legitimate image may in principle carry the CRC value `0xFFFFFFFF`.
+
 ## Boot failsafe
 
 Every boot validates the RUNNING bank before the boot artwork is drawn
@@ -184,8 +234,10 @@ which option byte `HAL_FLASHEx_OBProgram` writes and would report `BORH_EN`
 (bit 2) as the watchdog mode. The decision lives in
 `m1_boot_iwdg_is_hardware()` (`m1_boot_failsafe.h`) and is host-tested. The
 legacy fork silently rewrote the IWDG option bytes on every boot; that rewrite is
-deliberately not ported -- no `HAL_FLASHEx_OBProgram` and no
-`HAL_FLASH_OB_Launch` appear in the boot path.
+deliberately not ported — a normal boot writes no option bytes. (The interactive
+rollback branch of the same boot path still programs them, via `bl_swap_banks()`,
+and so does the offline `m1_pre_power_down()` path: both are explicit
+user/power-down actions, not a per-boot rewrite.)
 
 ## Recovery and rollback status
 

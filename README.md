@@ -65,8 +65,17 @@ See [HARDWARE.md](HARDWARE.md) for more details.
 ```
 
 This requires CMake, Ninja, GNU Arm Embedded Toolchain 14.2, and `srec_cat`.
-Output is written to `./artifacts/` (`.elf`, `.bin`, `.hex`, and a release
-manifest). A release build requires a clean Git working tree.
+Output is written to `./artifacts/` (`.elf`, `.bin`, `.hex`, `_wCRC.bin`, and a
+release manifest). A release build requires a clean Git working tree.
+
+**Flash `<artifact>_wCRC.bin`, not the plain `.bin`/`.hex`/ELF.** Only the
+CRC-appended image carries the CRC word the firmware's boot-time integrity check
+reads at `0x080FFC14`; the other artifacts stop at `0x080FFC14`. A device
+provisioned over SWD or an IDE download from one of those boots and runs, but
+shows `FW CORRUPT!` on every boot (and counts failures in the backup registers)
+because the check finds no CRC word. Use `_wCRC.bin` over SWD, or copy
+`_wCRC.bin` to the SD card and install it through the update menu. See
+[Provisioning](docs/protocols/firmware-update.md#provisioning-which-artifact-to-flash).
 
 **STM32CubeIDE:**  
 Open the project and build in the IDE.
