@@ -21,6 +21,7 @@
 #include "m1_watchdog.h"
 #include "m1_fw_update.h"
 #include "m1_fw_update_bl.h"
+#include "m1_dfu_entry.h"
 #include "m1_sub_ghz.h"
 
 /*************************** D E F I N E S ************************************/
@@ -718,3 +719,132 @@ void fw_gui_progress_update(size_t remainder)
 
 	m1_u8g2_nextpage(); // Update display RAM
 } // void fw_gui_progress_update(size_t remainder)
+
+
+
+/*============================================================================*/
+/**
+  * @brief  Robust, NON-RETURNING jump to the STM32H573 system-memory (ROM) DFU
+  *         bootloader (issue #41-B; ported from the fork's bl_jump_to_dfu()).
+  *
+  * Teardown order, and why each step is where it is:
+  *
+  *   1. SP sanity check. A blank/foreign system-memory region resets the MCU
+  *      instead of branching into garbage. No logging is possible here.
+  *   2. __disable_irq(). Nothing may preempt the teardown, and the ROM
+  *      bootloader must not receive an application ISR.
+  *   3. SysTick teardown (CTRL/LOAD/VAL = 0), so no tick interrupt is pending
+  *      when interrupts are re-enabled for the ROM later.
+  *   4. HAL_RCC_DeInit(), back to HSI with the PLLs off. The legacy fork did
+  *      not do this and relied on the ROM reconfiguring the clock itself; the
+  *      issue #41 acceptance criterion requires the application clock tree to
+  *      be dropped before the jump, and it removes any chance of the ROM
+  *      inheriting a PLL it cannot service. It runs AFTER interrupts are off
+  *      (a tick during clock teardown would be fatal) and BEFORE the NVIC/VTOR
+  *      work.
+  *   5. NVIC->ICER/ICPR cleared: every interrupt disabled and un-pended.
+  *   6. SCB->VTOR = system memory, so any vector taken after this point
+  *      resolves in the ROM's vector table.
+  *   7. DSB/ISB, then ICACHE/DCACHE disabled with busy-wait. On H5, entering
+  *      the BootROM with caches enabled can fail or hang silently.
+  *   8. 32 s IWDG safety net: slowest prescaler + max reload (~32.7 s). The
+  *      IWDG start key survives a software reset and the ROM never feeds it,
+  *      so the alternative is the application's ~4 s period resetting the unit
+  *      mid-enumeration.
+  *   9. __enable_irq(), MSP = ROM initial SP, jump to the ROM reset vector.
+  *
+  * Deliberately NOT ported: the legacy boot-time IWDG option-byte rewrite
+  * (HAL_FLASHEx_OBProgram + HAL_FLASH_OB_Launch). It was a verified defect --
+  * a normal boot must never program option bytes -- and this function programs
+  * none: it only arms the already-running watchdog counter. See
+  * startup_iwdg_option_byte_check() in m1_system.c.
+  *
+  * Defined only where CMSIS register definitions exist; host test builds never
+  * compile this translation unit (see the header prototype's note).
+  */
+/*============================================================================*/
+#ifndef M1CP_HOST_TEST
+void bl_jump_to_dfu(void)
+{
+	uint32_t sp_val;
+	uint32_t jump_address;
+	void (*jump_to_boot)(void);
+	uint32_t i;
+
+	/* 1. Boot-vector sanity: initial SP must look like H5 SRAM. */
+	sp_val = *(volatile const uint32_t *)(uintptr_t)M1_SYSTEM_MEMORY_BASE;
+	if ( !m1_dfu_sp_plausible(sp_val) )
+	{
+		NVIC_SystemReset();
+		for (;;) { __NOP(); } // not reached
+	}
+
+	/* 2. No interrupts from here on until the ROM is ready for them. */
+	__disable_irq();
+
+	/* 3. SysTick off. */
+	SysTick->CTRL = 0U;
+	SysTick->LOAD = 0U;
+	SysTick->VAL  = 0U;
+
+	/* 4. Application clock tree down: back to HSI, PLLs off. */
+	(void)HAL_RCC_DeInit();
+
+	/* 5. Disable and un-pend every NVIC interrupt. */
+	for (i = 0U; i < (uint32_t)(sizeof(NVIC->ICER) / sizeof(NVIC->ICER[0])); i++)
+	{
+		NVIC->ICER[i] = 0xFFFFFFFFU;
+		NVIC->ICPR[i] = 0xFFFFFFFFU;
+	}
+
+	/* 6. Vectors now resolve in system memory. */
+	SCB->VTOR = M1_SYSTEM_MEMORY_BASE;
+
+	/* 7. Barriers, then caches off (BootROM entry is unsafe with caches on). */
+	jump_address = *(volatile const uint32_t *)(uintptr_t)(M1_SYSTEM_MEMORY_BASE + 4U);
+	jump_to_boot = (void (*)(void))jump_address;
+
+	__DSB();
+	__ISB();
+
+	if ( (ICACHE->CR & ICACHE_CR_EN) != 0U )
+	{
+		ICACHE->CR &= ~ICACHE_CR_EN;
+		while ( (ICACHE->SR & ICACHE_SR_BUSYF) != 0U )
+		{
+			;
+		}
+	}
+	if ( (DCACHE1->CR & DCACHE_CR_EN) != 0U )
+	{
+		DCACHE1->CR &= ~DCACHE_CR_EN;
+		while ( (DCACHE1->SR & DCACHE_SR_BUSYF) != 0U )
+		{
+			;
+		}
+	}
+
+	/* 8. 32 s watchdog safety net (slowest prescaler, max reload). */
+	IWDG->KR  = M1_DFU_IWDG_KEY_UNLOCK;
+	IWDG->PR  = M1_DFU_IWDG_PRESCALER;
+	IWDG->RLR = M1_DFU_IWDG_RELOAD;
+	while ( IWDG->SR != 0U )
+	{
+		;
+	}
+	IWDG->KR = M1_DFU_IWDG_KEY_RELOAD;
+	IWDG->KR = M1_DFU_IWDG_KEY_START;
+
+	/* 9. The ROM bootloader enumerates over USB on interrupts: re-enable them,
+	 *    take the ROM's stack pointer and jump to its reset vector. */
+	__enable_irq();
+
+	__set_MSP(sp_val);
+	jump_to_boot();
+
+	while (1)
+	{
+		__NOP();
+	}
+} // void bl_jump_to_dfu(void)
+#endif /* M1CP_HOST_TEST */

@@ -155,6 +155,21 @@ uint8_t bl_crc_check(uint32_t image_size);
  * validates, otherwise the fault class for the boot failsafe. */
 S_M1_BOOT_FAULT_t bl_crc_validate_active_bank(void);
 void bl_swap_banks(void);
+
+/* Robust, NON-RETURNING jump to the STM32H573 ROM DFU bootloader in system
+ * memory (issue #41-B). The caller must have decided to enter DFU (hardware
+ * strap in main.c or an honoured DEV_OP_STATUS_USB_DFU_REQUEST in
+ * startup_config_handler()); this function only performs the teardown:
+ *
+ *   interrupts off -> SysTick -> RCC back to HSI (HAL_RCC_DeInit) -> NVIC
+ *   ICER/ICPR -> VTOR = system memory -> DSB/ISB -> ICACHE/DCACHE off ->
+ *   32 s IWDG net -> interrupts on -> MSP -> jump
+ *
+ * No option bytes are programmed here (the legacy boot-time IWDG option-byte
+ * rewrite is deliberately not ported; see startup_iwdg_option_byte_check()).
+ * Declared for every build, defined only where CMSIS register definitions
+ * exist (never in a host test build). */
+void bl_jump_to_dfu(void) __attribute__((noreturn));
 void fw_gui_progress_update(size_t remainder);
 
 /* Streamed programming wrappers (M1CP firmware-update path). These reuse the

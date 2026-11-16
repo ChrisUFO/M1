@@ -28,6 +28,7 @@
 #include "m1_rfid.h"
 #include "lfrfid.h"
 #include "m1_usb_cdc_msc.h"
+#include "m1_dfu_entry.h"	/* M1_DFU_STRAP_PIN_INDEX / m1_dfu_strap_active() */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -102,6 +103,74 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
+
+  /* --- EARLY BOOT DFU HARDWARE STRAP (issue #41-B) ------------------------
+   * This runs before HAL_Init() and before MX_IWDG_Init(): nothing about the
+   * application has been initialised yet, so a jump to the ROM bootloader from
+   * here leaves no application state behind. HAL is not available, so the GPIO
+   * setup uses raw registers (the legacy fork did the same).
+   *
+   * The 'UP' button (PE11, active low) held at reset is the hardware strap;
+   * m1_dfu_strap_active() owns the polarity and is host-tested. On a strap hit
+   * the unit gives a speaker tick, lights PD12/PD13 and calls bl_jump_to_dfu(),
+   * which owns the whole teardown order AND the 32 s watchdog safety net -- one
+   * implementation, so the order cannot drift between the strap and the
+   * software-request path. No option bytes are written on this or any boot.
+   */
+  {
+    uint8_t dfu_hardware_strap;
+
+    /* Enable GPIOE and configure PE11 as input with pull-up. */
+    RCC->AHB2ENR |= RCC_AHB2ENR_GPIOEEN;
+    __DSB(); /* let the clock become active before touching the port */
+
+    GPIOE->MODER &= ~(0x3U << (M1_DFU_STRAP_PIN_INDEX * 2U));
+    GPIOE->PUPDR &= ~(0x3U << (M1_DFU_STRAP_PIN_INDEX * 2U));
+    GPIOE->PUPDR |=  (0x1U << (M1_DFU_STRAP_PIN_INDEX * 2U));
+
+    /* Let the pull-up charge the pin capacitance before sampling. */
+    for (volatile uint32_t i = 0U; i < 5000U; i++)
+    {
+      __NOP();
+    }
+
+    dfu_hardware_strap = (uint8_t)m1_dfu_strap_active(
+        (GPIOE->IDR >> M1_DFU_STRAP_PIN_INDEX) & 0x1U);
+
+    if ( dfu_hardware_strap )
+    {
+      /* --- Audio feedback -------------------------------------------------
+       * SPK_CTRL is PC7: hold it high ~100 ms so the speaker gives an audible
+       * tick, then release. */
+      RCC->AHB2ENR |= RCC_AHB2ENR_GPIOCEN;
+      __DSB();
+
+      GPIOC->MODER &= ~(0x3U << (7U * 2U));
+      GPIOC->MODER |=  (0x1U << (7U * 2U));
+      GPIOC->BSRR = (1U << 7U);
+      for (volatile uint32_t i = 0U; i < 300000U; i++)
+      {
+        __NOP();
+      }
+      GPIOC->BSRR = (1U << (7U + 16U));
+      for (volatile uint32_t i = 0U; i < 50000U; i++)
+      {
+        __NOP();
+      }
+
+      /* --- Visual feedback ------------------------------------------------
+       * PD12/PD13 high: the same DFU indication the software-request path
+       * drives through the HAL once peripherals are up. */
+      RCC->AHB2ENR |= RCC_AHB2ENR_GPIODEN;
+      __DSB();
+
+      GPIOD->MODER &= ~((0x3U << (12U * 2U)) | (0x3U << (13U * 2U)));
+      GPIOD->MODER |=  ((0x1U << (12U * 2U)) | (0x1U << (13U * 2U)));
+      GPIOD->BSRR = (1U << 12U) | (1U << 13U);
+
+      bl_jump_to_dfu(); // non-returning
+    }
+  }
 
   /* USER CODE END 1 */
 

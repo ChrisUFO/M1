@@ -519,3 +519,43 @@ void firmware_update_get_image_file(void)
 	xQueueReset(main_q_hdl); // Reset main q before return
 
 } // void firmware_update_get_image_file(void)
+
+
+
+/*============================================================================*/
+/*
+ * Software USB DFU entry (issue #41-B)
+ *
+ * One entry point for both callers -- the future `dfu` CLI command (unit
+ * PR-CLI) and the recovery-screen offer in startup_boot_recovery_hook():
+ *
+ *   1. persist DEV_OP_STATUS_USB_DFU_REQUEST through the bu_regs accessor
+ *      (never a raw write to the TAMP backup registers; DR2/DR3 stay
+ *      ESP-owned),
+ *   2. reset the device. The reset is required because entering DFU means
+ *      tearing the application down; doing that from an arbitrary task context
+ *      would leave the RTOS and peripherals in an undefined state.
+ *
+ * On the next boot startup_config_handler() sees the request, clears it BEFORE
+ * jumping (single-shot: no DFU boot loop, and a power loss during the ROM
+ * session cannot keep the unit out of its application) and calls
+ * bl_jump_to_dfu(). Nothing here programs option bytes.
+ */
+/*============================================================================*/
+void firmware_update_enter_usb_dfu(void)
+{
+	startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_USB_DFU_REQUEST);
+	M1_LOG_I(M1_LOGDB_TAG, "USB DFU requested; resetting to enter the ROM bootloader.\r\n");
+
+	/* Best effort: the log is emitted from a task, so give it a moment before
+	 * the reset discards the queue. Bounded and short -- the persisted request
+	 * is what actually matters. */
+	vTaskDelay(pdMS_TO_TICKS(100));
+
+	NVIC_SystemReset();
+
+	for (;;)
+	{
+		; // not reached
+	}
+} // void firmware_update_enter_usb_dfu(void)
