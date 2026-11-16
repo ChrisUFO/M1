@@ -782,9 +782,15 @@ void fw_gui_progress_update(size_t remainder)
  * NOT continue into the ROM: it would either run on a clock tree the ROM cannot
  * service or, worse, carry a watchdog net reloaded with the previous PR/RLR
  * values -- a silently disarmed net. Requesting an immediate reset is the only
- * bounded, deterministic and observable option here (no logging is possible
- * with interrupts disabled on a boot path): it cannot hang, and it leaves a
- * reset-cause record for the technician.
+ * bounded, deterministic option here (no logging is possible with interrupts
+ * disabled on a boot path): it cannot hang. It leaves NO distinctive diagnostic
+ * record, and nothing here may imply otherwise: the teardown has just written
+ * RCC_RSR_RMVF, and SYSRESETREQ raises SFTRST, which the next boot logs as
+ * "Device reset by normal cause" (m1_watchdog.c) -- byte-identical to the
+ * *intentional* NVIC_SystemReset() the software-request route performs before
+ * the jump. On the strap route the reset loop re-enters DFU before the logger
+ * runs at all. The only signature is the reboot pattern itself, which issue #41
+ * gate item 5 records so a technician can tell it from a boot hang.
  *
  * What the reset leads to depends on how DFU was entered, and it is NOT
  * "recoverable" on both:
@@ -848,8 +854,11 @@ static void bl_dfu_teardown_failed(void)
  *   - FLASH->ACR keeps the application's FLASH_LATENCY_3, where
  *     HAL_RCC_DeInit() restores FLASH_LATENCY_DEFAULT at both ends of its
  *     sequence. Over-wait-stated for a 64 MHz HSI SYSCLK: the safe direction;
- *   - the RCC_CCIPR* kernel-clock muxes keep the application's selection (the
- *     HAL function resets them; the ROM re-initialises what it uses);
+ *   - the RCC_CCIPR* kernel-clock muxes keep the application's selection.
+ *     HAL_RCC_DeInit() does not reset them either -- it never writes a CCIPR
+ *     register (verified in stm32h5xx_hal_rcc.c) -- so this is not a deviation
+ *     from the HAL: both hand the ROM the application's mux selection, and the
+ *     ROM re-initialises what it uses;
  *   - MPU control state and cache configuration are not normalised at all.
  *     The two entry routes hand the ROM *different* machine states: the strap
  *     route runs before HAL_Init()/MPU_Config()/MX_ICACHE_Init() (MPU off,
@@ -1032,13 +1041,20 @@ static void bl_rom_handover(uint32_t sp_val, uint32_t reset_vector)
   *   6. NVIC->ICER/ICPR cleared: every interrupt disabled and un-pended.
   *   7. SCB->VTOR = system memory, so any vector taken after this point
   *      resolves in the ROM's vector table.
-  *   8. DSB/ISB, then ICACHE/DCACHE disabled with busy-wait. On H5, entering
-  *      the BootROM with caches enabled can fail or hang silently.
+  *   8. DSB/ISB, then caches off. On H5, entering the BootROM with caches
+  *      enabled can fail or hang silently. ICACHE is disabled and waited on
+  *      (CR.EN == 0, ST's own completion criterion, plus SR.BUSYF for the
+  *      invalidation); DCACHE1 is never enabled in this build (its AHB1 clock
+  *      gate is never set), so that branch reads 0 and is not taken -- see the
+  *      step-8 comment in the body.
   *   9. 32 s IWDG safety net: START first, then UNLOCK/PR/RLR, wait for the
   *      register update, feed. 0xCCCC starts a stopped IWDG and is a no-op on a
   *      running one, and the ROM never feeds the counter, so the alternative is
   *      the route's previous period resetting the unit mid-enumeration (~4 s on
-  *      the application route). Starting before programming matters on the
+  *      the application route). Nothing re-feeds it after the 0xAAAA below
+  *      either, so that same 32.768 s bounds the ENTIRE ROM residency -- connect,
+  *      enumerate, download and verify -- and not just an abandoned session.
+  *      Starting before programming matters on the
   *      cold-boot strap route, which runs before MX_IWDG_Init(): a stopped IWDG
   *      has its LSI off, so PR/RLR update flags need LSI cycles to appear --
   *      see stm32h5xx_hal_iwdg.c. The update wait is LSI-domain (one prescaled
@@ -1054,8 +1070,9 @@ static void bl_rom_handover(uint32_t sp_val, uint32_t reset_vector)
   *      bl_rom_handover().
   *
   * Every hardware-flag spin reachable from this function is bounded: the RCC
-  * waits inside bl_rcc_teardown_bounded() and the two cache waits by
-  * M1_DFU_TEARDOWN_SPIN_LIMIT, the IWDG->SR update wait by its own
+  * waits inside bl_rcc_teardown_bounded() and the cache waits by
+  * M1_DFU_TEARDOWN_SPIN_LIMIT (the ICACHE wait covers both CR.EN and SR.BUSYF),
+  * the IWDG->SR update wait by its own
   * M1_DFU_IWDG_SYNC_SPIN_LIMIT. From step 2 to step 9 the unit has interrupts
   * disabled and (on the strap route) no watchdog net, so an unbounded wait on a
   * stuck flag would be a hang only a power cycle clears. The cache and RCC waits
@@ -1128,7 +1145,15 @@ void bl_jump_to_dfu(void)
 	/* 7. Vectors now resolve in system memory. */
 	SCB->VTOR = M1_SYSTEM_MEMORY_BASE;
 
-	/* 8. Barriers, then caches off (BootROM entry is unsafe with caches on). */
+	/* 8. Barriers, then caches off (BootROM entry is unsafe with caches on).
+	 *    ICACHE is the only cache this build ever enables (MX_ICACHE_Init()):
+	 *    DCACHE1's AHB1 clock gate (RCC_AHB1ENR.DCACHE1EN) is not enabled
+	 *    anywhere in the tree and HAL_DCACHE_MODULE_ENABLED is off
+	 *    (Core/Inc/stm32h5xx_hal_conf.h), so the DCACHE1 access below reads 0 on
+	 *    this bus and its branch is never taken. It is kept for legacy-fork
+	 *    parity and so the step stays correct if a future application enables
+	 *    the data cache; issue #41 gate item 6 reads DCACHE1->CR back on both
+	 *    routes to confirm the 0 on silicon rather than assuming it. */
 	jump_address = *(volatile const uint32_t *)(uintptr_t)(M1_SYSTEM_MEMORY_BASE + 4U);
 
 	__DSB();
@@ -1137,15 +1162,21 @@ void bl_jump_to_dfu(void)
 	if ( (ICACHE->CR & ICACHE_CR_EN) != 0U )
 	{
 		ICACHE->CR &= ~ICACHE_CR_EN;
-		/* Bounded (see M1_DFU_TEARDOWN_SPIN_LIMIT): a stuck BUSYF must not
-		 * hang the unit with interrupts off and no net armed. */
-		for (i = 0U; ((ICACHE->SR & ICACHE_SR_BUSYF) != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT); i++)
+		/* Bounded (see M1_DFU_TEARDOWN_SPIN_LIMIT): a stuck flag must not hang
+		 * the unit with interrupts off and no net armed. The wait covers BOTH
+		 * criteria: CR.EN == 0 is ST's disable-completion test
+		 * (HAL_ICACHE_Disable(), 1 ms timeout) and is what step 8 actually
+		 * needs; SR.BUSYF is the automatic invalidation that disable kicks
+		 * off. Waiting only on BUSYF would let the jump happen with EN still
+		 * set -- exactly the state the ROM must not inherit. */
+		for (i = 0U; (((ICACHE->CR & ICACHE_CR_EN) != 0U) || ((ICACHE->SR & ICACHE_SR_BUSYF) != 0U)) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT); i++)
 		{
 			;
 		}
 	}
 	if ( (DCACHE1->CR & DCACHE_CR_EN) != 0U )
 	{
+		/* Not reached in this build (no DCACHE1 clock -- see above). */
 		DCACHE1->CR &= ~DCACHE_CR_EN;
 		for (i = 0U; ((DCACHE1->SR & DCACHE_SR_BUSYF) != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT); i++)
 		{

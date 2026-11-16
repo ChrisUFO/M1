@@ -40,16 +40,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`bl_jump_to_dfu()`, `m1_fw_update_bl.c`) with its full teardown order
   (interrupts off, SysTick plus the pended SysTick/PendSV bits, a bounded
   raw-register clock teardown back to the HSI reset state, TIM6 halted, NVIC
-  ICER/ICPR, `SCB->VTOR` = system memory, DSB/ISB, ICACHE/DCACHE off), a 32.768 s
+  ICER/ICPR, `SCB->VTOR` = system memory, DSB/ISB, ICACHE off and waited on,
+  testing ST's `CR.EN == 0` completion criterion as well as `SR.BUSYF`;
+  DCACHE1 is not part of that teardown in this build -- its AHB1 clock gate is
+  never enabled, so the step reads 0 and its branch is never taken), a 32.768 s
   IWDG safety net (LSI/256 -- `IWDG_PR` 6, divider derived from the register
   encoding -- with reload 4095) so the ROM can enumerate instead of being reset
-  by the ~4 s application watchdog, then `CONTROL.SPSEL` cleared with MSP set to
+  by the ~4 s application watchdog. That net bounds the *entire* ROM residency,
+  not only an abandoned session: the `0xAAAA` feed is the last one, so connect,
+  enumerate, download and verify must all finish inside 32.768 s. Then
+  `CONTROL.SPSEL` cleared with MSP set to
   the ROM's initial SP, interrupts back on and the jump. The net is armed
   start-then-configure (`0xCCCC` -> `0x5555` -> `PR`/`RLR` -> `IWDG->SR` wait ->
   `0xAAAA`, the HAL's own order) so it is guaranteed on the cold-boot strap
   route, where the IWDG/LSI is still stopped because the jump runs before
   `MX_IWDG_Init()`; every hardware-flag wait in the teardown is iteration-capped
-  -- the `ICACHE`/`DCACHE1` `BUSYF` and RCC ready/switch waits at
+  -- the `ICACHE` `CR.EN`/`SR.BUSYF` and RCC ready/switch waits at
   `M1_DFU_TEARDOWN_SPIN_LIMIT` (they fall through to the jump), the `IWDG->SR`
   prescaler/reload synchronisation at its own millisecond-class budget
   (`M1_DFU_IWDG_SYNC_SPIN_LIMIT`, ~4x ST's `HAL_IWDG_DEFAULT_TIMEOUT`, because

@@ -73,6 +73,12 @@ static inline bool m1_dfu_sp_plausible(uint32_t sp)
  * device to trigger a real power-on reset, instead of the ~4 s application
  * watchdog resetting the unit mid-enumeration.
  *
+ * It bounds the WHOLE ROM residency, not only an abandoned session: the 0xAAAA
+ * feed below is the last one -- neither the teardown nor the ROM re-feeds the
+ * counter -- so connect, enumerate, download and verify must all finish inside
+ * the same 32.768 s, whatever the outcome. A host tool opened late, or a slow
+ * transfer, is cut off by the net exactly as an abandoned session is.
+ *
  * IWDG_PR is a 4-bit field on STM32H5 and the LSI divider is 4 << PR
  * (IWDG_PRESCALER_256 == 0b110 == 6, stm32h5xx_hal_iwdg.h); RM0481 Table
  * "IWDG prescaler" gives the same encoding. The divider below is derived FROM

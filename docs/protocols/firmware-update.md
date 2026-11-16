@@ -343,17 +343,27 @@ in `tools/m1cp_host_test/test_m1cp_dfu.c`):
 5. TIM6 (the HAL tick timebase) stopped and ungated,
 6. `NVIC->ICER`/`NVIC->ICPR` cleared for every interrupt,
 7. `SCB->VTOR = M1_SYSTEM_MEMORY_BASE`,
-8. `__DSB()` / `__ISB()`, then ICACHE and DCACHE disabled with a **bounded**
+8. `__DSB()` / `__ISB()`, then ICACHE and DCACHE handled with a **bounded**
    busy-wait (BootROM entry with caches enabled can fail or hang silently on
-   H5),
+   H5). Only ICACHE is a real action: it is disabled and the wait covers ST's
+   completion criterion `CR.EN == 0` (what `HAL_ICACHE_Disable()` polls) **and**
+   `SR.BUSYF` (the automatic invalidation the disable starts). DCACHE1 is never
+   enabled in this build -- its `RCC_AHB1ENR.DCACHE1EN` gate is not enabled
+   anywhere in the tree and `HAL_DCACHE_MODULE_ENABLED` is off -- so that read
+   returns 0 and the branch is not taken; it is retained for legacy-fork parity
+   and is confirmed on silicon by checklist item 6,
 9. 32 s IWDG safety net (prescaler /256, reload 4095 -> 32.768 s at the
    nominal 32 kHz LSI). The sequence is **start-then-configure** --
    `KR=0xCCCC` (start), `KR=0x5555` (unlock), `PR`, `RLR`, wait for the
    register update (`IWDG->SR`), `KR=0xAAAA` (feed) -- matching
-   `stm32h5xx_hal_iwdg.c`. On the cold-boot strap route the IWDG/LSI is still
-   stopped (this runs before `MX_IWDG_Init()`), so configuring first would leave
-   the update flags waiting on LSI cycles that never come, or drop the writes and
-   start at the reset-default ~0.5 s period. That update wait is LSI-domain (one
+   `stm32h5xx_hal_iwdg.c`. That `0xAAAA` is the **last** feed: neither the
+   teardown nor the ROM re-feeds the counter, so the same 32.768 s bounds the
+   **entire** ROM residency -- connect, enumerate, download and verify -- and
+   not merely an abandoned session. On the cold-boot strap route the IWDG/LSI is
+   still stopped (this runs before `MX_IWDG_Init()`), so configuring first would
+   leave the update flags waiting on LSI cycles that never come, or drop the
+   writes and start at the reset-default ~0.5 s period. That update wait is
+   LSI-domain (one
    *prescaled* LSI period = 8 ms at /256, plus LSI startup), so it uses its own
    millisecond-class budget (`M1_DFU_IWDG_SYNC_SPIN_LIMIT`, ~4x
    `HAL_IWDG_DEFAULT_TIMEOUT`) rather than the tens-of-cycles cap the cache
@@ -374,8 +384,8 @@ in `tools/m1cp_host_test/test_m1cp_dfu.c`):
    on the abandoned task stack instead of the SP just validated.
 
 Every hardware-flag spin in steps 4, 8 and 9 is capped: the `RCC`
-ready/switch flags and the `ICACHE`/`DCACHE1` `BUSYF` waits by
-`M1_DFU_TEARDOWN_SPIN_LIMIT` (tens-of-cycles flags), the `IWDG->SR` update
+ready/switch flags and the `ICACHE` `CR.EN`/`SR.BUSYF` wait are bounded by
+`M1_DFU_TEARDOWN_SPIN_LIMIT` (tens-of-cycles flags), and the `IWDG->SR` update
 wait by its own, larger `M1_DFU_IWDG_SYNC_SPIN_LIMIT`. The cache and RCC waits
 fall through to the jump (best effort); the two waits whose expiry would leave
 the unit in a state *worse* than a reset -- the clock tree post-condition and
@@ -419,8 +429,10 @@ deliberately left un-normalised:
 - `FLASH->ACR` keeps the application's 3 wait states, where `HAL_RCC_DeInit()`
   would have restored `FLASH_LATENCY_DEFAULT` at both ends -- over-wait-stated
   for a 64 MHz HSI SYSCLK, so the safe direction;
-- the `RCC_CCIPR*` kernel-clock muxes keep the application's selection (the HAL
-  function does reset these; the ROM re-initialises what it uses);
+- the `RCC_CCIPR*` kernel-clock muxes keep the application's selection. That is
+  **not** a deviation from the HAL: `HAL_RCC_DeInit()` does not reset them
+  either (it never writes a `CCIPR` register), so both hand the ROM the
+  application's mux selection and the ROM re-initialises what it uses;
 - the MPU stays enabled with region 0 read-only over `0x08FFF800-0x08FFF80C`
   and `PRIVDEFENA` set, and the ICACHE control register keeps the application's
   configuration even though caching is switched off at step 8. Benign for a
@@ -450,25 +462,39 @@ None of this is executable in CI. It is tracked as the issue #41 hardware gate
 3. **Software request**: `dfu` -> device resets -> ROM DFU enumerates.
 4. **Single-shot**: power-cycle during/after the ROM session -> the unit boots
    the application, not back into DFU.
-5. **Watchdog net**: with no USB host attached, the ROM session is not cut off
-   before ~30 s (the programmed net is 32.768 s, LSI/256 with reload 4095), and
-   an abandoned session recovers on its own afterwards. The net is armed on
-   every route (the update wait tests the four update flags, so `0xAAAA` is
-   reached); if it were not, the teardown's failure exit
-   (`bl_dfu_teardown_failed()` -> `NVIC_SystemReset()`) would fire. That exit
-   firing *persistently* while UP is still held is the only reset-loop case: the
-   unit reset-loops back into DFU with no net and no logs -- confirm the loop
-   stops as soon as the strap is released (or power is removed), and that the
-   software-request route performs a single reset into the application rather
-   than looping. A successful teardown of any route resets nothing.
+5. **Watchdog net (it bounds the whole session, not just an abandoned one)**:
+   the net is armed immediately before the jump and nothing re-feeds it
+   afterwards -- not the teardown, not the ROM -- so the unit's **entire** ROM
+   residency (connect, enumerate, download, verify) must complete inside
+   32.768 s (LSI/256, reload 4095, LSI-dependent). A successful transfer is
+   capped exactly like an abandoned session: an operator who holds UP and only
+   then opens the host tool, or a slow download, sees the unit reboot
+   mid-transfer and reads it as "DFU is broken". The legacy fork ran the same
+   net at `PR` 7 (65.536 s), so this build halves the window -- measure it
+   rather than assuming the margin. Steps: (a) **time a full-image DFU
+   end-to-end** and record it against 32.768 s; (b) with no USB host attached,
+   confirm the ROM session is not cut off before ~30 s and that it recovers on
+   its own afterwards (the abandoned-session case); (c) confirm the net is armed
+   on every route (the update wait tests the four update flags, so `0xAAAA` is
+   reached); if it were not,
+   the teardown's failure exit (`bl_dfu_teardown_failed()` ->
+   `NVIC_SystemReset()`) would fire. That exit firing *persistently* while UP is
+   still held is the only reset-loop case: the unit reset-loops back into DFU
+   with no net and no logs -- confirm the loop stops as soon as the strap is
+   released (or power is removed), and that the software-request route performs
+   a single reset into the application rather than looping. A successful
+   teardown of any route resets nothing.
 6. **Teardown**: after the jump no application interrupt fires; SysTick/VTOR
-   point into system memory; ICACHE/DCACHE show disabled. Exercise the **strap
-   route and the software-request route separately** -- they reach the ROM in
-   different machine states (strap: MPU off, ICACHE never enabled; request: MPU
-   enabled with region 0 read-only + `PRIVDEFENA`, ICACHE enabled then
-   disabled). Record `MPU->CTRL`, the `FLASH->ACR` latency (still 3 wait
-   states) and the `RCC_CCIPR*` muxes as intentionally **not** normalised, so
-   neither route is read as covering the other.
+   point into system memory; ICACHE shows disabled (`CR.EN == 0`). `DCACHE1->CR`
+   also reads 0, but trivially: its clock gate is never enabled in this build,
+   so record that read as "data cache was never on", **not** as evidence that a
+   data-cache teardown ran. Exercise the **strap route and the
+   software-request route separately** -- they reach the ROM in different
+   machine states (strap: MPU off, ICACHE never enabled; request: MPU enabled
+   with region 0 read-only + `PRIVDEFENA`, ICACHE enabled then disabled). Record
+   `MPU->CTRL`, the `FLASH->ACR` latency (still 3 wait states) and the
+   `RCC_CCIPR*` muxes as intentionally **not** normalised, so neither route is
+   read as covering the other.
 7. **Corrupt bank**: flash an image with one flipped byte -> `FW CORRUPT!` +
    offer; OK within 5 s enters DFU; no key leaves the banner and the UI is
    reachable (no hang).

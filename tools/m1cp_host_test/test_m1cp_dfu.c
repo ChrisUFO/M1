@@ -440,8 +440,8 @@ int main(void) {
             /* Every spin is pinned by its own loop CONDITION, not by counting a
              * string that a comment could also satisfy. */
             if (body != NULL) {
-                ok(strstr(body, "((ICACHE->SR & ICACHE_SR_BUSYF) != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") != NULL,
-                   "the ICACHE busy wait is bounded");
+                ok(strstr(body, "(((ICACHE->CR & ICACHE_CR_EN) != 0U) || ((ICACHE->SR & ICACHE_SR_BUSYF) != 0U)) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") != NULL,
+                   "the ICACHE wait is bounded AND covers ST's disable criterion (CR.EN == 0), not BUSYF alone");
                 ok(strstr(body, "((DCACHE1->SR & DCACHE_SR_BUSYF) != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") != NULL,
                    "the DCACHE busy wait is bounded");
                 ok(strstr(body, "((IWDG->SR & M1_DFU_IWDG_SR_UPDATE_FLAGS) != 0U) && (i < M1_DFU_IWDG_SYNC_SPIN_LIMIT)") != NULL,
