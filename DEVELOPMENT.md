@@ -71,7 +71,7 @@ and the target consume the same list and cannot drift apart.
 **Machine-check both directions before merging.** Forward (no vendor file
 gated): `ninja -C out/build/gcc-14_2_build-release -t commands | grep Werror`
 must list only `m1_csrc` compile lines. Reverse (no compiled app source
-ungated): `ninja -C out/build/gcc-14_2_build-release -t commands | grep m1_csrc | grep -v Werror`
+ungated): `ninja -C out/build/gcc-14_2_build-release -t commands | grep -E -- "-c .*m1_csrc.*\.c" | grep -v Werror`
 must be empty — an app source added to the build but missed by the gate
 shows up here.
 
