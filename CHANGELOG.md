@@ -96,33 +96,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ORDER/confinement source seams. On-device DFU enumeration/rollback
   demonstration is deferred to the issue #41 hardware gate (milestone
   "Post-merge stabilization")
-- Fork: USB CDC RX drop/high-watermark diagnostics restored on the adopted
-  base's stream-buffer path (issue #44, part A) — the fork's `CDC_CLI_Rx*`
-  counters were lost with its (deliberately not resurrected) CDC rewrite, so
-  they now live on upstream's `USB/Class/CDC/Src/usbd_cdc_if.c` path
-  (`UserRxBufferFS` -> `usbRxBuffer` -> `h_usb_rx_streambuf`):
-  `CDC_CLI_RxDroppedBytes()` counts host bytes that never reached the stream
-  buffer (refused in a callback because it was full, partially or wholly, plus
-  bytes lost to an intermediate `usbRxBuffer` overflow), counted once per byte
-  at arrival so retried carry-over is never re-counted;
-  `CDC_CLI_RxHighWatermark()` is the maximum occupancy observed after each
-  send (monotonic until reset); `CDC_CLI_RxBufferedBytes()` is the live
-  pending level; `CDC_CLI_RxResetStats()` zeroes both under
-  `taskENTER_CRITICAL()` so the RX interrupt cannot resurrect a pre-reset
-  value. Counters are `volatile uint32_t` (single aligned writes/reads, no
-  torn values) and diagnostic only: no buffering, copy, back-pressure or pause
-  decision reads them, and `CDC_Receive_FS()` gained no blocking call. The
-  arithmetic is pure and host-tested (`m1_csrc/m1_cdc_rx_stats.h`,
-  `test_cdc_rx_stats`: full buffer, partial fit, intermediate-buffer overflow,
-  carry-over, watermark monotonicity, buffered-now, reset, plus source seams
-  that pin the ISR call site, the reset critical section and the absence of
-  blocking calls); the new `cdcstats`/`cdcreset` CLI commands expose the same
-  legacy output text. ROM cost: **+832 B flash / +32 B RAM** (FLASH 724368 ->
-  725200 B, RAM 326184 -> 326216 B, same toolchain, `./build.sh` on this tree
-  versus `main` @ `517b339`); `_wCRC.bin` is still 1047576 bytes.
+- Fork: USB CDC RX diagnostics restored on the adopted base's stream-buffer
+  path (issue #44, part A) — the fork's `CDC_CLI_Rx*` counters were lost with its
+  (deliberately not resurrected) CDC rewrite, so they now live on upstream's
+  `USB/Class/CDC/Src/usbd_cdc_if.c` path (`UserRxBufferFS` -> `usbRxBuffer` ->
+  `h_usb_rx_streambuf`). The API and command names are the legacy ones, but the
+  metric is not: the fork counted true drops of console input on the
+  `CDC_MODE_LOG_CLI` branch, whereas these observe the VCP/ESP32 bridge path and
+  separate retryable back-pressure from proven loss.
+  `CDC_CLI_RxDroppedBytes()` counts host bytes refused at arrival because the
+  stream buffer was full (partial fit or none), counted once per byte at
+  arrival so retried carry-over is never re-counted; those bytes normally stay
+  queued in `usbRxBuffer` and are delivered on the next drain, so it is a
+  back-pressure metric, not proof of loss. `CDC_CLI_RxLostBytes()` is the
+  loss-only counter: bytes that never fit the intermediate `usbRxBuffer` plus
+  bytes still pending in the stream buffer when a bridge-mode exit empties it
+  (`CDC_CLI_RxDiscardPendingBytes()`, which replaces the bare
+  `xStreamBufferReset(h_usb_rx_streambuf)` in `m1_logdb_deinit()`), so it stays
+  at 0 under pure back-pressure. `CDC_CLI_RxHighWatermark()` is the maximum
+  occupancy observed after each send (sticky until reset; usable capacity is
+  `RXSTREAMBUF_USB_SIZE - 1` = 2047 bytes); `CDC_CLI_RxBufferedBytes()` is the
+  sampled pending level (a gauge, not a synchronisation signal).
+  `CDC_CLI_RxResetStats()` zeroes all counters under `taskENTER_CRITICAL()` so
+  the RX interrupt cannot resurrect a pre-reset value. Counters are `volatile
+  uint32_t` (single aligned writes/reads, no torn values) and diagnostic only:
+  no buffering, copy, back-pressure or pause decision reads them, and
+  `CDC_Receive_FS()` gained no blocking call. The arithmetic is pure and
+  host-tested (`m1_csrc/m1_cdc_rx_stats.h`, `test_cdc_rx_stats`: 74 assertions
+  covering full buffer, partial fit, intermediate-buffer overflow, carry-over,
+  refusal/loss independence, watermark monotonicity, buffered-now, reset and the
+  bridge-mode discard, plus source seams that pin the ISR call site, the reset
+  critical section, the counting discard helper and the absence of blocking
+  calls). `cdcstats`/`cdcreset` expose them; the output is qualified ("Refused
+  at arrival ... (retryable)", "Lost (unrecoverable)", "High watermark ...
+  (sticky)", "Buffered now ... (sampled)") because the legacy "dropped bytes"
+  label measured a different path and a different metric. ROM cost of the unit:
+  **+1344 B flash / +32 B RAM** (FLASH 724368 -> 725712 B, RAM 326184 -> 326216
+  B, same toolchain, `./build.sh` on this tree versus `main` @ `517b339`);
+  relative to the pre-harden head `62f693b` the counter split and the corrected
+  wording cost +512 B flash / +0 B RAM (the 8 -> 12 B counter struct is absorbed
+  by linker packing in this build). `_wCRC.bin` is still 1047576 bytes.
   On-device "counters become non-zero during a CDC stress transfer" is
-  hardware-gated and deferred to the issue #44 hardware gate (milestone
-  "Post-merge stabilization"); see `docs/protocols/usb-cdc.md`
+  hardware-gated by issue #63 (milestone "Post-merge stabilization"); quote
+  `CDC_CLI_RxLostBytes()` alongside the refusal counter when it runs, since a
+  rising refusal counter alone proves back-pressure, not loss; see
+  `docs/protocols/usb-cdc.md`
 - Fork: CRC emitter parity harness (issue #40) — `scripts/verify_crc_parity.sh`
   generates four deterministic full-size (`0xFFC14`-byte) images from the
   committed spec in `tools/crc_test_vectors.py` (so no ~1 MiB binaries live in
