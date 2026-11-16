@@ -380,12 +380,49 @@ step 9 the unit runs with interrupts disabled and, on the strap route, **no**
 watchdog net, so an unbounded wait on a stuck flag would be a hang that only
 removing power clears.
 
+That failure reset is a recovery on the software-request and recovery-offer
+routes: the persisted request was already consumed before the teardown, so the
+reboot boots the application and the user can retry. It is **not** a recovery
+on the strap route -- `main()` re-samples PE11 before `HAL_Init()`, and with
+the strap still held (holding it is how the user got there) the unit re-enters
+`bl_jump_to_dfu()`, hits the same persistent failure (a dead LSI, or a clock
+tree that never settles) and resets again: an **unbounded reset loop** with
+interrupts off and no logs, ended only by releasing UP or removing power. The
+policy is deliberate -- jumping into the ROM with a dead LSI or a half-torn
+clock tree is worse than rebooting loudly, and there is no spare
+backup-register budget for a persistent-failure attempt counter -- and
+checklist item 5 below records how a technician tells this loop from a boot
+hang.
+
 The legacy fork did not tear the clock tree down; it is done here because
 the issue #41 acceptance criterion requires the application clock tree to be
 dropped before the jump and it removes any chance of the ROM inheriting a PLL
-it cannot service. Ending at the reset state is also what the ST ROM expects on
-entry -- the same state a hardware reset leaves -- so its own clock init finds
-nothing to undo, and it brings up the HSI48 it needs for USB itself.
+it cannot service. What the teardown normalises is what the ST ROM's own clock
+init depends on (SYSCLK on HSI, prescalers /1, HSE/CSI/HSI48 and PLL1-3 off,
+PLL config registers at reset values, RCC interrupts and flags cleared,
+`SystemCoreClock = HSI_VALUE`), and the ROM brings up the HSI48 it needs for USB
+itself.
+
+It is **not** "exactly the state a hardware reset leaves behind". What is
+deliberately left un-normalised:
+
+- `FLASH->ACR` keeps the application's 3 wait states, where `HAL_RCC_DeInit()`
+  would have restored `FLASH_LATENCY_DEFAULT` at both ends -- over-wait-stated
+  for a 64 MHz HSI SYSCLK, so the safe direction;
+- the `RCC_CCIPR*` kernel-clock muxes keep the application's selection (the HAL
+  function does reset these; the ROM re-initialises what it uses);
+- the MPU stays enabled with region 0 read-only over `0x08FFF800-0x08FFF80C`
+  and `PRIVDEFENA` set, and the ICACHE control register keeps the application's
+  configuration even though caching is switched off at step 8. Benign for a
+  privileged ROM, but not a reset-equivalent machine state.
+
+So the two entry routes reach the ROM in **different** machine states: the
+strap route runs before `HAL_Init()`, `MPU_Config()` and `MX_ICACHE_Init()`
+(MPU off, ICACHE never enabled, no HAL tick), while the software-request and
+recovery-offer routes come from the fully initialised application (MPU on,
+ICACHE enabled and then disabled at step 8). Checklist item 6 requires both
+routes to be exercised separately.
+
 No step programs option bytes: the legacy boot-time IWDG
 option-byte rewrite (`HAL_FLASHEx_OBProgram` + `HAL_FLASH_OB_Launch`) was a
 verified defect and is deliberately **not** ported -- every entry path above is
@@ -405,9 +442,20 @@ None of this is executable in CI. It is tracked as the issue #41 hardware gate
    the application, not back into DFU.
 5. **Watchdog net**: with no USB host attached, the ROM session is not cut off
    before ~30 s (the programmed net is 32.768 s, LSI/256 with reload 4095), and
-   an abandoned session recovers on its own afterwards.
+   an abandoned session recovers on its own afterwards. If the teardown's
+   failure exit (`bl_dfu_teardown_failed()` -> `NVIC_SystemReset()`) fires
+   *persistently* while UP is still held, the unit instead reset-loops back into
+   DFU with no net and no logs -- confirm the loop stops as soon as the strap is
+   released (or power is removed), and that the software-request route performs
+   a single reset into the application rather than looping.
 6. **Teardown**: after the jump no application interrupt fires; SysTick/VTOR
-   point into system memory; ICACHE/DCACHE show disabled.
+   point into system memory; ICACHE/DCACHE show disabled. Exercise the **strap
+   route and the software-request route separately** -- they reach the ROM in
+   different machine states (strap: MPU off, ICACHE never enabled; request: MPU
+   enabled with region 0 read-only + `PRIVDEFENA`, ICACHE enabled then
+   disabled). Record `MPU->CTRL`, the `FLASH->ACR` latency (still 3 wait
+   states) and the `RCC_CCIPR*` muxes as intentionally **not** normalised, so
+   neither route is read as covering the other.
 7. **Corrupt bank**: flash an image with one flipped byte -> `FW CORRUPT!` +
    offer; OK within 5 s enters DFU; no key leaves the banner and the UI is
    reachable (no hang).

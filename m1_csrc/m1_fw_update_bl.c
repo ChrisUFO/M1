@@ -731,7 +731,8 @@ void fw_gui_progress_update(size_t remainder)
 #ifndef M1CP_HOST_TEST
 
 /*============================================================================*/
-/* Loud, recoverable failure exit for the teardown.
+/* Loud failure exit for the teardown: a recovery on the request routes, an
+ * unbounded reset loop on the strap route while the strap is held.
  *
  * When a teardown step cannot be completed (the clock tree did not settle, or
  * the IWDG prescaler/reload synchronisation never became visible) the unit must
@@ -739,9 +740,25 @@ void fw_gui_progress_update(size_t remainder)
  * service or, worse, carry a watchdog net reloaded with the previous PR/RLR
  * values -- a silently disarmed net. Requesting an immediate reset is the only
  * bounded, deterministic and observable option here (no logging is possible
- * with interrupts disabled on a boot path): the reset is recoverable (the unit
- * reboots, the strap/request is honoured again), it leaves a reset-cause flag,
- * and it cannot hang.
+ * with interrupts disabled on a boot path): it cannot hang, and it leaves a
+ * reset-cause record for the technician.
+ *
+ * What the reset leads to depends on how DFU was entered, and it is NOT
+ * "recoverable" on both:
+ *
+ *   - Software request / recovery offer: the persisted request was consumed
+ *     (written back to NO_OP) before this function ran, so the reboot boots the
+ *     application. One reset, then normal operation; the user can retry.
+ *   - Strap route: main() re-samples PE11 before HAL_Init(), and the strap is
+ *     still held (holding it is how the user got here), so the unit re-enters
+ *     bl_jump_to_dfu(), hits the same persistent failure and resets again.
+ *     That is an UNBOUNDED reset loop with interrupts off and no logs, ending
+ *     only when the strap is released or power is removed. This is the accepted
+ *     policy, not a defect: jumping into the ROM with a dead LSI or a half-torn
+ *     clock tree is worse than rebooting loudly, and there is no spare
+ *     backup-register budget for a persistent-failure attempt counter. The
+ *     issue #41 hardware gate names the loop so a technician can tell it from a
+ *     boot hang.
  *
  * The trailing spin is never reached in practice -- SYSRESETREQ does not return
  * -- and exists only so the function is honest if a debugger holds the reset
@@ -770,16 +787,33 @@ static void bl_dfu_teardown_failed(void)
  * capped at M1_DFU_TEARDOWN_SPIN_LIMIT and falling through, matching the
  * discipline the rest of bl_jump_to_dfu() already follows.
  *
- * Ending state, which is what the ST ROM expects on entry: it is exactly the
- * state a hardware reset leaves behind, so the bootloader's own clock init
- * finds nothing to undo. SYSCLK = HSI (64 MHz, HSIDIV /1), AHB/APB prescalers
- * /1, HSE / CSI / HSI48 and PLL1/2/3 off, the PLL config registers at their
- * reset values, RCC interrupts disabled and their flags cleared. The ROM
- * brings up whatever it needs itself (HSI48 for the USB clock is its own
- * enable, so switching it off here is the reset state, not a loss). LSI is
+ * Ending state, which is what the ST ROM expects on entry -- the subset of the
+ * reset state its own clock init depends on, so it finds nothing to undo:
+ * SYSCLK = HSI (64 MHz, HSIDIV /1), AHB/APB prescalers /1, HSE / CSI / HSI48
+ * and PLL1/2/3 off, the PLL config registers at their reset values, RCC
+ * interrupts disabled and their flags cleared, SystemCoreClock = HSI_VALUE.
+ * The ROM brings up whatever it needs itself (HSI48 for the USB clock is its
+ * own enable, so switching it off here is the reset state, not a loss). LSI is
  * deliberately left running: it clocks the IWDG net armed at step 9, and
  * stopping it would kill the very net that makes an abandoned session
  * recoverable.
+ *
+ * It is NOT "exactly the state a hardware reset leaves behind", and what is
+ * deliberately left un-normalised is part of that statement:
+ *
+ *   - FLASH->ACR keeps the application's FLASH_LATENCY_3, where
+ *     HAL_RCC_DeInit() restores FLASH_LATENCY_DEFAULT at both ends of its
+ *     sequence. Over-wait-stated for a 64 MHz HSI SYSCLK: the safe direction;
+ *   - the RCC_CCIPR* kernel-clock muxes keep the application's selection (the
+ *     HAL function resets them; the ROM re-initialises what it uses);
+ *   - MPU control state and cache configuration are not normalised at all.
+ *     The two entry routes hand the ROM *different* machine states: the strap
+ *     route runs before HAL_Init()/MPU_Config()/MX_ICACHE_Init() (MPU off,
+ *     ICACHE never enabled, no HAL), the task routes come from the fully
+ *     initialised application (MPU enabled with region 0 read-only and
+ *     PRIVDEFENA, ICACHE enabled and then disabled at step 8). Benign for a
+ *     privileged ROM, but the issue #41 hardware gate must exercise both routes
+ *     and must not read either one as covering the other.
  *
  * A flag that never settles is not fatal *inside the waits*: each wait falls
  * through after M1_DFU_TEARDOWN_SPIN_LIMIT, exactly like the cache and IWDG->SR
