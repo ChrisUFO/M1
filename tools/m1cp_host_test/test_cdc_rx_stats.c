@@ -17,19 +17,26 @@
  *        - intermediate-buffer overflow: the bytes that never fit are counted,
  *        - carry-over: bytes still queued from an earlier callback are NOT
  *          re-counted when the next callback cannot accept them,
- *        - clamping: a send can never make the result underflow.
+ *        - clamping: a send can never make the result underflow,
+ *        - the loss-only helper counts intake rejections and nothing else, so
+ *          pure back-pressure never moves the loss counter.
  *   2. a replay of the device control flow over a small modelled stream buffer
  *      (same ordering as CDC_Receive_FS: pending snapshot, copy or overflow,
  *      spaces-available, conditional send, memmove-equivalent accounting,
  *      record), asserting the per-arrival identity delivered+refused == offered
- *      for every packet, and that no byte counts twice.
- *   3. high-watermark monotonicity across drain cycles, buffered-now, and
- *      reset semantics.
- *   4. source seams on usbd_cdc_if.c (the file is HAL/RTOS code and cannot be
- *      linked here): counters are `volatile` and ISR-updated at the send site,
- *      reset is wrapped in taskENTER_CRITICAL()/taskEXIT_CRITICAL() OUTSIDE the
- *      interrupt callback, the accessors are out-of-line (so the values must be
- *      materialised) and buffered-now guards a NULL stream buffer, and
+ *      for every packet, that no byte counts twice, and that the refusal and
+ *      loss counters move independently. The modelled stream buffer declares
+ *      xLength = MODEL_STREAM_LENGTH and exposes MODEL_STREAM_LENGTH - 1 usable
+ *      bytes, which is FreeRTOS's real arithmetic.
+ *   3. high-watermark monotonicity across drain cycles, buffered-now, reset
+ *      semantics and the bridge-mode discard accounting.
+ *   4. source seams on usbd_cdc_if.c / m1_log_debug.c (that code is HAL/RTOS
+ *      code and cannot be linked here): counters are `volatile` and
+ *      ISR-updated at the send site, reset is wrapped in
+ *      taskENTER_CRITICAL()/taskEXIT_CRITICAL() OUTSIDE the interrupt callback,
+ *      the accessors are out-of-line (so the values must be materialised),
+ *      buffered-now guards a NULL stream buffer, the mode-switch exit uses the
+ *      counting discard helper instead of a bare xStreamBufferReset(), and
  *      CDC_Receive_FS gained no blocking call.
  *
  * Run either from the repository root or from this directory:
@@ -77,7 +84,8 @@ static int has_code_token(const char *src, const char *tok) {
 /* usbRxBuffer, driven in exactly the order CDC_Receive_FS drives them.      */
 /* ------------------------------------------------------------------------- */
 
-#define MODEL_STREAM_CAP   128U   /* modelled h_usb_rx_streambuf capacity    */
+#define MODEL_STREAM_LENGTH 129U  /* modelled xLength (FreeRTOS buffer size)   */
+#define MODEL_STREAM_CAP    (MODEL_STREAM_LENGTH - 1U) /* usable: xLength - 1 */
 #define MODEL_INTERMEDIATE 128U   /* modelled usbRxBuffer (USB_RX_BUF_SIZE)  */
 
 typedef struct {
@@ -90,12 +98,14 @@ typedef struct {
     m1_cdc_rx_stats_t stats;
 } model_t;
 
+/* Same arithmetic as xStreamBufferSpacesAvailable(): the usable capacity is
+ * xLength - 1, so a full buffer still reports one byte less than xLength. */
 static size_t model_spaces(const model_t *m) { return MODEL_STREAM_CAP - m->used; }
 
 /* One CDC OUT callback carrying `len` bytes, mirroring CDC_Receive_FS. */
 static void model_callback(model_t *m, size_t len) {
     size_t pending_before = m->idx;      /* carry-over snapshot (pre-copy)     */
-    size_t appended = 0U, rejected = 0U, free_space, sent = 0U, lost;
+    size_t appended = 0U, rejected = 0U, free_space, sent = 0U, refused;
 
     m->offered += len;
 
@@ -125,8 +135,9 @@ static void model_callback(model_t *m, size_t len) {
         }
     }
 
-    lost = m1_cdc_rx_lost_bytes(rejected, appended, sent, pending_before);
-    m1_cdc_rx_stats_record(&m->stats, lost, m->used);
+    refused = m1_cdc_rx_refused_bytes(rejected, appended, sent, pending_before);
+    m1_cdc_rx_stats_record(&m->stats, refused,
+                           m1_cdc_rx_unrecoverable_bytes(rejected), m->used);
 }
 
 static void model_drain(model_t *m, size_t n) {
@@ -137,23 +148,32 @@ static void model_drain(model_t *m, size_t n) {
 int main(void) {
     /* ---- 1. arithmetic unit cases ---------------------------------------- */
     printf("arithmetic\n");
-    ok(m1_cdc_rx_lost_bytes(0, 0, 0, 0) == 0, "empty callback loses nothing");
-    ok(m1_cdc_rx_lost_bytes(0, 64, 0, 0) == 64, "full stream buffer: whole packet refused");
-    ok(m1_cdc_rx_lost_bytes(0, 64, 32, 0) == 32, "partial fit: only the shortfall refused");
-    ok(m1_cdc_rx_lost_bytes(0, 64, 64, 0) == 0, "exact fit: nothing refused");
-    ok(m1_cdc_rx_lost_bytes(64, 0, 0, 0) == 64, "intermediate-buffer overflow counted");
-    ok(m1_cdc_rx_lost_bytes(64, 0, 0, 32) == 64, "overflow with carry-over still counts the loss");
+    ok(m1_cdc_rx_refused_bytes(0, 0, 0, 0) == 0, "empty callback loses nothing");
+    ok(m1_cdc_rx_refused_bytes(0, 64, 0, 0) == 64, "full stream buffer: whole packet refused");
+    ok(m1_cdc_rx_refused_bytes(0, 64, 32, 0) == 32, "partial fit: only the shortfall refused");
+    ok(m1_cdc_rx_refused_bytes(0, 64, 64, 0) == 0, "exact fit: nothing refused");
+    ok(m1_cdc_rx_refused_bytes(64, 0, 0, 0) == 64, "intermediate-buffer overflow counted");
+    ok(m1_cdc_rx_refused_bytes(64, 0, 0, 32) == 64, "overflow with carry-over still counts the loss");
     /* Carry-over: 32 bytes were already offered and refused (or queued) by an
      * earlier callback; this callback adds 64 and the stream buffer accepts
      * nothing. Only the 64 new bytes may be counted. */
-    ok(m1_cdc_rx_lost_bytes(0, 64, 0, 32) == 64, "queued carry-over is not re-counted");
+    ok(m1_cdc_rx_refused_bytes(0, 64, 0, 32) == 64, "queued carry-over is not re-counted");
     /* The send serves the carry-over first; accepting 32 = exactly the old
      * bytes leaves the whole new packet refused. */
-    ok(m1_cdc_rx_lost_bytes(0, 64, 32, 32) == 64, "send serving carry-over only still refuses new bytes");
+    ok(m1_cdc_rx_refused_bytes(0, 64, 32, 32) == 64, "send serving carry-over only still refuses new bytes");
     /* Accepting more than the carry-over means new bytes got through. */
-    ok(m1_cdc_rx_lost_bytes(0, 64, 96, 32) == 0, "send covering carry-over and all new bytes loses nothing");
-    ok(m1_cdc_rx_lost_bytes(0, 10, 96, 32) == 0, "accepted count clamps at the new bytes (no underflow)");
-    ok(m1_cdc_rx_lost_bytes(5, 10, 96, 32) == 5, "clamping keeps intake rejections counted");
+    ok(m1_cdc_rx_refused_bytes(0, 64, 96, 32) == 0, "send covering carry-over and all new bytes loses nothing");
+    ok(m1_cdc_rx_refused_bytes(0, 10, 96, 32) == 0, "accepted count clamps at the new bytes (no underflow)");
+    ok(m1_cdc_rx_refused_bytes(5, 10, 96, 32) == 5, "clamping keeps intake rejections counted");
+    /* The loss-only helper counts just the bytes that never fit usbRxBuffer:
+     * nothing is lost when the stream buffer merely refused (retryable), so it
+     * is independent of the refusal arithmetic above. */
+    ok(m1_cdc_rx_unrecoverable_bytes(0) == 0,
+       "no intake rejection: the loss-only helper counts nothing");
+    ok(m1_cdc_rx_unrecoverable_bytes(64) == 64,
+       "intake rejection is unrecoverable loss");
+    ok(m1_cdc_rx_unrecoverable_bytes(10) == 10,
+       "loss-only helper is a straight count of the rejected bytes");
 
     /* ---- 2. replay of the device control flow ---------------------------- */
     printf("replay: stream buffer fills and stays full\n");
@@ -167,9 +187,11 @@ int main(void) {
         model_callback(&m, 64U);
         ok(m.idx == 0U && m.used == MODEL_STREAM_CAP,
            "two packets fill the stream buffer, none dropped");
+        ok(m.used == MODEL_STREAM_LENGTH - 1U,
+           "the model fills to xLength - 1 bytes (FreeRTOS keeps one byte free)");
         ok(m.stats.dropped_bytes == 0U, "no drops while the buffer had room");
         ok(m.stats.high_watermark == MODEL_STREAM_CAP,
-           "high watermark reaches full capacity");
+           "high watermark reaches usable capacity (xLength - 1)");
 
         /* Third packet: stream buffer full -> all 64 bytes refused but kept in
          * usbRxBuffer for a retry. */
@@ -240,15 +262,73 @@ int main(void) {
            "high watermark is monotonic across drain cycles (not lowered)");
         ok(m.used == 32U, "buffered-now is the current pending level, not the watermark");
 
-        /* Reset clears both counters and restarts the window. */
+        /* Reset clears the counters and restarts the window. */
         m1_cdc_rx_stats_reset(&m.stats);
-        ok(m.stats.dropped_bytes == 0U && m.stats.high_watermark == 0U,
-           "reset zeroes drop counter and high watermark");
+        ok(m.stats.dropped_bytes == 0U && m.stats.lost_bytes == 0U &&
+           m.stats.high_watermark == 0U,
+           "reset zeroes refusal, loss and watermark counters");
         model_drain(&m, m.used);
         model_callback(&m, 64U);
         ok(m.stats.high_watermark == 64U,
            "after reset the watermark restarts from the current level");
         ok(m.stats.dropped_bytes == 0U, "after reset the drop counter restarts at zero");
+    }
+
+    /* ---- 2b. loss counter: only unrecoverable bytes ---------------------- */
+    printf("loss counter (unrecoverable only)\n");
+    {
+        model_t m;
+        size_t i;
+        memset(&m, 0, sizeof(m));
+
+        /* Pure back-pressure: two packets fill the stream buffer, a third is
+         * refused at arrival but stays queued in usbRxBuffer. Nothing is lost. */
+        model_callback(&m, 64U);
+        model_callback(&m, 64U);
+        model_callback(&m, 32U);
+        ok(m.stats.dropped_bytes == 32U && m.idx == 32U,
+           "refused packet counted and still queued for retry");
+        ok(m.stats.lost_bytes == 0U,
+           "pure back-pressure loses nothing: loss counter stays 0");
+
+        /* The retry succeeds after a drain: delivered, and neither counter
+         * moves -- the refusal already charged at arrival stays charged. */
+        model_drain(&m, MODEL_STREAM_CAP);
+        model_callback(&m, 0U);
+        ok(m.idx == 0U && m.stats.dropped_bytes == 32U && m.stats.lost_bytes == 0U,
+           "successful retry leaves both counters unchanged (no loss, no re-count)");
+
+        /* Consumer stalled, stream buffer full: the first packet still fits
+         * usbRxBuffer (refused, retryable), the next ones overflow it and are
+         * gone for good. */
+        m.used = MODEL_STREAM_CAP;
+        for (i = 0U; i < 3U; i++) model_callback(&m, 64U);
+        ok(m.overflow == MODEL_INTERMEDIATE,
+           "the modelled intermediate buffer overflowed by two packets");
+        ok(m.stats.lost_bytes == MODEL_INTERMEDIATE,
+           "usbRxBuffer overflow increments the loss counter only");
+        ok(m.stats.dropped_bytes == 32U + 192U,
+           "refusal counter keeps its arithmetic (refused plus overflow)");
+        ok(m.stats.lost_bytes < m.stats.dropped_bytes,
+           "loss is a proper subset of the refusal counter, never a second copy");
+        ok(m.delivered_new + m.stats.dropped_bytes == m.offered,
+           "delivered + refused == offered still holds with the loss counter");
+
+        /* Bridge-mode exit: bytes accepted into the stream buffer but never
+         * read by the consumer are unrecoverable too, and are counted by the
+         * discard helper, not by the RX callback. */
+        {
+            uint32_t lost_before = m.stats.lost_bytes;
+            uint32_t dropped_before = m.stats.dropped_bytes;
+            m1_cdc_rx_stats_add_lost(&m.stats, (uint32_t)m.used);
+            ok(m.stats.lost_bytes == lost_before + (uint32_t)m.used,
+               "bridge-mode discard is added to the loss counter");
+            ok(m.stats.dropped_bytes == dropped_before,
+               "bridge-mode discard does not touch the refusal counter");
+            m1_cdc_rx_stats_add_lost(&m.stats, 0U);
+            ok(m.stats.lost_bytes == lost_before + (uint32_t)m.used,
+               "a zero-byte discard changes nothing");
+        }
     }
 
     /* ---- 3. source seams on the device file ------------------------------ */
@@ -260,7 +340,9 @@ int main(void) {
             "USB/Class/CDC/Inc/usbd_cdc_if.h",
             "../../USB/Class/CDC/Inc/usbd_cdc_if.h",
             "m1_csrc/m1_cdc_rx_stats.h",
-            "../../m1_csrc/m1_cdc_rx_stats.h"
+            "../../m1_csrc/m1_cdc_rx_stats.h",
+            "m1_csrc/m1_log_debug.c",
+            "../../m1_csrc/m1_log_debug.c"
         };
         const char *body_sig = "static int8_t CDC_Receive_FS(uint8_t *Buf, uint32_t *Len)";
         char *src = NULL;
@@ -315,11 +397,12 @@ int main(void) {
             ok(body != NULL, "located the CDC_Receive_FS definition");
             if (body != NULL) {
                 const char *record = strstr(body, "m1_cdc_rx_stats_record(&cdc_rx_stats");
-                const char *lost = strstr(body, "m1_cdc_rx_lost_bytes(rejectedBytes");
+                const char *refused = strstr(body, "m1_cdc_rx_refused_bytes(rejectedBytes");
+                const char *lost = strstr(body, "m1_cdc_rx_unrecoverable_bytes(rejectedBytes");
                 const char *spaces = strstr(body, "freeSpace = xStreamBufferSpacesAvailable(");
                 const char *send = strstr(body, "xStreamBufferSendFromISR(");
-                ok(record != NULL && lost != NULL,
-                   "ISR site calls the shared accounting helpers");
+                ok(record != NULL && refused != NULL && lost != NULL,
+                   "ISR site calls the shared accounting helpers (refusal and loss)");
                 ok(record != NULL && spaces != NULL && send != NULL &&
                    strstr(body, "pendingBefore") != NULL &&
                    strstr(body, "appendedBytes") != NULL &&
@@ -366,10 +449,13 @@ int main(void) {
         ok(src != NULL, "read USB/Class/CDC/Inc/usbd_cdc_if.h");
         if (src != NULL) {
             ok(strstr(src, "uint32_t CDC_CLI_RxDroppedBytes(void);") != NULL &&
+               strstr(src, "uint32_t CDC_CLI_RxLostBytes(void);") != NULL &&
                strstr(src, "uint32_t CDC_CLI_RxHighWatermark(void);") != NULL &&
                strstr(src, "uint32_t CDC_CLI_RxBufferedBytes(void);") != NULL &&
                strstr(src, "void CDC_CLI_RxResetStats(void);") != NULL,
                "legacy CDC_CLI_Rx* accessor names are declared");
+            ok(strstr(src, "void CDC_CLI_RxDiscardPendingBytes(void);") != NULL,
+               "bridge-mode discard accounting accessor is declared");
             free(src);
         }
 
@@ -398,6 +484,8 @@ int main(void) {
         if (src != NULL) {
             ok(strstr(src, "volatile uint32_t dropped_bytes;") != NULL,
                "dropped_bytes is a volatile 32-bit counter");
+            ok(strstr(src, "volatile uint32_t lost_bytes;") != NULL,
+               "lost_bytes is a volatile 32-bit counter");
             ok(strstr(src, "volatile uint32_t high_watermark;") != NULL,
                "high_watermark is a volatile 32-bit counter");
             free(src);
@@ -433,12 +521,47 @@ int main(void) {
                 const char *leave = strstr(reset, "taskEXIT_CRITICAL();");
                 ok(enter != NULL && zero != NULL && leave != NULL &&
                    enter < zero && zero < leave,
-                   "reset zeroes both counters inside a critical section");
+                   "reset zeroes all counters inside a critical section");
             }
+            ok(strstr(src, "void CDC_CLI_RxDiscardPendingBytes(void)") != NULL &&
+               strstr(src, "m1_cdc_rx_stats_add_lost(&cdc_rx_stats") != NULL &&
+               strstr(src, "xStreamBufferReset(h_usb_rx_streambuf)") != NULL,
+               "bridge-mode discard counts the pending bytes before resetting");
             ok(strstr(src, "static m1_cdc_rx_stats_t cdc_rx_stats;") != NULL,
                "counters have one file-scope owner (no shadow copies)");
             ok(strstr(src, "#pragma GCC optimize(\"O0\")") != NULL,
                "file keeps the O0 pragma (RX callback stays debuggable)");
+            free(src);
+        }
+
+        /* Mode-switch exit: the bridge stream buffer is emptied through the
+         * counting helper, not with a bare reset, so bytes still queued there
+         * are visible in the loss counter. */
+        src = NULL;
+        for (size_t i = 6U; (i < 8U) && (src == NULL); i++) {
+            fp = fopen(paths[i], "rb");
+            if (fp != NULL) {
+                long n;
+                if (fseek(fp, 0, SEEK_END) == 0 && (n = ftell(fp)) >= 0 &&
+                    fseek(fp, 0, SEEK_SET) == 0) {
+                    src = malloc((size_t)n + 1U);
+                    if (src != NULL &&
+                        fread(src, 1U, (size_t)n, fp) == (size_t)n) {
+                        src[n] = '\0';
+                    } else {
+                        free(src);
+                        src = NULL;
+                    }
+                }
+                fclose(fp);
+            }
+        }
+        ok(src != NULL, "read m1_csrc/m1_log_debug.c (cwd-independent)");
+        if (src != NULL) {
+            ok(strstr(src, "CDC_CLI_RxDiscardPendingBytes();") != NULL,
+               "bridge-mode exit uses the counting discard helper");
+            ok(strstr(src, "xStreamBufferReset(h_usb_rx_streambuf)") == NULL,
+               "no bare reset of the bridge stream buffer discards bytes uncounted");
             free(src);
         }
     }
