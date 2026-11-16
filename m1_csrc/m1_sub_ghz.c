@@ -61,6 +61,12 @@
 #define SUB_GHZ_433_92_NEW_PDTC			0x6C // Attack and decay times of the OOK Peak Detector - Default: 0x28
 #define SUB_GHZ_SCAN_OOK_PDTC				0x6C // reverted: PDTC was not the issue (frequency was)
 
+/* Sub-GHz Rx DMA double-buffering (ported from fork d3a0208, issue #22):
+ * the RAW record capture buffer is split in two blocks; GPDMA1 Channel 3
+ * raises HT/TC per block, and the ISR queues the completed block id. */
+#define SUBGHZ_RX_DMA_BLOCK_SAMPLES (SUBGHZ_RAW_DATA_SAMPLES_TO_RW / 2)
+#define SUBGHZ_RX_DMA_BUFFER_SAMPLES (SUBGHZ_RX_DMA_BLOCK_SAMPLES * 2)
+
 #define M1_LOGDB_TAG				"Sub-GHz"
 
 #define THIS_LCD_MENU_TEXT_FIRST_ROW_Y			11
@@ -328,6 +334,7 @@ TIM_HandleTypeDef   timerhdl_subghz_tx;
 TIM_HandleTypeDef   timerhdl_subghz_rx;
 EXTI_HandleTypeDef 	si4463_exti_hdl;
 DMA_HandleTypeDef hdma_subghz_tx;
+DMA_HandleTypeDef hdma_subghz_rx;
 
 S_M1_RingBuffer subghz_rx_rawdata_rb;
 static uint16_t *subghz_front_buffer = NULL;
@@ -348,6 +355,18 @@ volatile uint8_t subghz_tx_tc_flag;
 uint8_t subghz_record_mode_flag = 0;
 volatile uint32_t subghz_capture_overflow = 0;
 uint8_t subghz_scan_mode_flag = 0; /* route2: buffered scan capture */
+/* Sub-GHz Rx DMA block queue + pressure counters (ported from fork d3a0208,
+ * issues #22/#26/#27). ISR-side producers only; the record task drains the
+ * block queue and clears subghz_rx_queue_notify_pending. */
+volatile uint8_t subghz_rx_queue_notify_pending = 0;
+volatile uint32_t subghz_rx_throttle_count = 0;
+volatile uint32_t subghz_rx_queue_drop_count = 0;
+volatile uint32_t subghz_rx_dma_ht_count = 0;
+volatile uint32_t subghz_rx_dma_tc_count = 0;
+volatile uint8_t subghz_rx_dma_block_q[SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN] = {0};
+volatile uint8_t subghz_rx_dma_block_head = 0;
+volatile uint8_t subghz_rx_dma_block_tail = 0;
+volatile uint8_t subghz_rx_dma_block_count = 0;
 /* Record RAW Ready-state RSSI graph render context + ~100ms tick deadlines.
  * Ready-only GUI (Option C): the v0.8.0.49 capture path (ISR / subghz_rx_rawdata_rb
  * / subghz_record_mode_flag / rx_raw_save) is unchanged, and NO captured/flushed
@@ -538,6 +557,39 @@ void menu_sub_ghz_exit(void)
 	HAL_GPIO_WritePin(SI4463_CS_GPIO_Port, SI4463_CS_Pin, GPIO_PIN_SET);
 	HAL_GPIO_WritePin(SI4463_ENA_GPIO_Port, SI4463_ENA_Pin, GPIO_PIN_RESET);
 } // void menu_sub_ghz_exit(void)
+
+/* Restart the Rx DMA transfer from ISR context (ported from fork d3a0208,
+ * issue #22). Called from GPDMA1_Channel3_IRQHandler on transfer complete
+ * while recording, so capture continues with the freshly re-armed buffer.
+ * Bounded disable-wait; on (unexpected) disable timeout the channel is left
+ * stopped and the drop counter records the event instead of hanging the ISR. */
+void subghz_rx_dma_restart_from_isr(void) {
+  uint32_t bndt;
+  uint32_t timeout = 10000U;
+
+  if (hdma_subghz_rx.Instance == NULL) {
+    return;
+  }
+
+  __HAL_DMA_DISABLE(&hdma_subghz_rx);
+  while (((hdma_subghz_rx.Instance->CCR & DMA_CCR_EN) != 0U) &&
+         (timeout > 0U)) {
+    timeout--;
+  }
+  if (timeout == 0U) {
+    subghz_rx_queue_drop_count++;
+    ;
+    return;
+  }
+
+  bndt = (uint32_t)(SUBGHZ_RX_DMA_BUFFER_SAMPLES * sizeof(uint32_t));
+  MODIFY_REG(hdma_subghz_rx.Instance->CBR1, DMA_CBR1_BNDT, bndt);
+
+  __HAL_DMA_CLEAR_FLAG(&hdma_subghz_rx,
+                       DMA_FLAG_TC | DMA_FLAG_HT | DMA_FLAG_DTE | DMA_FLAG_ULE |
+                           DMA_FLAG_USE | DMA_FLAG_SUSP | DMA_FLAG_TO);
+  __HAL_DMA_ENABLE(&hdma_subghz_rx);
+}
 
 
 
