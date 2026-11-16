@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: CRC emitter parity harness (issue #40) — `scripts/verify_crc_parity.sh`
+  generates four deterministic full-size (`0xFFC14`-byte) images from the
+  committed spec in `tools/crc_test_vectors.py` (so no ~1 MiB binaries live in
+  git) and checks each one: with `srec_cat` installed it runs both emitters and
+  byte-compares the outputs, without it, it compares the Python emitter's
+  SHA-256 and CRC word against `scripts/crc_parity_golden.txt`, whose values
+  were captured from the authoritative `srec_cat` pipeline
 - Fork: Sub-GHz Rx DMA deferred-context ingestion ported onto the adopted
   base (issue #52, closes the #22/#26/#27 stability carry from d3a0208) —
   GPDMA1 Channel 3 double-buffered RAW record capture (TIM1_CH1 request)
@@ -61,6 +68,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Fork: `./build.sh --release` now runs the CRC emitter parity harness on the
+  image the release ships (`build/<artifact>.bin`) and byte-compares the
+  CRC-appended `<artifact>_wCRC.bin` — the exact bytes hashed into the manifest
+  — against the emitters' derivation, before anything is copied to `artifacts/`;
+  it refuses to write the release manifest if either check fails and drops any
+  manifest left by an earlier run — plain `./build.sh` builds remove a stale one
+  as well, since they overwrite `artifacts/` without writing a manifest — so
+  emitter equivalence and golden-table integrity are gated by the only automated
+  build path the repo has. The gate needs Python 3 on `PATH` even where
+  `srec_cat` is installed; plain `./build.sh` builds skip it to keep local
+  iteration fast (issue #40)
 - Fork: version namespace frozen to 0.9.0.0-UFO, single-sourced from
   `m1_csrc/m1_fw_update_bl.h` and derived into the CMake project name,
   `build.sh` artifact stem, the about-box/boot-banner label, and the
@@ -84,6 +102,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fork: CRC parity evidence now enforces what it documents (issue #40) — the
+  golden table's input digest column was never consulted (each generated image
+  was compared against the generator's own stdout, so a corrupted recorded
+  digest still printed `RESULT: PASS`) and a vector whose checks failed still
+  printed `PASS:`; `scripts/verify_crc_parity.sh` now drives input provenance
+  from `scripts/crc_parity_golden.txt`, fails on generator/table vector-name
+  drift, and derives each vector's verdict from its own failure delta. It also
+  runs the **real build image** (`build/<artifact>.bin`, or a path argument)
+  through both emitters and asserts `0xFFC18` — previously every vector was
+  synthetic — pins the documented short-image divergence (the Python emitter
+  refuses a 400-byte input) and gates golden regeneration behind
+  `--update-golden`, which refuses without `srec_cat` on `PATH` so the table
+  cannot be re-baselined from the code under test. `build.sh` now also asserts
+  the plain `<artifact>.bin` is exactly `0xFFC14` bytes and is a byte-identical
+  prefix of the `_wCRC.bin`, closing the crop failure mode a total-size-only
+  check accepts; docs and the CMake comment state the emitter equivalence for
+  `0xFFC14`-byte images (the only shape the build produces) instead of
+  unconditionally. `tools/m1cp_host_test/test_m1cp_fs.c` uses a portable
+  `mkdir` wrapper so the aggregate host suite builds on MinGW as well as POSIX
+  (9/9 targets green on Windows)
+- Fork: canonical build no longer fails on hosts without SRecord (issue #40) —
+  the `CMakeLists.txt` CRC step called `srec_cat` unconditionally, so on a
+  Windows/Git-Bash host the POST_BUILD command failed, `build/` never got
+  `_wCRC.bin`, and `build.sh` aborted with an empty `artifacts/`. The step now
+  resolves exactly one emitter at configure time (srecord stays authoritative
+  when it is on `PATH`, otherwise the byte-equivalent
+  `tools/emulate_srec_cat_crc.py`; if neither exists, configure fails loudly
+  instead of skipping the CRC) and prints the choice as a `CRC emitter:`
+  status line. `build.sh` asserts the emitted `_wCRC.bin` is exactly `0xFFC18`
+  (1047576) bytes in plain and `--release` mode, and the release manifest now
+  hashes portably (`md5sum`/`md5 -q`, `sha256sum`/`shasum -a 256`, shared
+  implementation in `scripts/portable_hash.sh`) with identical keys on every
+  host
 - Fork: filename/include case corrected for case-sensitive filesystems
   (issue #46) — `m1_csrc/Res_String.{c,h}` → `res_string.{c,h}` and
   `Battery/Golden_Image_0420.h` → `golden_image_0420.h` (renamed with

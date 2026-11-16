@@ -8,8 +8,22 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#if defined(_WIN32)
+#include <direct.h>   /* _mkdir -- MinGW's mkdir() is 1-arg (deprecated MSVC name) */
+#endif
 #include "m1_manager_fs.h"
 #include "m1_manager_protocol.h"
+
+/* POSIX mkdir(2) takes (path, mode); Windows/MinGW exposes only the 1-arg
+ * _mkdir (no mode: the directory inherits the parent's ACL). POSIX behaviour
+ * is unchanged -- this test's sandbox mode is irrelevant on Windows. */
+static void host_mkdir(const char *path) {
+#if defined(_WIN32)
+    (void)_mkdir(path);
+#else
+    (void)mkdir(path, 0777);
+#endif
+}
 
 /* status API is provided by the linked m1_manager_protocol.c (host build). */
 uint32_t g_test_tick_ms = 0;   /* referenced by protocol core stubs */
@@ -40,7 +54,7 @@ static uint64_t be_free(void) { return g_free; }
 static int g_ensure_dir_root_calls = 0;
 static m1cp_fsb_rc_t be_ensure_dir(const char *dir_path) {
     if (strcmp(dir_path, "0:") == 0) g_ensure_dir_root_calls++;
-    char p[128]; hostpath(dir_path, p); mkdir(p, 0777); return M1CP_FSB_OK;
+    char p[128]; hostpath(dir_path, p); host_mkdir(p); return M1CP_FSB_OK;
 }
 static m1cp_fsb_rc_t be_open_w(const char *path) {
     char p[128]; hostpath(path, p);
@@ -114,7 +128,7 @@ int main(void) {
      * Previously this mkdir happened as an incidental side effect of
      * be_ensure_dir() always being called once for the bare root; do it
      * explicitly now instead of depending on that. */
-    mkdir(SANDBOX, 0777);
+    host_mkdir(SANDBOX);
     m1cp_fs_init(&BE);
 
     /* ---- name validation (escaping 0:/ is structurally impossible) ---- */

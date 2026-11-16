@@ -14,6 +14,11 @@ fi
 echo "Updating submodules..."
 git submodule update --init --recursive
 
+# Portable md5_of/sha256_of (Git-Bash/Windows, Linux, macOS) -- one shared
+# implementation, see scripts/portable_hash.sh.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+. "$SCRIPT_DIR/scripts/portable_hash.sh"
+
 BUILD_DIR="build"
 OUTPUT_DIR="artifacts"
 # Derive the artifact stem from the single source of truth
@@ -28,6 +33,7 @@ if [ -z "$FW_VERSION_QUAD" ] || [ -z "$FW_FORK_TAG" ]; then
     exit 1
 fi
 ARTIFACT_STEM="M1_v${FW_VERSION_QUAD}-${FW_FORK_TAG}"
+MANIFEST="$OUTPUT_DIR/${ARTIFACT_STEM}_wCRC.manifest.txt"
 mkdir -p $BUILD_DIR $OUTPUT_DIR
 
 GIT_COMMIT=$(git rev-parse --short=8 HEAD)
@@ -42,6 +48,16 @@ if [ "$RELEASE_MODE" = "1" ] && [ "$GIT_DIRTY" = "1" ]; then
     git status --short >&2
     exit 1
 fi
+
+# A manifest from an earlier release must never survive beside freshly built
+# binaries: it still carries the previous release's sha256/md5/size/commit. This
+# applies to plain builds too -- they overwrite the artifacts/ binaries but never
+# write a manifest, so a leftover one would describe bytes that are no longer
+# there. Removing it before configure/build also covers aborts anywhere later
+# (compile, size/prefix assertions, parity gate): the directory must never look
+# like a completed release to someone who hands it off without reading the exit
+# status.
+rm -f "$MANIFEST"
 
 # Deterministic release metadata: derive SOURCE_DATE_EPOCH from the SOURCE
 # COMMIT's own committer timestamp (identical for a given commit on any machine
@@ -71,6 +87,86 @@ echo "Compiling..."
 cmake --build $BUILD_DIR --parallel $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 echo "Collecting artifacts to ./$OUTPUT_DIR"
+# The CRC-bearing image is a release contract: 0xFFC14 bytes of application
+# image plus the 4-byte little-endian CRC word the CRC emitter appends. Assert
+# the exact size before anything is copied to artifacts/, in plain and
+# --release mode alike, so a silently skipped or truncated CRC step fails here
+# rather than at flash time.
+#
+# Both sides of that sum are asserted. Checking only the 0xFFC18 total would
+# accept a cropped image: both emitters crop at 0xFFC14, so an application
+# image that grew past 0xFFC14 (e.g. a new field in S_M1_FW_CONFIG_t, whose
+# size the build's hard-coded 0xFFC14 is only coupled to by convention) would
+# be silently truncated to exactly 0xFFC18 and still pass. Asserting the plain
+# image is exactly 0xFFC14 and that the wCRC prefix equals it closes that hole.
+CROP_END_BYTES=1047572 # 0xFFC14 == crop end == app image size == CRC offset
+WCRC_EXPECTED_BYTES=1047576 # 0xFFC18 == crop end 0xFFC14 + 4-byte CRC word
+PLAIN_FILE="$BUILD_DIR/${ARTIFACT_STEM}.bin"
+WCRC_FILE="$BUILD_DIR/${ARTIFACT_STEM}_wCRC.bin"
+if [ ! -f "$PLAIN_FILE" ]; then
+    echo "Error: application image is missing: $PLAIN_FILE" >&2
+    echo "       The link/objcopy step did not run." >&2
+    exit 1
+fi
+PLAIN_SIZE=$(wc -c < "$PLAIN_FILE" | tr -d ' ')
+if [ "$PLAIN_SIZE" != "$CROP_END_BYTES" ]; then
+    echo "Error: $PLAIN_FILE is $PLAIN_SIZE bytes, expected $CROP_END_BYTES" \
+         "(0xFFC14 = CRC crop end / append offset)." >&2
+    if [ "${PLAIN_SIZE:-0}" -gt "$CROP_END_BYTES" ]; then
+        echo "       The image grew past the crop end, so the CRC emitter would" >&2
+        echo "       truncate the tail (S_M1_FW_CONFIG_t / linker section vs." >&2
+        echo "       the hard-coded 0xFFC14 moved out of sync)." >&2
+    else
+        echo "       The image is shorter than the CRC offset, so the CRC step" >&2
+        echo "       did not run on a complete image." >&2
+    fi
+    exit 1
+fi
+echo "Verified: ${ARTIFACT_STEM}.bin is $PLAIN_SIZE bytes (0xFFC14)"
+if [ ! -f "$WCRC_FILE" ]; then
+    echo "Error: CRC-bearing image is missing: $WCRC_FILE" >&2
+    echo "       The CMake CRC step did not run (see the 'CRC emitter:' status line)." >&2
+    exit 1
+fi
+WCRC_SIZE=$(wc -c < "$WCRC_FILE" | tr -d ' ')
+if [ "$WCRC_SIZE" != "$WCRC_EXPECTED_BYTES" ]; then
+    echo "Error: $WCRC_FILE is $WCRC_SIZE bytes, expected $WCRC_EXPECTED_BYTES" \
+         "(0xFFC18 = crop end 0xFFC14 + 4-byte CRC word)." >&2
+    exit 1
+fi
+if ! head -c "$CROP_END_BYTES" "$WCRC_FILE" | cmp -s - "$PLAIN_FILE"; then
+    echo "Error: ${ARTIFACT_STEM}_wCRC.bin does not start with ${ARTIFACT_STEM}.bin" >&2
+    echo "       The CRC step cropped/replaced the application image instead of" >&2
+    echo "       appending to it." >&2
+    exit 1
+fi
+echo "Verified: ${ARTIFACT_STEM}_wCRC.bin is $WCRC_SIZE bytes (0xFFC18), prefix == ${ARTIFACT_STEM}.bin"
+
+if [ "$RELEASE_MODE" = "1" ]; then
+    # Emitter parity gate (issue #40: "cross-platform build+vector test"): the
+    # byte-equivalence guarantee is only as fresh as its last run, and this
+    # repo has no CI workflow to run it. The release path is the only automated
+    # invocation there is, so gate it here -- both emitters must agree on the
+    # image this release ships, and the golden table must still match the
+    # generator. Plain developer builds skip this deliberately: it generates
+    # four ~1 MiB images and would slow every local iteration.
+    #
+    # --expect-wcrc is what makes the manifest claim literally true: the harness
+    # derives the CRC-appended image from $PLAIN_FILE and compares it byte for
+    # byte against $WCRC_FILE, the exact bytes hashed below and copied to
+    # artifacts/. Size and prefix alone leave the 4 CRC bytes unconstrained.
+    #
+    # It runs before the artifacts/ copy so a failure leaves artifacts/ as it
+    # found it rather than looking like a release without a manifest.
+    if ! sh "$SCRIPT_DIR/scripts/verify_crc_parity.sh" "$PLAIN_FILE" --expect-wcrc "$WCRC_FILE"; then
+        echo "Error: CRC emitter parity harness failed -- refusing to write a release" >&2
+        echo "       manifest for unverified output. See the FAIL lines above: the" >&2
+        echo "       emitters, the golden table, or the shipped image disagree." >&2
+        exit 1
+    fi
+    echo "Verified: CRC emitter parity harness passed on $PLAIN_FILE and $WCRC_FILE"
+fi
+
 for artifact in \
     "$ARTIFACT_STEM.bin" \
     "$ARTIFACT_STEM.elf" \
@@ -115,13 +211,15 @@ if [ "$RELEASE_MODE" = "1" ]; then
 
     ARTIFACT_BIN="$OUTPUT_DIR/${ARTIFACT_STEM}_wCRC.bin"
 
-    MD5_HASH=$(md5 -q "$ARTIFACT_BIN" 2>/dev/null || md5sum "$ARTIFACT_BIN" 2>/dev/null | cut -d' ' -f1)
-    SHA256_HASH=$(shasum -a 256 "$ARTIFACT_BIN" 2>/dev/null | cut -d' ' -f1)
+    MD5_HASH=$(md5_of "$ARTIFACT_BIN")
+    SHA256_HASH=$(sha256_of "$ARTIFACT_BIN")
     SIZE_BYTES=$(wc -c < "$ARTIFACT_BIN" | tr -d ' ')
     BRANCH=$(git branch --show-current)
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-    MANIFEST="$OUTPUT_DIR/$(basename "$ARTIFACT_BIN" .bin).manifest.txt"
+    # Written aside and renamed into place so an interrupted run cannot leave a
+    # truncated manifest where a complete-looking one is expected.
+    MANIFEST_TMP="$MANIFEST.tmp"
     {
         echo "binary=$(basename "$ARTIFACT_BIN")"
         echo "commit=$GIT_COMMIT"
@@ -135,7 +233,8 @@ if [ "$RELEASE_MODE" = "1" ]; then
         echo "md5=$MD5_HASH"
         echo "sha256=$SHA256_HASH"
         arm-none-eabi-size "$ELF_FILE" 2>/dev/null | tail -1 | awk '{print "flash_text="$1"\nflash_data="$2"\nram_bss="$3}'
-    } > "$MANIFEST"
+    } > "$MANIFEST_TMP"
+    mv -f "$MANIFEST_TMP" "$MANIFEST"
     echo "Release manifest: $MANIFEST"
     cat "$MANIFEST"
 fi

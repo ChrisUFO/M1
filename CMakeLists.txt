@@ -140,13 +140,57 @@ add_custom_command(
     #COMMENT "Generating .hex file"
 )
 
-# Command to generate .bin file with CRC
+# Command to generate .bin file with CRC -- ONE canonical step, TWO
+# interchangeable emitters (issue #40).
+#
+# The CRC-bearing image is part of the release contract (the on-device update
+# path verifies it), so this step must never silently no-op. srecord stays the
+# authoritative reference when it is installed; otherwise the repository's
+# pure-Python emulator (tools/emulate_srec_cat_crc.py, parity-tested by
+# scripts/verify_crc_parity.sh against this exact srec_cat invocation) emits
+# the byte-identical image. That equivalence holds for images of exactly
+# 0xFFC14 bytes -- the only shape the canonical build produces; for shorter
+# images srec_cat 0x00-pads and exits 0 while the emulator refuses (see
+# docs/build-and-debug.md "CRC emitter parity"). If neither emitter exists,
+# configuration fails loudly instead of shipping a build directory without
+# ${CMAKE_PROJECT_NAME}_wCRC.bin.
+#
+# This block must live in this file, not cmake/m1_01/CMakeLists.txt:
+# add_custom_command(TARGET ... POST_BUILD) is only valid in the directory
+# scope where the target was created by add_executable().
+set(M1_WCRC_BIN "${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}_wCRC.bin")
+find_program(SREC_CAT_EXECUTABLE srec_cat)
+if(SREC_CAT_EXECUTABLE)
+    set(M1_CRC_EMITTER "srec_cat (${SREC_CAT_EXECUTABLE})")
+    set(M1_CRC_EMIT_COMMAND
+        "${SREC_CAT_EXECUTABLE}"
+        "${TARGET_BIN}" -binary -crop 0x0 0x000FFC14 -STM32_Little_Endian 0x000FFC14
+        -o "${M1_WCRC_BIN}" -binary)
+else()
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        set(M1_CRC_EMITTER
+            "Python emulator (${Python3_EXECUTABLE} tools/emulate_srec_cat_crc.py)")
+        set(M1_CRC_EMIT_COMMAND
+            "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tools/emulate_srec_cat_crc.py"
+            "${TARGET_BIN}" "${M1_WCRC_BIN}" --crop-end 0xFFC14)
+    else()
+        message(FATAL_ERROR
+            "No CRC emitter available: neither 'srec_cat' (SRecord) nor a "
+            "Python 3 interpreter was found. Install SRecord so srec_cat is on "
+            "PATH, or install Python 3 (the repo's tools/emulate_srec_cat_crc.py "
+            "emitter produces the byte-identical image). The build deliberately "
+            "fails rather than skipping ${CMAKE_PROJECT_NAME}_wCRC.bin.")
+    endif()
+endif()
+message(STATUS "CRC emitter: ${M1_CRC_EMITTER}")
 add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E echo "Generating bin file with CRC ${CMAKE_PROJECT_NAME}_wCRC.bin"
     TARGET ${CMAKE_PROJECT_NAME}
     POST_BUILD
-    COMMAND srec_cat
-${TARGET_BIN} -binary -crop 0x0 0x000FFC14 -STM32_Little_Endian 0x000FFC14 -o ${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}_wCRC.bin -binary
+    COMMAND ${M1_CRC_EMIT_COMMAND}
+    VERBATIM
     #COMMENT "Generating .bin file with CRC"
 )
 
