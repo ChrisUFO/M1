@@ -40,6 +40,32 @@ Bank 2 is addressed by adding `M1_FLASH_BANK_SIZE` to the Bank 1 address.
 The current source constants are major `0`, minor `8`, build `0`, RC `5`.
 The byte order in the struct is intentionally RC, build, minor, major.
 
+## Backup-register state
+
+The STM32 keeps its small, power-cycle-persistent state in RTC/TAMP backup
+registers. The 8-byte layout is fixed by `S_M1_BK_REGS_t` (`m1_system.h`), which
+is statically asserted to stay 8 bytes so the block can never grow into the
+registers the ESP32 version record owns:
+
+| Register | Bytes | Field |
+| --- | --- | --- |
+| DR0 | 0-3 | `magic_number` (`SYS_CONFIG_MAGIC_NUMBER`, `0x534A1F42`) |
+| DR1 | 4 | `device_op_status` (update state machine) |
+| DR1 | 5 | `boot_attempts` (failed boot CRC validations, saturating at 255) |
+| DR1 | 6 | `boot_fault_signature` (fault class, `0` = none) |
+| DR1 | 7 | `swap_attempts` (bank swaps since the last CRC-validated boot) |
+| DR2 | -- | ESP32 firmware version (owned by `m1_esp_version.c`) |
+| DR3 | -- | ESP32 version validity magic (owned by `m1_esp_version.c`) |
+
+All access goes through `startup_config_write()` / `startup_config_read()` with
+the `BK_REGS_SELECT_*` selectors, which derive the physical register from the
+byte offset and rewrite the whole 32-bit word from the in-RAM shadow (DR1
+carries four independent byte fields). No source may dereference the TAMP BKP
+registers directly; `scripts/check_no_raw_bkp_writes.sh` enforces that, and the
+host test target runs it. `SYS_CONFIG_MAGIC_NUMBER` is bumped whenever this
+layout changes, so registers left by an older layout are re-initialised exactly
+once.
+
 ## CRC generation and validation
 
 The build command crops the binary through `0x000FFC14` and asks SRecord to
@@ -50,7 +76,25 @@ inversion, no output inversion, and 32-bit input words.
 `0x000FFC14` is correct for the current 20-byte metadata structure beginning at
 `0x000FFC00`. A metadata-size change moves the CRC address and therefore requires
 coordinated changes to the linker layout, CMake command, update parser, tests,
-and documentation.
+and documentation. The firmware build static-asserts
+`FW_CRC_ADDRESS - FW_START_ADDRESS == 0xFFC14` against the boot failsafe's crop
+end, so a metadata change fails the build instead of silently validating a span
+nobody signed.
+
+Two different banks are checked, and the offsets differ deliberately:
+
+- **Update verification** (`bl_crc_check()`) validates the *inactive* bank while
+  the device runs from the active one, so it reads `FW_START_ADDRESS +
+  M1_FLASH_BANK_SIZE` and compares against the CRC stored at `FW_CRC_ADDRESS +
+  M1_FLASH_BANK_SIZE`.
+- **Boot failsafe** (`bl_crc_validate_active_bank()`) validates the bank the
+  device is *executing from*. Because the option-byte bank swap remaps the
+  active physical bank to `0x08000000`, that bank always appears at
+  `0x08000000..0x080FFFFF` and its CRC word is exactly at `FW_CRC_ADDRESS` --
+  no bank-size offset.
+
+Both checks derive the image size from address arithmetic. Neither scans for a
+magic number (image data can contain it) nor trusts a size field.
 
 ## Update flow
 
@@ -69,12 +113,64 @@ The implementation performs the following high-level sequence:
 The exact error enumeration is `S_M1_M1_FW_CODES_t` in
 `m1_fw_update_bl.h`.
 
+## Boot failsafe
+
+Every boot now validates the RUNNING bank before the normal UI appears
+(`startup_boot_failsafe()` in `m1_system.c`; it runs after the update state
+machine has been reconciled and before the boot artwork):
+
+1. `bl_crc_validate_active_bank()` computes the hardware CRC32 of the fixed
+   span `[FW_START_ADDRESS, FW_CRC_ADDRESS)` (the same `0xFFC14` bytes the build
+   signed) and compares it with the 4 bytes at `FW_CRC_ADDRESS`. No magic scan
+   and no image-size field are involved.
+2. On a match the boot continues and any previous failure accounting is
+   cleared (`boot_attempts`, `boot_fault_signature`, `swap_attempts`).
+3. On a mismatch the device:
+   - increments `boot_attempts` (saturating at 255) and records the fault class
+     in `boot_fault_signature` (metadata magic / metadata header / image CRC) in
+     the backup registers, so the failure survives a power cycle,
+   - shows the `FW CORRUPT!` recovery screen instead of the normal boot artwork,
+   - logs the fault class and attempt count, then enters the recovery seam
+     (`startup_boot_recovery_hook()`).
+
+The detection and accounting are automatic; the recovery action behind the seam
+is where USB DFU entry (`bl_jump_to_dfu()`) is wired in by the DFU unit of
+issue #41. Until that lands, the device stays in the visible recovery state and
+service DFU remains the supported way out.
+
+The manual alternate-bank rollback path is still interactive-only: it runs on
+the first power-up after an update reboot when the user presses BACK+DOWN, and
+it is unchanged apart from a loop guard. `swap_attempts` is written before
+`bl_swap_banks()` and allows at most one swap between two CRC-validated boots;
+a healthy boot clears it, so:
+
+- a device that keeps landing on a bank the failsafe cannot validate cannot be
+  swapped back and forth indefinitely (option-byte churn is bounded), and
+- a swap that dies inside the option-byte launch is still counted, because the
+  counter is written first. The counter is preserved across the
+  rollback-complete re-initialisation for the same reason.
+
+Automatic failed-boot rollback (swapping without the user keypress) is still not
+implemented. On-device qualification of the corrupt-bank boot path -- including
+the recovery screen and the eventual DFU entry -- is tracked as the issue #41
+hardware gate (milestone "Post-merge stabilization"); the host suite covers the
+span arithmetic, the CRC decision, every fault class, the counters and the swap
+guard.
+
+The boot path performs a READ-ONLY IWDG option-byte check
+(`startup_iwdg_option_byte_check()`) and logs whether the watchdog is
+software-started. The legacy fork silently rewrote the IWDG option bytes on
+every boot; that rewrite is deliberately not ported -- no `HAL_FLASHEx_OBProgram`
+and no `HAL_FLASH_OB_Launch` appear in the boot path.
+
 ## Recovery and rollback status
 
 The source contains a manual alternate-bank rollback path, but it is not part
 of the supported FW 0.8.0.5 release claim and has not been hardware-qualified for
-this release. Automatic failed-boot rollback is not implemented. Supported
-recovery for this release is the SD-card update path and service DFU.
+this release. Automatic failed-boot rollback is not implemented; boot-time
+integrity detection and boot/swap accounting are (see "Boot failsafe" above).
+Supported recovery for this release is the SD-card update path, the interactive
+rollback offer, and service DFU.
 
 ## Safety requirements
 

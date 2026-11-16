@@ -11,6 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: automatic boot-time firmware integrity failsafe on the adopted base
+  (issue #41, part A) — every boot validates the running bank's fixed
+  `[0x08000000, 0x080FFC14)` span against the CRC the build embedded at
+  `0x080FFC14` (`bl_crc_validate_active_bank()`, reusing the update path's
+  streamed CRC engine; no magic-number scan, no image-size field, and a
+  compile-time assert that the span equals the build's `0xFFC14` crop end).
+  Failures are classified (metadata magic / metadata header / image CRC),
+  counted in saturating `boot_attempts`, recorded in `boot_fault_signature`,
+  and put the device into a visible `FW CORRUPT!` recovery state with a seam
+  for DFU entry. A validating boot clears the accounting. `S_M1_BK_REGS_t`
+  now exposes those fields plus `swap_attempts` inside its existing 3 reserved
+  bytes (still exactly 8 bytes = DR0/DR1, statically asserted; DR2/DR3 stay
+  ESP-version-owned) via generalized `startup_config_write()`/
+  `startup_config_read()` accessors, `SYS_CONFIG_MAGIC_NUMBER` is bumped to
+  invalidate the old layout once, and the interactive rollback path counts its
+  swaps with a one-swap-per-validated-boot loop guard. Boot-path IWDG option
+  bytes are inspected read-only (the legacy per-boot rewrite is deliberately
+  not ported). New host tests (`test_m1cp_failsafe`, guard test) and
+  `scripts/check_no_raw_bkp_writes.sh` cover the logic and ban raw `TAMP->BKP`
+  access outside the accessors
 - Fork: CRC emitter parity harness (issue #40) — `scripts/verify_crc_parity.sh`
   generates four deterministic full-size (`0xFFC14`-byte) images from the
   committed spec in `tools/crc_test_vectors.py` (so no ~1 MiB binaries live in
