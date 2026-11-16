@@ -92,6 +92,38 @@ outcome (warning-clean app code) with a mechanism that touches no vendor
 tree.
 
 
+## Local case-sensitivity guard
+
+The tree is authored on Windows/macOS (case-insensitive) but must compile on
+Linux/WSL ext4, where `#include "Foo.h"` against an on-disk `foo.h` fails.
+`tools/check_case_sensitivity.py` makes that class of breakage checkable:
+
+```sh
+python tools/check_case_sensitivity.py --repo-root .        # exit 0 = clean
+python tools/check_case_sensitivity.py --repo-root . --fix  # rewrite unambiguous literals
+```
+
+It resolves every quoted (`"..."`) and angle-bracket (`<...>`) include literal
+by basename against `git ls-files`, so system headers that name no tracked file
+are ignored, and it also reports tracked paths that differ only by case.
+
+**Install the guard once per clone.** The repository has no CI, so the only
+enforcement is a local pre-commit hook — a fresh clone has none, and nothing
+else fails when it is missing. Install it as `.git/hooks/pre-commit`
+(`chmod +x` on POSIX), which skips the check when Python is absent:
+
+```sh
+#!/bin/sh
+root="$(git rev-parse --show-toplevel)" || exit 1
+py="$(command -v python3 || command -v python)" || {
+    echo "python not found; skipping case-sensitivity check"; exit 0; }
+exec "$py" "$root/tools/check_case_sensitivity.py" --repo-root "$root"
+```
+
+Bypass with `git commit --no-verify` only to unblock an emergency; a wrong-case
+include that reaches `main` is invisible to every Windows contributor and every
+reviewer who checks out on macOS/Windows.
+
 ## Merge Policy (upstream tracking)
 
 This fork tracks `upstream` (MonstaTek/M1). The fork's history was attached to
