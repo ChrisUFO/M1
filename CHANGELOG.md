@@ -84,6 +84,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fork: filename/include case corrected for case-sensitive filesystems
+  (issue #46) — `m1_csrc/Res_String.{c,h}` → `res_string.{c,h}` and
+  `Battery/Golden_Image_0420.h` → `golden_image_0420.h` (renamed with
+  `git mv`, so history is preserved), plus four include literals aligned to
+  their on-disk spelling (`rfal_AnalogConfig.h` → `rfal_analogConfig.h` in the
+  two legacy NFC driver files, `uiview.h` → `uiView.h` in the two EM4100/
+  H10301 protocol files); the tree now compiles under Linux/WSL ext4, and a
+  new `tools/check_case_sensitivity.py` (stdlib-only, `--fix` capable,
+  collision-aware, checks quoted and angle-bracket include forms) enforces the
+  invariant from the pre-commit hook. Concept source: upstream PR
+  Monstatek/M1#23, whose `m1_sub_ghz.c` hunks are not taken
 - Fork: small port-stability fixes re-landed from the legacy tree (issue #52
   carry, part 1 of 2) — `dat_filename` widened 64 → 256 bytes to stop SD
   data-file paths truncating at 63 chars (FatFS LFN names alone reach 255;
