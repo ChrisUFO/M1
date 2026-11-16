@@ -2,26 +2,29 @@
  *
  * Covers, with no hardware:
  *   - the pure decisions in m1_csrc/m1_dfu_entry.h: hardware strap polarity,
- *     ROM initial-SP sanity, the 32 s IWDG budget arithmetic and its keys, the
- *     software-request state transition (request -> recognised -> cleared with
- *     every other status left alone), and the bounded recovery policy
- *     (a press is honoured, expiry can never return WAIT again),
+ *     ROM initial-SP sanity, the 32 s IWDG budget pinned to the REGISTER
+ *     encoding (IWDG_PR == 6, /256 -> 32.768 s) and its keys, the
+ *     software-request transition (raise -> recognised -> cleared with every
+ *     other status left alone), and the bounded, edge-triggered recovery policy
+ *     (a released -> pressed press is honoured, a stuck key never is, expiry can
+ *     never return WAIT again),
  *   - source seams on the device-only code (HAL/CMSIS, cannot be host-linked):
  *       * bl_jump_to_dfu(), the teardown ORDER:
  *           interrupts off -> SysTick -> HAL_RCC_DeInit -> NVIC ICER/ICPR ->
- *           VTOR -> barriers -> ICACHE/DCACHE off -> IWDG arm -> interrupts on
- *           -> MSP -> jump,
- *         plus no option-byte programming inside it,
+ *           VTOR -> barriers -> ICACHE/DCACHE off -> IWDG start -> unlock ->
+ *           PR/RLR -> feed -> interrupts on -> MSP -> jump,
+ *         bounded flag spins, plus no option-byte programming inside it,
  *       * Core/Src/main.c: the hardware strap is evaluated before HAL_Init()
- *         and before MX_IWDG_Init(), drives PD12/PD13 + the speaker tick, calls
- *         bl_jump_to_dfu(), and the file programs no option bytes at all,
- *       * m1_system.c: DEV_OP_STATUS_USB_DFU_REQUEST is the first op-status
- *         branch, is cleared to NO_OP before the jump, and the recovery hook
- *         uses the pure policy + firmware_update_enter_usb_dfu() and kicks the
- *         watchdog inside the bounded window,
- *       * m1_fw_update.c: firmware_update_enter_usb_dfu() persists the request
- *         through the accessor before resetting, and never touches the TAMP
- *         backup registers,
+ *         and before MX_IWDG_Init(), drives PD12/PD13 + the speaker tick, and
+ *         the jump call is CONFINED to the strap condition; the strap index is
+ *         statically tied to BUTTON_UP_Pin; the file programs no option bytes,
+ *       * m1_system.c: the request is recognised/cleared through the tested
+ *         pure transition, the recovery hook uses the edge-triggered policy,
+ *         the banner+offer screen draws both lines, the indication is asserted
+ *         only on ENTER, and the watchdog is kicked inside the bounded window,
+ *       * m1_fw_update.c: firmware_update_enter_usb_dfu() raises the request
+ *         through the same transition before resetting, and never touches the
+ *         TAMP backup registers,
  *       * m1_system.h: the op-status append preserved the existing values and
  *         the 8-byte backup-register contract is intact.
  *
@@ -142,25 +145,50 @@ int main(void) {
     ok(!m1_dfu_sp_plausible(0x08000000U), "flash address as SP is rejected");
     ok(!m1_dfu_sp_plausible(0x30000000U), "SP outside the SRAM prefix is rejected");
 
-    /* ---- 32 s watchdog safety net ---------------------------------------- */
+    /* ---- 32 s watchdog safety net ----------------------------------------
+     * The REGISTER VALUE is what is pinned here, not the helper constant: on
+     * STM32H5 the IWDG divider is 4 << PR and IWDG_PRESCALER_256 is 6. The old
+     * bug (PR = 7, i.e. /512 -> 65.536 s) passed a test that only checked the
+     * helper against itself, so the expectations below are computed from the
+     * register encoding independently of m1_dfu_iwdg_timeout_ms(). */
+    ok(M1_DFU_IWDG_PRESCALER == 6U,
+       "IWDG PR register encoding is 6 (IWDG_PRESCALER_256), not 7 (/512)");
+    ok(M1_DFU_IWDG_DIVIDER == (4U << M1_DFU_IWDG_PRESCALER),
+       "IWDG divider is derived from the register encoding (4 << PR)");
+    ok(M1_DFU_IWDG_DIVIDER == 256U,
+       "PR 6 means LSI/256");
+    ok((4096U * 512U * 1000U) / M1_DFU_LSI_NOMINAL_HZ == 65536U,
+       "PR 7 (/512) really would be 65.536 s -- the shipped bug is not 32 s");
+    ok(m1_dfu_iwdg_timeout_ms(M1_DFU_LSI_NOMINAL_HZ) ==
+       (uint32_t)(((uint64_t)(M1_DFU_IWDG_RELOAD + 1U) * (uint64_t)(4U << M1_DFU_IWDG_PRESCALER) * 1000U) /
+                  (uint64_t)M1_DFU_LSI_NOMINAL_HZ),
+       "timeout helper is the arithmetic of the register encoding");
     ok(m1_dfu_iwdg_timeout_ms(M1_DFU_LSI_NOMINAL_HZ) == 32768U,
        "watchdog net is 32.768 s at the nominal 32 kHz LSI");
     ok(m1_dfu_iwdg_timeout_ms(0U) == 0U, "zero LSI frequency cannot divide by zero");
     ok(m1_dfu_iwdg_timeout_ms(32000U) > 1000U * 30U,
        "watchdog net exceeds 30 s (well past the 4 s application period)");
-    ok(M1_DFU_IWDG_PRESCALER == 7U, "IWDG prescaler is /256");
     ok(M1_DFU_IWDG_RELOAD == 0xFFFU, "IWDG reload is the maximum 4095");
     ok(M1_DFU_IWDG_KEY_UNLOCK == 0x5555U && M1_DFU_IWDG_KEY_RELOAD == 0xAAAAU &&
        M1_DFU_IWDG_KEY_START == 0xCCCCU,
        "IWDG PR/RLR unlock, reload and start keys are the STM32 keys");
+    ok(M1_DFU_TEARDOWN_SPIN_LIMIT >= 1000U,
+       "teardown flag spins have a finite, generous iteration cap");
 
-    /* ---- software request state machine ---------------------------------- */
+    /* ---- software request state machine ----------------------------------
+     * Both shipped call sites use these transitions (raise before the reset in
+     * firmware_update_enter_usb_dfu(), consume in startup_config_handler()), so
+     * what is pinned here is the state machine the device actually runs. */
     ok(m1_dfu_request_is_pending(OP_USB_DFU_REQUEST, OP_USB_DFU_REQUEST),
        "request: pending when device_op_status is the request value");
     ok(!m1_dfu_request_is_pending(OP_NO_OP, OP_USB_DFU_REQUEST),
        "request: idle status is not pending");
-    ok(m1_dfu_request_consume(OP_USB_DFU_REQUEST, OP_USB_DFU_REQUEST, OP_NO_OP) == OP_NO_OP,
-       "request: honoured request is cleared to NO_OP");
+    ok(m1_dfu_request_next(OP_USB_DFU_REQUEST, false, OP_USB_DFU_REQUEST, OP_NO_OP) == OP_NO_OP,
+       "request: honoured request is consumed to NO_OP");
+    ok(m1_dfu_request_next(OP_NO_OP, true, OP_USB_DFU_REQUEST, OP_NO_OP) == OP_USB_DFU_REQUEST,
+       "request: raising from idle stores the request");
+    ok(m1_dfu_request_next(OP_FW_UPDATE_ACTIVE, true, OP_USB_DFU_REQUEST, OP_NO_OP) == OP_USB_DFU_REQUEST,
+       "request: an explicit dfu wins over an active-update status");
     {
         static const uint8_t others[] = {
             OP_NO_OP, OP_FW_UPDATE_ACTIVE, OP_FW_UPDATE_COMPLETE,
@@ -169,7 +197,7 @@ int main(void) {
         size_t i;
         int preserved = 1;
         for (i = 0; i < sizeof(others); i++) {
-            if (m1_dfu_request_consume(others[i], OP_USB_DFU_REQUEST, OP_NO_OP) != others[i]) {
+            if (m1_dfu_request_next(others[i], false, OP_USB_DFU_REQUEST, OP_NO_OP) != others[i]) {
                 preserved = 0;
             }
         }
@@ -178,34 +206,73 @@ int main(void) {
     /* request -> recognised -> cleared is single-shot: consuming twice ends at
      * NO_OP and the second consume cannot re-recognise the request. */
     {
-        uint8_t st = m1_dfu_request_consume(OP_USB_DFU_REQUEST, OP_USB_DFU_REQUEST, OP_NO_OP);
+        uint8_t st = m1_dfu_request_next(OP_USB_DFU_REQUEST, false, OP_USB_DFU_REQUEST, OP_NO_OP);
         ok(!m1_dfu_request_is_pending(st, OP_USB_DFU_REQUEST) &&
-           m1_dfu_request_consume(st, OP_USB_DFU_REQUEST, OP_NO_OP) == OP_NO_OP,
+           m1_dfu_request_next(st, false, OP_USB_DFU_REQUEST, OP_NO_OP) == OP_NO_OP,
            "request: consumed once, it can never re-fire (no DFU boot loop)");
     }
 
-    /* ---- bounded recovery policy ----------------------------------------- */
+    /* ---- bounded recovery policy (edge-triggered) ------------------------- */
     ok(M1_DFU_RECOVERY_OFFER_WINDOW_MS == 5000U,
        "recovery offer window is the documented 5 s");
-    ok(m1_dfu_recovery_action(1, 0U) == M1_DFU_RECOVERY_ENTER,
-       "recovery: a press at t=0 enters DFU");
-    ok(m1_dfu_recovery_action(1, M1_DFU_RECOVERY_OFFER_WINDOW_MS) == M1_DFU_RECOVERY_ENTER,
-       "recovery: a press on the deadline poll is still honoured");
-    ok(m1_dfu_recovery_action(0, 0U) == M1_DFU_RECOVERY_WAIT,
-       "recovery: no input inside the window keeps waiting");
-    ok(m1_dfu_recovery_action(0, M1_DFU_RECOVERY_OFFER_WINDOW_MS - 1U) == M1_DFU_RECOVERY_WAIT,
-       "recovery: no input one millisecond before the deadline keeps waiting");
-    ok(m1_dfu_recovery_action(0, M1_DFU_RECOVERY_OFFER_WINDOW_MS) == M1_DFU_RECOVERY_FALL_THROUGH,
-       "recovery: no input at the deadline falls through");
-    ok(m1_dfu_recovery_action(0, UINT32_MAX) == M1_DFU_RECOVERY_FALL_THROUGH,
-       "recovery: no input long after the deadline falls through");
+    {
+        /* Honest press: released at offer start, then two pressed polls. */
+        S_M1_DFU_RECOVERY_POLL_t st = m1_dfu_recovery_poll_start(false);
+        ok(m1_dfu_recovery_poll(&st, false, 0U) == M1_DFU_RECOVERY_WAIT,
+           "recovery: released key keeps waiting");
+        ok(m1_dfu_recovery_poll(&st, true, 50U) == M1_DFU_RECOVERY_WAIT,
+           "recovery: one pressed poll is not yet a press");
+        ok(m1_dfu_recovery_poll(&st, true, 100U) == M1_DFU_RECOVERY_ENTER,
+           "recovery: a released->pressed press enters DFU on the second poll");
+    }
+    {
+        /* A press that lands on the last (deadline) poll is still honoured. */
+        S_M1_DFU_RECOVERY_POLL_t st = m1_dfu_recovery_poll_start(false);
+        uint32_t t;
+        S_M1_DFU_RECOVERY_ACTION_t a = M1_DFU_RECOVERY_WAIT;
+        for (t = 0U; t + 50U < M1_DFU_RECOVERY_OFFER_WINDOW_MS; t += 50U) {
+            a = m1_dfu_recovery_poll(&st, false, t);
+        }
+        ok(a == M1_DFU_RECOVERY_WAIT, "recovery: no input inside the window keeps waiting");
+        ok(m1_dfu_recovery_poll(&st, true, M1_DFU_RECOVERY_OFFER_WINDOW_MS) == M1_DFU_RECOVERY_ENTER,
+           "recovery: a press that lands on the deadline poll is still honoured");
+    }
+    {
+        /* STUCK KEY: held from before the offer opens to well past the window.
+         * A level-triggered policy would enter DFU on the second poll (~50 ms)
+         * and cycle failsafe -> DFU -> failsafe forever; the edge-triggered one
+         * must never ENTER and must fall through at the window. */
+        S_M1_DFU_RECOVERY_POLL_t st = m1_dfu_recovery_poll_start(true);
+        uint32_t t;
+        S_M1_DFU_RECOVERY_ACTION_t a = M1_DFU_RECOVERY_WAIT;
+        int ever_entered = 0;
+        for (t = 0U; t <= M1_DFU_RECOVERY_OFFER_WINDOW_MS + 10000U; t += 50U) {
+            a = m1_dfu_recovery_poll(&st, true, t);
+            if (a == M1_DFU_RECOVERY_ENTER) ever_entered = 1;
+            if (a == M1_DFU_RECOVERY_FALL_THROUGH) break;
+        }
+        ok(!ever_entered, "recovery: a stuck OK key can never select DFU");
+        ok(a == M1_DFU_RECOVERY_FALL_THROUGH &&
+           t == M1_DFU_RECOVERY_OFFER_WINDOW_MS,
+           "recovery: a stuck OK key falls through at the 5 s window (no DFU cycle)");
+    }
+    {
+        S_M1_DFU_RECOVERY_POLL_t st = m1_dfu_recovery_poll_start(false);
+        ok(m1_dfu_recovery_poll(&st, false, M1_DFU_RECOVERY_OFFER_WINDOW_MS - 1U) == M1_DFU_RECOVERY_WAIT,
+           "recovery: no input one millisecond before the deadline keeps waiting");
+        ok(m1_dfu_recovery_poll(&st, false, M1_DFU_RECOVERY_OFFER_WINDOW_MS) == M1_DFU_RECOVERY_FALL_THROUGH,
+           "recovery: no input at the deadline falls through");
+        ok(m1_dfu_recovery_poll(&st, false, UINT32_MAX) == M1_DFU_RECOVERY_FALL_THROUGH,
+           "recovery: no input long after the deadline falls through");
+    }
     {
         /* boundedness theorem at the policy level: past the window the decision
          * is never WAIT, so any poll loop that stops on non-WAIT terminates. */
         uint32_t t;
         int never_waits = 1;
         for (t = M1_DFU_RECOVERY_OFFER_WINDOW_MS; t < M1_DFU_RECOVERY_OFFER_WINDOW_MS + 4000U; t++) {
-            if (m1_dfu_recovery_action(0, t) == M1_DFU_RECOVERY_WAIT) never_waits = 0;
+            S_M1_DFU_RECOVERY_POLL_t st = m1_dfu_recovery_poll_start(true);
+            if (m1_dfu_recovery_poll(&st, true, t) == M1_DFU_RECOVERY_WAIT) never_waits = 0;
         }
         ok(never_waits, "recovery: policy can never WAIT once the window has elapsed");
     }
@@ -229,16 +296,20 @@ int main(void) {
                     "__ISB();",
                     "ICACHE->CR &= ~ICACHE_CR_EN;",
                     "DCACHE1->CR &= ~DCACHE_CR_EN;",
+                    /* Start-then-configure: 0xCCCC must precede the unlock and
+                     * the PR/RLR writes, or a cold-boot strap entry programs a
+                     * stopped IWDG (no LSI -> update flags never arrive). */
+                    "IWDG->KR  = M1_DFU_IWDG_KEY_START;",
+                    "IWDG->KR  = M1_DFU_IWDG_KEY_UNLOCK;",
                     "IWDG->PR  = M1_DFU_IWDG_PRESCALER;",
                     "IWDG->RLR = M1_DFU_IWDG_RELOAD;",
                     "IWDG->KR = M1_DFU_IWDG_KEY_RELOAD;",
-                    "IWDG->KR = M1_DFU_IWDG_KEY_START;",
                     "__enable_irq();",
                     "__set_MSP(sp_val);",
                     "jump_to_boot();"
                 };
                 ok(in_order(body, order, sizeof(order) / sizeof(order[0])),
-                   "teardown order: irq off -> SysTick -> RCC -> NVIC -> VTOR -> barriers -> caches -> IWDG -> irq on -> MSP -> jump");
+                   "teardown order: irq off -> SysTick -> RCC -> NVIC -> VTOR -> barriers -> caches -> IWDG start/unlock/PR/RLR/feed -> irq on -> MSP -> jump");
                 ok(strstr(body, "m1_dfu_sp_plausible") != NULL,
                    "jump validates the ROM initial SP before using it");
                 ok(strstr(body, "NVIC_SystemReset") != NULL,
@@ -247,8 +318,22 @@ int main(void) {
                    strstr(body, "HAL_FLASH_OB_Launch(") == NULL &&
                    strstr(body, "HAL_FLASH_Unlock(") == NULL,
                    "jump programs no option bytes and unlocks no flash");
-                ok(strstr(body, "while ( IWDG->SR != 0U )") != NULL,
-                   "watchdog register update is awaited before the reload");
+                /* Every hardware-flag spin is bounded: a stuck flag with
+                 * PRIMASK set and no net armed must fall through to the jump. */
+                {
+                    const char *p = body;
+                    int bounded = 0;
+                    while ((p = strstr(p, "M1_DFU_TEARDOWN_SPIN_LIMIT")) != NULL) {
+                        bounded++;
+                        p += 26;
+                    }
+                    ok(bounded >= 3,
+                       "all three teardown spins (ICACHE/DCACHE/IWDG SR) are iteration-capped");
+                }
+                ok(strstr(body, "(IWDG->SR != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") != NULL,
+                   "the watchdog register-update wait is bounded, not an infinite spin");
+                ok(strstr(body, "while ( IWDG->SR != 0U )") == NULL,
+                   "no unbounded IWDG->SR spin remains in the jump");
             }
             free(body);
             ok(strstr(src, "#ifndef M1CP_HOST_TEST") != NULL,
@@ -273,10 +358,22 @@ int main(void) {
             ok(strstr(src, "GPIOC->BSRR = (1U << 7U)") != NULL &&
                strstr(src, "GPIOC->BSRR = (1U << (7U + 16U))") != NULL,
                "strap gives the SPK_CTRL (PC7) speaker tick");
-            ok(strstr(src, "GPIOD->BSRR = (1U << 12U) | (1U << 13U)") != NULL,
-               "strap drives the PD12/PD13 DFU indication");
-            ok(strstr(src, "bl_jump_to_dfu();") != NULL,
-               "strap calls the single teardown/jump implementation");
+            /* Brace-bound containment (VA1): a call moved outside the condition
+             * would make every boot enter DFU, and only a containment assertion
+             * can catch that. */
+            {
+                char *strap_block = bound_block(src, "if ( dfu_hardware_strap )");
+                ok(strap_block != NULL, "the strap condition is a braced block");
+                if (strap_block != NULL) {
+                    ok(strstr(strap_block, "bl_jump_to_dfu();") != NULL,
+                       "the jump lives INSIDE if ( dfu_hardware_strap ) (outside it every boot would enter DFU)");
+                    ok(strstr(strap_block, "GPIOD->BSRR = (1U << 12U) | (1U << 13U)") != NULL,
+                       "strap drives PD12/PD13 (external connector pins 6-7)");
+                }
+                free(strap_block);
+            }
+            ok(strstr(src, "_Static_assert((1U << M1_DFU_STRAP_PIN_INDEX) == (uint32_t)BUTTON_UP_Pin") != NULL,
+               "strap pin index is statically tied to BUTTON_UP_Pin (PE11 on GPIOE)");
             ok(strstr(src, "HAL_FLASHEx_OBProgram(") == NULL &&
                strstr(src, "HAL_FLASH_OB_Launch(") == NULL &&
                strstr(src, "HAL_FLASH_Unlock(") == NULL,
@@ -293,10 +390,11 @@ int main(void) {
             char *handler = bound_block(src, "void startup_config_handler(void)");
             ok(handler != NULL, "startup_config_handler() is defined");
             if (handler != NULL) {
-                const char *req = strstr(handler, "device_op_status==DEV_OP_STATUS_USB_DFU_REQUEST");
+                const char *req = strstr(handler,
+                    "m1_dfu_request_is_pending(m1_device_stat.bu_regs.device_op_status");
                 const char *active = strstr(handler, "device_op_status==DEV_OP_STATUS_FW_UPDATE_ACTIVE");
                 const char *failsafe = strstr(handler, "startup_boot_failsafe();");
-                ok(req != NULL, "handler has a USB DFU request branch");
+                ok(req != NULL, "handler recognises the request through the tested pure helper");
                 ok(req != NULL && active != NULL && req < active,
                    "request branch is the FIRST op-status branch (honoured early)");
                 ok(req != NULL && failsafe != NULL && req < failsafe,
@@ -306,6 +404,8 @@ int main(void) {
                     const char *jump = strstr(req, "bl_jump_to_dfu();");
                     ok(clear != NULL && jump != NULL && clear < jump,
                        "request is cleared to NO_OP BEFORE jumping (single-shot)");
+                    ok(strstr(req, "m1_dfu_request_next(m1_device_stat.bu_regs.device_op_status, false") != NULL,
+                       "request is cleared through the same transition the host test covers");
                 }
                 ok(strstr(req != NULL ? req : handler, "startup_dfu_indicate()") != NULL,
                    "request path gives the PD12/PD13 indication");
@@ -315,10 +415,23 @@ int main(void) {
             char *hook = bound_block(src, "static void startup_boot_recovery_hook(uint8_t boot_attempts)");
             ok(hook != NULL, "startup_boot_recovery_hook() is filled in (not a log-only stub)");
             if (hook != NULL) {
-                ok(strstr(hook, "m1_dfu_recovery_action(") != NULL,
-                   "recovery hook uses the pure bounded policy helper");
+                ok(strstr(hook, "m1_dfu_recovery_poll_start(") != NULL,
+                   "recovery hook seeds the edge trigger from the level at offer start");
+                ok(strstr(hook, "m1_dfu_recovery_poll(") != NULL,
+                   "recovery hook uses the pure edge-triggered policy helper");
+                ok(strstr(hook, "startup_recovery_offer_display()") != NULL,
+                   "recovery hook renders the banner+offer screen in one page");
                 ok(strstr(hook, "firmware_update_enter_usb_dfu()") != NULL,
                    "recovery hook enters DFU through the single public API");
+                {
+                    /* D3: the indication must only be asserted on ENTER, right
+                     * before the reset -- never while merely offering. */
+                    const char *enter = strstr(hook, "action==M1_DFU_RECOVERY_ENTER");
+                    const char *ind = strstr(hook, "startup_dfu_indicate()");
+                    const char *api = strstr(hook, "firmware_update_enter_usb_dfu()");
+                    ok(enter != NULL && ind != NULL && api != NULL && enter < ind && ind < api,
+                       "PD12/PD13 are asserted only on ENTER, immediately before the DFU API");
+                }
                 ok(strstr(hook, "M1_DFU_RECOVERY_FALL_THROUGH") != NULL &&
                    strstr(hook, "break;") != NULL,
                    "recovery hook falls through when the window expires");
@@ -333,6 +446,22 @@ int main(void) {
                    "timeout restores the diagnostic banner (no silent healthy boot)");
             }
             free(hook);
+
+            /* G4: the offer screen must draw the diagnosis AND the offer, since
+             * u8g2_FirstPage() clears whatever the banner previously drew. */
+            {
+                char *offer = bound_block(src, "static void startup_recovery_offer_display(void)");
+                ok(offer != NULL, "startup_recovery_offer_display() is defined");
+                if (offer != NULL) {
+                    ok(strstr(offer, "\"FW CORRUPT!\"") != NULL,
+                       "offer screen still shows the FW CORRUPT! banner");
+                    ok(strstr(offer, "\"OK=USB DFU %us\"") != NULL,
+                       "offer screen shows the DFU offer line");
+                    ok(strstr(offer, "startup_info_screen_display(") == NULL,
+                       "offer screen does not re-enter the clearing one-line status screen");
+                }
+                free(offer);
+            }
 
             char *failsafe = bound_block(src, "static void startup_boot_failsafe(void)");
             ok(failsafe != NULL, "startup_boot_failsafe() is present");
@@ -360,9 +489,12 @@ int main(void) {
             ok(body != NULL, "firmware_update_enter_usb_dfu() is defined");
             if (body != NULL) {
                 const char *write = strstr(body,
-                    "startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_USB_DFU_REQUEST)");
+                    "m1_dfu_request_next(m1_device_stat.bu_regs.device_op_status, true");
                 const char *reset = strstr(body, "NVIC_SystemReset();");
-                ok(write != NULL, "public API persists the request through the bu_regs accessor");
+                ok(write != NULL,
+                   "public API raises the request through the tested pure transition");
+                ok(strstr(body, "startup_config_write(BK_REGS_SELECT_DEV_OP_STAT") != NULL,
+                   "public API persists through the bu_regs accessor");
                 ok(write != NULL && reset != NULL && write < reset,
                    "request is persisted before the reset");
                 ok(strstr(body, "TAMP" "->" "BKP") == NULL,
