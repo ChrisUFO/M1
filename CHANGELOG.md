@@ -112,8 +112,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loss-only counter: bytes that never fit the intermediate `usbRxBuffer` plus
   bytes still pending in the stream buffer when a bridge-mode exit empties it
   (`CDC_CLI_RxDiscardPendingBytes()`, which replaces the bare
-  `xStreamBufferReset(h_usb_rx_streambuf)` in `m1_logdb_deinit()`), so it stays
-  at 0 under pure back-pressure. `CDC_CLI_RxHighWatermark()` is the maximum
+  `xStreamBufferReset(h_usb_rx_streambuf)` at both mode-switch sites:
+  `m1_logdb_deinit()` and the BACK-button exit in `gpio_usb_uart_bridge()`), so
+  it stays at 0 under pure back-pressure. `CDC_CLI_RxHighWatermark()` is the maximum
   occupancy observed after each send (sticky until reset; usable capacity is
   `RXSTREAMBUF_USB_SIZE - 1` = 2047 bytes); `CDC_CLI_RxBufferedBytes()` is the
   sampled pending level (a gauge, not a synchronisation signal).
@@ -122,7 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uint32_t` (single aligned writes/reads, no torn values) and diagnostic only:
   no buffering, copy, back-pressure or pause decision reads them, and
   `CDC_Receive_FS()` gained no blocking call. The arithmetic is pure and
-  host-tested (`m1_csrc/m1_cdc_rx_stats.h`, `test_cdc_rx_stats`: 74 assertions
+  host-tested (`m1_csrc/m1_cdc_rx_stats.h`, `test_cdc_rx_stats`: 77 assertions
   covering full buffer, partial fit, intermediate-buffer overflow, carry-over,
   refusal/loss independence, watermark monotonicity, buffered-now, reset and the
   bridge-mode discard, plus source seams that pin the ISR call site, the reset
