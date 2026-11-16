@@ -155,6 +155,33 @@ uint8_t bl_crc_check(uint32_t image_size);
  * validates, otherwise the fault class for the boot failsafe. */
 S_M1_BOOT_FAULT_t bl_crc_validate_active_bank(void);
 void bl_swap_banks(void);
+
+/* Robust, NON-RETURNING jump to the STM32H573 ROM DFU bootloader in system
+ * memory (issue #41-B). The caller must have decided to enter DFU (hardware
+ * strap in main.c or an honoured DEV_OP_STATUS_USB_DFU_REQUEST in
+ * startup_config_handler()); this function only performs the teardown:
+ *
+ *   interrupts off -> SysTick (+ pended core exceptions) -> RCC back to the
+ *   reset state (bounded raw-register teardown, post-condition verified) ->
+ *   TIM6 stopped -> NVIC ICER/ICPR -> VTOR = system memory -> DSB/ISB ->
+ *   ICACHE/DCACHE off -> 32 s IWDG net -> CONTROL.SPSEL cleared with MSP = ROM
+ *   initial SP -> interrupts on -> jump to the ROM reset vector
+ *
+ * A clock teardown that does not settle, or an IWDG prescaler/reload
+ * synchronisation that never becomes visible, resets the unit through
+ * bl_dfu_teardown_failed() instead of jumping: the ROM must never inherit a
+ * clock tree it cannot service, and the net must never be reloaded with the
+ * previous PR/RLR values.
+ *
+ * The CONTROL.SPSEL step is not cosmetic: from a FreeRTOS task the thread
+ * stack is PSP, so a bare __set_MSP() would leave the ROM running on the
+ * abandoned task stack.
+ *
+ * No option bytes are programmed here (the legacy boot-time IWDG option-byte
+ * rewrite is deliberately not ported; see startup_iwdg_option_byte_check()).
+ * Declared for every build, defined only where CMSIS register definitions
+ * exist (never in a host test build). */
+void bl_jump_to_dfu(void) __attribute__((noreturn));
 void fw_gui_progress_update(size_t remainder);
 
 /* Streamed programming wrappers (M1CP firmware-update path). These reuse the

@@ -16,7 +16,7 @@ DEPS    := m1cp_test_stubs.h FreeRTOS.h $(SRC_DIR)/m1_manager_protocol.h \
            $(SRC_DIR)/m1_manager_fs.h $(SRC_DIR)/m1_manager_fw.h $(SRC_DIR)/m1_manager_update_coordinator.h \
            $(SRC_DIR)/m1_manager_fwupdate.h $(SRC_DIR)/m1_manager_espupdate.h $(SRC_DIR)/m1_esp_version.h
 
-test: test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test test_m1cp_failsafe test_update_intake_size
+test: test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test test_m1cp_failsafe test_m1cp_dfu test_update_intake_size
 	./test_m1cp
 	./test_m1cp_fs
 	./test_m1cp_fw
@@ -27,6 +27,7 @@ test: test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp
 	./m1_manager_espupdate_seam_test
 	./m1_manager_fwupdate_seam_test
 	./test_m1cp_failsafe
+	./test_m1cp_dfu
 	./test_update_intake_size
 	sh test_no_raw_bkp_writes.sh
 
@@ -56,6 +57,12 @@ test_m1cp_fwupdate: test_m1cp_fwupdate.c $(CORE) $(DEPS)
 test_m1cp_failsafe: test_m1cp_failsafe.c $(SRC_DIR)/m1_boot_failsafe.h
 	$(CC) $(CFLAGS) $(INCS) test_m1cp_failsafe.c -o $@
 
+# USB DFU entry (issue #41-B): pure strap/SP/watchdog/request/recovery policy
+# from m1_csrc/m1_dfu_entry.h plus source seams on the device-only teardown
+# order, early-boot strap, request branch and recovery offer. No HAL/CMSIS.
+test_m1cp_dfu: test_m1cp_dfu.c $(SRC_DIR)/m1_dfu_entry.h
+	$(CC) $(CFLAGS) $(INCS) test_m1cp_dfu.c -o $@
+
 # Update intake size gate (PR #61 F1): pure canonical-size decision plus source
 # seams on both intakes (SD file path + streamed M1CP path) and the compile-time
 # tie to the boot failsafe's signed span. No FatFs/HAL.
@@ -82,7 +89,7 @@ validate_file: validate_file.c $(CORE) $(DEPS)
 	$(CC) $(CFLAGS) $(INCS) validate_file.c $(CORE) -o $@
 
 clean:
-	rm -f test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate test_m1cp_failsafe test_update_intake_size validate_file m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test
+	rm -f test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate test_m1cp_failsafe test_m1cp_dfu test_update_intake_size validate_file m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test
 	rm -rf fs_sandbox
 
 .PHONY: test clean

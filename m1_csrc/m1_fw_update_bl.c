@@ -21,11 +21,55 @@
 #include "m1_watchdog.h"
 #include "m1_fw_update.h"
 #include "m1_fw_update_bl.h"
+#include "m1_dfu_entry.h"
 #include "m1_sub_ghz.h"
 
 /*************************** D E F I N E S ************************************/
 
 #define M1_LOGDB_TAG		"FW-BL"
+
+/* The host-buildable header can only carry the numeric IWDG_PR encoding; tie it
+ * to the HAL's ground truth here, in a translation unit that has the register
+ * definitions (IWDG_PRESCALER_256 == 0b110 on STM32H5). */
+_Static_assert(M1_DFU_IWDG_PRESCALER == (uint32_t)IWDG_PRESCALER_256,
+               "the DFU watchdog net must use IWDG_PRESCALER_256 (IWDG_PR == 6)");
+
+/* IWDG->SR mixes two unrelated kinds of bit, and only one of them answers the
+ * question step 9 asks ("has my PR/RLR write landed in the LSI domain yet?"):
+ *
+ *   - PVU/RVU/WVU/EWU (bits 0-3) are set while a PR/RLR/WINR/EWCR write is
+ *     still propagating and clear once it has been taken. These are the only
+ *     bits that mean "not settled yet".
+ *   - ONF (bit 8) is the persistent "watchdog is running" STATUS bit: it goes
+ *     high when the counter starts and is cleared only by a reset. EWIF (bit
+ *     14) is the early-wakeup interrupt flag.
+ *
+ * A whole-register "SR == 0" test therefore can never be satisfied on any entry
+ * route: step 9 writes 0xCCCC three statements earlier (which SETS ONF on a
+ * stopped IWDG and is a no-op on the already-running application watchdog,
+ * where MX_IWDG_Init() set it at boot). ST never tests the register whole --
+ * its write-settled idiom is always masked:
+ *
+ *   IWDG_KERNEL_UPDATE_FLAGS = EWU|WVU|RVU|PVU   (stm32h5xx_hal_iwdg.c, the
+ *                                                 HAL's private macro)
+ *   LL_IWDG_IsReady()        = (SR & (PVU|RVU|WVU|EWU)) == 0   (LL)
+ *
+ * while "is the watchdog running" is explicitly IWDG_STATUS_ENABLE == SR & ONF
+ * (stm32h5xx_hal_iwdg.h). On STM32H5 those four update flags are bits 0-3, so
+ * the mask is 0x0F (PVU is bit 0 here; it is not 0x1E).
+ *
+ * IWDG_KERNEL_UPDATE_FLAGS is private to the HAL .c file, so it cannot be
+ * referenced from here: the asserts below pin the same set by value AND pin the
+ * exclusions, so re-adding ONF/EWIF to the predicate fails the build. */
+#define M1_DFU_IWDG_SR_UPDATE_FLAGS \
+	((uint32_t)(IWDG_SR_PVU | IWDG_SR_RVU | IWDG_SR_WVU | IWDG_SR_EWU))
+
+_Static_assert(M1_DFU_IWDG_SR_UPDATE_FLAGS == 0x0000000FU,
+               "the IWDG update mask must be PVU|RVU|WVU|EWU (bits 0-3), as HAL_IWDG_Init() uses");
+_Static_assert((M1_DFU_IWDG_SR_UPDATE_FLAGS & (uint32_t)IWDG_SR_ONF) == 0U,
+               "IWDG_SR_ONF is the persistent 'watchdog is running' status bit, never a write-settled flag");
+_Static_assert((M1_DFU_IWDG_SR_UPDATE_FLAGS & (uint32_t)IWDG_SR_EWIF) == 0U,
+               "IWDG_SR_EWIF is the early-wakeup interrupt flag, never a write-settled flag");
 
 //************************** S T R U C T U R E S *******************************
 
@@ -718,3 +762,467 @@ void fw_gui_progress_update(size_t remainder)
 
 	m1_u8g2_nextpage(); // Update display RAM
 } // void fw_gui_progress_update(size_t remainder)
+
+
+
+#ifndef M1CP_HOST_TEST
+
+/*============================================================================*/
+/* Loud failure exit for the teardown: a recovery on the request routes, an
+ * unbounded reset loop on the strap route while the strap is held.
+ *
+ * This exit is only ever reached when a teardown step genuinely fails (the
+ * clock tree does not settle, or the IWDG prescaler/reload synchronisation
+ * never becomes visible in the four update flags). The success path hands over
+ * to the ROM and never resets; the loop described below is a property of a
+ * persistent *failure*, not of entry by strap as such.
+ *
+ * When a teardown step cannot be completed (the clock tree did not settle, or
+ * the IWDG prescaler/reload synchronisation never became visible) the unit must
+ * NOT continue into the ROM: it would either run on a clock tree the ROM cannot
+ * service or, worse, carry a watchdog net reloaded with the previous PR/RLR
+ * values -- a silently disarmed net. Requesting an immediate reset is the only
+ * bounded, deterministic option here (no logging is possible with interrupts
+ * disabled on a boot path): it cannot hang. It leaves NO distinctive diagnostic
+ * record, and nothing here may imply otherwise: the teardown has just written
+ * RCC_RSR_RMVF, and SYSRESETREQ raises SFTRST, which the next boot logs as
+ * "Device reset by normal cause" (m1_watchdog.c) -- byte-identical to the
+ * *intentional* NVIC_SystemReset() the software-request route performs before
+ * the jump. On the strap route the reset loop re-enters DFU before the logger
+ * runs at all. The only signature is the reboot pattern itself, which issue #41
+ * gate item 5 records so a technician can tell it from a boot hang.
+ *
+ * What the reset leads to depends on how DFU was entered, and it is NOT
+ * "recoverable" on both:
+ *
+ *   - Software request / recovery offer: the persisted request was consumed
+ *     (written back to NO_OP) before this function ran, so the reboot boots the
+ *     application. One reset, then normal operation; the user can retry.
+ *   - Strap route: main() re-samples PE11 before HAL_Init(), and the strap is
+ *     still held (holding it is how the user got here), so the unit re-enters
+ *     bl_jump_to_dfu(), hits the same persistent failure and resets again.
+ *     That is an UNBOUNDED reset loop with interrupts off and no logs, ending
+ *     only when the strap is released or power is removed. This is the accepted
+ *     policy, not a defect: jumping into the ROM with a dead LSI or a half-torn
+ *     clock tree is worse than rebooting loudly, and there is no spare
+ *     backup-register budget for a persistent-failure attempt counter. The
+ *     issue #41 hardware gate names the loop so a technician can tell it from a
+ *     boot hang. It applies to a genuinely failing teardown only: a strap entry
+ *     whose teardown succeeds reaches the ROM and resets nothing.
+ *
+ * The trailing spin is never reached in practice -- SYSRESETREQ does not return
+ * -- and exists only so the function is honest if a debugger holds the reset
+ * request. It is the one loop in this translation unit without an iteration
+ * bound, and the host seam allows it for exactly that reason. */
+static void bl_dfu_teardown_failed(void) __attribute__((noreturn));
+static void bl_dfu_teardown_failed(void)
+{
+	NVIC_SystemReset();
+	for (;;) { __NOP(); } // not reached
+} // static void bl_dfu_teardown_failed(void)
+
+/*============================================================================*/
+/* Bounded RCC teardown for the ROM handover.
+ *
+ * This replaces HAL_RCC_DeInit(). The HAL version waits on HAL_GetTick(), and
+ * this project's HAL tick comes from TIM6, whose interrupt is already masked
+ * when the teardown runs (__disable_irq() at step 2). uwTick therefore stops
+ * advancing, every "if ((HAL_GetTick() - tickstart) > RCC_*_TIMEOUT_VALUE)"
+ * inside the HAL call is permanently false, and a stuck ready flag -- HSI never
+ * coming up, a PLL never stopping, a clock switch never completing -- spins
+ * forever with interrupts off and, on the cold-boot strap route, before the
+ * IWDG net is armed: a hang only removing power clears.
+ *
+ * So the same teardown is done here from raw registers, with every flag wait
+ * capped at M1_DFU_TEARDOWN_SPIN_LIMIT and falling through, matching the
+ * discipline the rest of bl_jump_to_dfu() already follows.
+ *
+ * Ending state, which is what the ST ROM expects on entry -- the subset of the
+ * reset state its own clock init depends on, so it finds nothing to undo:
+ * SYSCLK = HSI (64 MHz, HSIDIV /1), AHB/APB prescalers /1, HSE / CSI / HSI48
+ * and PLL1/2/3 off, the PLL config registers at their reset values, RCC
+ * interrupts disabled and their flags cleared, SystemCoreClock = HSI_VALUE.
+ * The ROM brings up whatever it needs itself (HSI48 for the USB clock is its
+ * own enable, so switching it off here is the reset state, not a loss). LSI is
+ * deliberately left running: it clocks the IWDG net armed at step 9, and
+ * stopping it would kill the very net that makes an abandoned session
+ * recoverable.
+ *
+ * It is NOT "exactly the state a hardware reset leaves behind", and what is
+ * deliberately left un-normalised is part of that statement:
+ *
+ *   - FLASH->ACR keeps the application's FLASH_LATENCY_3, where
+ *     HAL_RCC_DeInit() restores FLASH_LATENCY_DEFAULT at both ends of its
+ *     sequence. Over-wait-stated for a 64 MHz HSI SYSCLK: the safe direction;
+ *   - the RCC_CCIPR* kernel-clock muxes keep the application's selection.
+ *     HAL_RCC_DeInit() does not reset them either -- it never writes a CCIPR
+ *     register (verified in stm32h5xx_hal_rcc.c) -- so this is not a deviation
+ *     from the HAL: both hand the ROM the application's mux selection, and the
+ *     ROM re-initialises what it uses;
+ *   - MPU control state and cache configuration are not normalised at all.
+ *     The two entry routes hand the ROM *different* machine states: the strap
+ *     route runs before HAL_Init()/MPU_Config()/MX_ICACHE_Init() (MPU off,
+ *     ICACHE never enabled, no HAL), the task routes come from the fully
+ *     initialised application (MPU enabled with region 0 read-only and
+ *     PRIVDEFENA, ICACHE enabled and then disabled at step 8). Benign for a
+ *     privileged ROM, but the issue #41 hardware gate must exercise both routes
+ *     and must not read either one as covering the other.
+ *
+ * A flag that never settles is not fatal *inside the waits*: each wait falls
+ * through after M1_DFU_TEARDOWN_SPIN_LIMIT, exactly like the cache and IWDG->SR
+ * waits. What must not happen is jumping with the tree half torn down, so the
+ * caller verifies the post-condition below and resets if it does not hold --
+ * see bl_dfu_teardown_failed(). */
+
+/* Bounded poll of one RCC register field. `want` is the masked value meaning
+ * "settled"; the loop gives up after M1_DFU_TEARDOWN_SPIN_LIMIT polls. */
+static void bl_rcc_wait_flag(volatile uint32_t *reg, uint32_t mask, uint32_t want)
+{
+	uint32_t i;
+
+	for (i = 0U; (READ_BIT(*reg, mask) != want) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT); i++)
+	{
+		;
+	}
+} // void bl_rcc_wait_flag(...)
+
+/* Ends in the clock state a hardware reset leaves; returns false when the
+ * essential post-condition does not hold -- SYSCLK is not running from HSI, or
+ * PLL1 (the PLL the application used as SYSCLK) is still ready. The caller must
+ * not jump in that case: the ROM would inherit a clock tree it cannot service. */
+static bool bl_rcc_teardown_bounded(void)
+{
+	/* HSI on and ready BEFORE anything is switched off: the CPU is running
+	 * from PLL1 here, so stopping the active SYSCLK source first would stop
+	 * the core mid-sequence. */
+	SET_BIT(RCC->CR, RCC_CR_HSION);
+	bl_rcc_wait_flag(&RCC->CR, RCC_CR_HSIRDY, RCC_CR_HSIRDY);
+
+	/* HSIDIV /1 and the reset trimming: 64 MHz HSI. */
+	CLEAR_BIT(RCC->CR, RCC_CR_HSIDIV);
+	WRITE_REG(RCC->HSICFGR, RCC_HSICFGR_HSITRIM_6);
+
+	/* CFGR1/CFGR2 reset == SYSCLK switched to HSI, every prescaler /1, no
+	 * kernel clock mux or MCO still pointing at a PLL. */
+	CLEAR_REG(RCC->CFGR1);
+	CLEAR_REG(RCC->CFGR2);
+	bl_rcc_wait_flag(&RCC->CFGR1, RCC_CFGR1_SWS, 0U);
+
+	/* The oscillators the application turned on. LSI is not in this list on
+	 * purpose -- see the block comment above. */
+	CLEAR_BIT(RCC->CR, RCC_CR_CSION | RCC_CR_CSIKERON | RCC_CR_HSECSSON |
+	                   RCC_CR_HSIKERON | RCC_CR_HSI48ON | RCC_CR_HSEON);
+	CLEAR_BIT(RCC->CR, RCC_CR_HSEEXT | RCC_CR_HSEBYP);
+
+	/* PLLs off, each with its own capped wait on the matching ready flag. */
+	CLEAR_BIT(RCC->CR, RCC_CR_PLL1ON);
+	bl_rcc_wait_flag(&RCC->CR, RCC_CR_PLL1RDY, 0U);
+	CLEAR_BIT(RCC->CR, RCC_CR_PLL2ON);
+	bl_rcc_wait_flag(&RCC->CR, RCC_CR_PLL2RDY, 0U);
+#if defined(RCC_CR_PLL3ON)
+	CLEAR_BIT(RCC->CR, RCC_CR_PLL3ON);
+	bl_rcc_wait_flag(&RCC->CR, RCC_CR_PLL3RDY, 0U);
+	CLEAR_REG(RCC->PLL3CFGR);
+	WRITE_REG(RCC->PLL3DIVR, 0x01010280U);
+	CLEAR_REG(RCC->PLL3FRACR);
+#endif /* RCC_CR_PLL3ON */
+
+	/* PLL dividers / fractional registers back to their reset values. */
+	CLEAR_REG(RCC->PLL1CFGR);
+	WRITE_REG(RCC->PLL1DIVR, 0x01010280U);
+	CLEAR_REG(RCC->PLL1FRACR);
+	CLEAR_REG(RCC->PLL2CFGR);
+	WRITE_REG(RCC->PLL2DIVR, 0x01010280U);
+	CLEAR_REG(RCC->PLL2FRACR);
+
+	/* No RCC interrupt may reach the ROM. */
+	CLEAR_REG(RCC->CIER);
+	WRITE_REG(RCC->CICR, 0xFFFFFFFFU);
+	SET_BIT(RCC->RSR, RCC_RSR_RMVF);
+
+	/* The HAL keeps the SYSCLK frequency in this variable: nothing after this
+	 * point may still believe it is running at the application's 150 MHz. */
+	SystemCoreClock = HSI_VALUE;
+
+	/* Verified post-condition, not a discarded return value: SYSCLK must now be
+	 * HSI (SWS == 0, which also implies HSIRDY) and PLL1 -- the source the
+	 * application ran from -- must be off (PLL1RDY == 0). A stuck flag that the
+	 * capped waits above gave up on shows up here instead of being ignored. */
+	return (READ_BIT(RCC->CFGR1, RCC_CFGR1_SWS) == 0U) &&
+	       (READ_BIT(RCC->CR, RCC_CR_PLL1RDY) == 0U);
+} // bool bl_rcc_teardown_bounded(void)
+
+/*============================================================================*/
+/* PSP -> MSP handover into the ST ROM, and the jump.
+ *
+ * FreeRTOS runs every task on PSP: the CM33 port sets CONTROL.SPSEL = 1 in
+ * thread mode and fences each task with PSPLIM (see the port's portasm.c).
+ * __set_MSP() is a plain MSR MSP, so from a task it only writes a register the
+ * executing context does not use -- the ROM reset vector would then run on the
+ * abandoned task stack instead of the ROM initial SP that step 1 just
+ * sanity-checked, and the first stack growth past the stale PSPLIM faults with
+ * no handler in place. Only the pre-scheduler strap route (main(), before
+ * osKernelStart) is already on MSP, which is why the legacy fork's plain
+ * __set_MSP() was never wrong: it never jumped from a task.
+ *
+ * Clearing CONTROL.SPSEL makes MSP the active stack INSTANTLY, so from that
+ * write onwards every stack access -- a spilled local, a pushed return frame --
+ * would touch a frame that no longer belongs to this context: undefined
+ * behaviour, and on the way into a bootloader, a corrupt handover. The switch,
+ * the MSP load and the branch therefore have to be one register-only sequence,
+ * which is why this is a naked tail:
+ *
+ *   - r0/r1 hold sp_val and the reset vector from function entry (AAPCS), and
+ *     nothing here pushes, pops or spills before or after the CONTROL write;
+ *   - MSP is loaded BEFORE SPSEL is cleared, so the switch lands directly on
+ *     the ROM's own stack rather than on a half-built one (the opposite order
+ *     would leave SP on the application's MSP for the width of the write);
+ *   - ISB orders the CONTROL write against what follows (the write is
+ *     self-synchronising for the next instruction on CM33, but the next
+ *     instruction here is a branch, and the barrier removes any doubt);
+ *   - PRIMASK is cleared here rather than in the C body: the ROM reset handler
+ *     expects the hardware-reset state (interrupts enabled) and enumerates over
+ *     USB on interrupts, and doing it here means no interrupt can ever be taken
+ *     with SPSEL still 1 and MSP still the application's. Step 6 has disabled
+ *     and un-pended every NVIC line and step 3 removed the pended core
+ *     exceptions, so there is no enabled source left that could take one in the
+ *     single-instruction window before the branch.
+ *
+ * The shipped ELF was disassembled to confirm there is no load/store between
+ * the CONTROL write and the bx; tools/m1cp_host_test pins the seam in source. */
+static void bl_rom_handover(uint32_t sp_val, uint32_t reset_vector) __attribute__((naked, noreturn));
+static void bl_rom_handover(uint32_t sp_val, uint32_t reset_vector)
+{
+	(void)sp_val;       /* lives in r0 from here to the bx (see above) */
+	(void)reset_vector; /* lives in r1 */
+
+	__asm volatile (
+		"msr msp, r0        \n\t" /* ROM initial SP, not yet the active stack */
+		"mrs r2, control    \n\t"
+		"bic r2, r2, #2     \n\t" /* CONTROL.SPSEL = 0: thread mode uses MSP */
+		"msr control, r2    \n\t"
+		"isb                \n\t"
+		"cpsie i            \n\t" /* the ROM expects the reset state */
+		"bx  r1             \n\t" /* ROM reset vector, system memory */
+	);
+} // static void bl_rom_handover(...)
+
+/*============================================================================*/
+/**
+  * @brief  Robust, NON-RETURNING jump to the STM32H573 system-memory (ROM) DFU
+  *         bootloader (issue #41-B; ported from the fork's bl_jump_to_dfu()).
+  *
+  * Teardown order, and why each step is where it is:
+  *
+  *   1. SP sanity check. A blank/foreign system-memory region resets the MCU
+  *      instead of branching into garbage. No logging is possible here.
+  *   2. __disable_irq(). Nothing may preempt the teardown, and the ROM
+  *      bootloader must not receive an application ISR.
+  *   3. SysTick teardown (CTRL/LOAD/VAL = 0) plus clearing the pended
+  *      SysTick/PendSV bits, so no core exception survives into the ROM's
+  *      vector table when interrupts are re-enabled for it later.
+  *   4. Application clock tree down to the reset state
+  *      (bl_rcc_teardown_bounded()): HSI on and selected, prescalers /1,
+  *      HSE/CSI/PLLs off, LSI untouched. The legacy fork did not do this and
+  *      relied on the ROM reconfiguring the clock itself; the issue #41
+  *      acceptance criterion requires the application clock tree to be dropped
+  *      before the jump, and it removes any chance of the ROM inheriting a PLL
+  *      it cannot service. It runs AFTER interrupts are off (a tick during
+  *      clock teardown would be fatal) and BEFORE the NVIC/VTOR work.
+  *      It is a raw-register teardown with capped waits, NOT HAL_RCC_DeInit():
+  *      the HAL call polls HAL_GetTick(), and this project's only tick source
+  *      (TIM6) is masked by step 2, so its timeouts never advance -- a stuck
+  *      RCC flag would then spin forever before the watchdog net exists. The
+  *      helper documents what the ROM needs and why every wait is capped.
+  *   5. TIM6 (the HAL tick timebase) stopped and its clock gate dropped: with
+  *      interrupts off nothing vectors its update, and the ROM never asked for
+  *      it. It must come after step 4, which has just reprogrammed the clock
+  *      tree that feeds it.
+  *   6. NVIC->ICER/ICPR cleared: every interrupt disabled and un-pended.
+  *   7. SCB->VTOR = system memory, so any vector taken after this point
+  *      resolves in the ROM's vector table.
+  *   8. DSB/ISB, then caches off. On H5, entering the BootROM with caches
+  *      enabled can fail or hang silently. ICACHE is disabled and waited on
+  *      (CR.EN == 0, ST's own completion criterion, plus SR.BUSYF for the
+  *      invalidation); DCACHE1 is never enabled in this build (its AHB1 clock
+  *      gate is never set), so that branch reads 0 and is not taken -- see the
+  *      step-8 comment in the body.
+  *   9. 32 s IWDG safety net: START first, then UNLOCK/PR/RLR, wait for the
+  *      register update, feed. 0xCCCC starts a stopped IWDG and is a no-op on a
+  *      running one, and the ROM never feeds the counter, so the alternative is
+  *      the route's previous period resetting the unit mid-enumeration (~4 s on
+  *      the application route). Nothing re-feeds it after the 0xAAAA below
+  *      either, so that same 32.768 s bounds the ENTIRE ROM residency -- connect,
+  *      enumerate, download and verify -- and not just an abandoned session.
+  *      Starting before programming matters on the
+  *      cold-boot strap route, which runs before MX_IWDG_Init(): a stopped IWDG
+  *      has its LSI off, so PR/RLR update flags need LSI cycles to appear --
+  *      see stm32h5xx_hal_iwdg.c. The update wait is LSI-domain (one prescaled
+  *      period), so it has its own millisecond-class budget
+  *      (M1_DFU_IWDG_SYNC_SPIN_LIMIT); if it still expires the teardown resets
+  *      rather than feeding 0xAAAA, which would reload with the previous
+  *      PR/RLR and silently disarm the net.
+  *  10. Thread-mode stack back to MSP with the ROM's own initial SP, interrupts
+  *      re-enabled, jump to the ROM reset vector. That last step is
+  *      register-only on purpose: clearing CONTROL.SPSEL changes the stack the
+  *      executing context uses, so any C running after it would be reading and
+  *      writing a frame that no longer belongs to this context. See
+  *      bl_rom_handover().
+  *
+  * Every hardware-flag spin reachable from this function is bounded: the RCC
+  * waits inside bl_rcc_teardown_bounded() and the cache waits by
+  * M1_DFU_TEARDOWN_SPIN_LIMIT (the ICACHE wait covers both CR.EN and SR.BUSYF),
+  * the IWDG->SR update wait by its own
+  * M1_DFU_IWDG_SYNC_SPIN_LIMIT. From step 2 to step 9 the unit has interrupts
+  * disabled and (on the strap route) no watchdog net, so an unbounded wait on a
+  * stuck flag would be a hang only a power cycle clears. The cache and RCC waits
+  * fall through to the jump (best effort); the two waits whose failure would
+  * leave the unit in a state worse than a reset (the clock tree, the watchdog
+  * net) fail loudly through bl_dfu_teardown_failed() instead.
+  *
+  *
+  * Deliberately NOT ported: the legacy boot-time IWDG option-byte rewrite
+  * (HAL_FLASHEx_OBProgram + HAL_FLASH_OB_Launch). It was a verified defect --
+  * a normal boot must never program option bytes -- and this function programs
+  * none: it only arms the already-running watchdog counter. See
+  * startup_iwdg_option_byte_check() in m1_system.c.
+  *
+  * Defined only where CMSIS register definitions exist; host test builds never
+  * compile this translation unit (see the header prototype's note).
+  */
+/*============================================================================*/
+void bl_jump_to_dfu(void)
+{
+	uint32_t sp_val;
+	uint32_t jump_address;
+	uint32_t i;
+
+	/* 1. Boot-vector sanity: initial SP must look like H5 SRAM. */
+	sp_val = *(volatile const uint32_t *)(uintptr_t)M1_SYSTEM_MEMORY_BASE;
+	if ( !m1_dfu_sp_plausible(sp_val) )
+	{
+		bl_dfu_teardown_failed(); // nothing sane to jump to: loud reset
+	}
+
+	/* 2. No interrupts from here on until the ROM is ready for them. */
+	__disable_irq();
+
+	/* 3. SysTick off, and drop the core exceptions it may already have pended.
+	 *    NVIC->ICER/ICPR below cover peripheral lines only, so a SysTick or
+	 *    PendSV pended in this window (or by the RTOS just before step 2) would
+	 *    otherwise fire into the ROM's vector table the moment the ROM runs. */
+	SysTick->CTRL = 0U;
+	SysTick->LOAD = 0U;
+	SysTick->VAL  = 0U;
+	SCB->ICSR = SCB_ICSR_PENDSTCLR_Msk | SCB_ICSR_PENDSVCLR_Msk;
+	__ISB();
+
+	/* 4. Application clock tree down: back to HSI, PLLs off (bounded, and
+	 *    tick-free -- see bl_rcc_teardown_bounded()). Its post-condition is
+	 *    checked, not discarded: a tree that did not settle means the ROM would
+	 *    inherit a clock it cannot service, so fail loudly instead of jumping. */
+	if ( !bl_rcc_teardown_bounded() )
+	{
+		bl_dfu_teardown_failed();
+	}
+
+	/* 5. TIM6 is this project's HAL tick timebase: stop the counter, drop its
+	 *    pending update flag and release its clock gate. Its NVIC line is
+	 *    masked at step 6 so nothing vectors it, but the ROM must not inherit a
+	 *    running peripheral it never asked for. Order matters: the timer has to
+	 *    be stopped while its clock is still gated on. */
+	TIM6->CR1 &= ~TIM_CR1_CEN;
+	TIM6->SR  = 0U;
+	CLEAR_BIT(RCC->APB1LENR, RCC_APB1LENR_TIM6EN);
+
+	/* 6. Disable and un-pend every NVIC interrupt. */
+	for (i = 0U; i < (uint32_t)(sizeof(NVIC->ICER) / sizeof(NVIC->ICER[0])); i++)
+	{
+		NVIC->ICER[i] = 0xFFFFFFFFU;
+		NVIC->ICPR[i] = 0xFFFFFFFFU;
+	}
+
+	/* 7. Vectors now resolve in system memory. */
+	SCB->VTOR = M1_SYSTEM_MEMORY_BASE;
+
+	/* 8. Barriers, then caches off (BootROM entry is unsafe with caches on).
+	 *    ICACHE is the only cache this build ever enables (MX_ICACHE_Init()):
+	 *    DCACHE1's AHB1 clock gate (RCC_AHB1ENR.DCACHE1EN) is not enabled
+	 *    anywhere in the tree and HAL_DCACHE_MODULE_ENABLED is off
+	 *    (Core/Inc/stm32h5xx_hal_conf.h), so the DCACHE1 access below reads 0 on
+	 *    this bus and its branch is never taken. It is kept for legacy-fork
+	 *    parity and so the step stays correct if a future application enables
+	 *    the data cache; issue #41 gate item 6 reads DCACHE1->CR back on both
+	 *    routes to confirm the 0 on silicon rather than assuming it. */
+	jump_address = *(volatile const uint32_t *)(uintptr_t)(M1_SYSTEM_MEMORY_BASE + 4U);
+
+	__DSB();
+	__ISB();
+
+	if ( (ICACHE->CR & ICACHE_CR_EN) != 0U )
+	{
+		ICACHE->CR &= ~ICACHE_CR_EN;
+		/* Bounded (see M1_DFU_TEARDOWN_SPIN_LIMIT): a stuck flag must not hang
+		 * the unit with interrupts off and no net armed. The wait covers BOTH
+		 * criteria: CR.EN == 0 is ST's disable-completion test
+		 * (HAL_ICACHE_Disable(), 1 ms timeout) and is what step 8 actually
+		 * needs; SR.BUSYF is the automatic invalidation that disable kicks
+		 * off. Waiting only on BUSYF would let the jump happen with EN still
+		 * set -- exactly the state the ROM must not inherit. */
+		for (i = 0U; (((ICACHE->CR & ICACHE_CR_EN) != 0U) || ((ICACHE->SR & ICACHE_SR_BUSYF) != 0U)) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT); i++)
+		{
+			;
+		}
+	}
+	if ( (DCACHE1->CR & DCACHE_CR_EN) != 0U )
+	{
+		/* Not reached in this build (no DCACHE1 clock -- see above). */
+		DCACHE1->CR &= ~DCACHE_CR_EN;
+		for (i = 0U; ((DCACHE1->SR & DCACHE_SR_BUSYF) != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT); i++)
+		{
+			;
+		}
+	}
+
+	/* 9. 32 s watchdog safety net (LSI / 256 via IWDG_PR == 6, max reload).
+	 *    START FIRST, then configure -- the HAL's own order, and the only safe
+	 *    one on the cold-boot strap route where the IWDG/LSI is still stopped
+	 *    and PR/RLR write flags need LSI cycles to appear. The wait for the
+	 *    register update is the one spin in this function that waits on the LSI
+	 *    domain (one prescaled LSI period = 8 ms at PR == 6), so it uses its own
+	 *    budget (M1_DFU_IWDG_SYNC_SPIN_LIMIT, ~4x ST's HAL_IWDG_DEFAULT_TIMEOUT)
+	 *    rather than the tens-of-cycles cache cap.
+	 *
+	 *    The wait and the check below test ONLY the four update flags
+	 *    (M1_DFU_IWDG_SR_UPDATE_FLAGS), never the whole register: ONF (bit 8)
+	 *    is the persistent "IWDG is running" status bit, set by the 0xCCCC
+	 *    three statements above, so a whole-register test would be false
+	 *    forever and this exit would fire on every entry route. See the mask
+	 *    definition and its static asserts at the top of this file. */
+	IWDG->KR  = M1_DFU_IWDG_KEY_START;
+	IWDG->KR  = M1_DFU_IWDG_KEY_UNLOCK;
+	IWDG->PR  = M1_DFU_IWDG_PRESCALER;
+	IWDG->RLR = M1_DFU_IWDG_RELOAD;
+	for (i = 0U; ((IWDG->SR & M1_DFU_IWDG_SR_UPDATE_FLAGS) != 0U) && (i < M1_DFU_IWDG_SYNC_SPIN_LIMIT); i++)
+	{
+		;
+	}
+	if ( (IWDG->SR & M1_DFU_IWDG_SR_UPDATE_FLAGS) != 0U )
+	{
+		/* The PR/RLR writes never became visible. Feeding 0xAAAA now would
+		 * reload with the PREVIOUS PR/RLR -- ~0.5 s on the strap route, where
+		 * the counter was just started at its reset defaults -- i.e. it would
+		 * silently disarm the 32 s net in exactly the corner case the net
+		 * exists for. Fail loudly instead (reset, no feed). */
+		bl_dfu_teardown_failed();
+	}
+	IWDG->KR = M1_DFU_IWDG_KEY_RELOAD;
+
+	/* 10. Take the ROM's stack pointer, switch the thread-mode stack back to
+	 *     MSP, re-enable interrupts (the ROM enumerates over USB on them) and
+	 *     branch to its reset vector. The three must be one register-only
+	 *     sequence -- see bl_rom_handover() for the PSP->MSP trap. It does not
+	 *     return, so there is deliberately no fallback loop after it. */
+	bl_rom_handover(sp_val, jump_address);
+} // void bl_jump_to_dfu(void)
+#endif /* M1CP_HOST_TEST */

@@ -184,26 +184,28 @@ machine has been reconciled and before `m1_gui_welcome_scr()`):
      (`startup_boot_recovery_hook()`).
 
 **What the failsafe does and does not do.** Detection and accounting are
-automatic; the *recovery action* is not. On a failure the boot stops at
-`FW CORRUPT!` and the fault is recorded, but:
+automatic; containment is not. On a failure the boot stops at `FW CORRUPT!`,
+the fault is recorded, and a **bounded USB DFU offer** runs (see "DFU entry"
+below):
 
 - the unvalidated image is **not** prevented from running — execution continues
-  into the application exactly as on a healthy boot,
-- `FW CORRUPT!` is **not** a lock-out screen: the normal UI is one key press
-  away. The message leaves the display mode in `M1_OPERATION_MODE_DISPLAY_ON`,
-  and the first OK press takes `m1_menu.c` into `menu_main_init()`, which
-  redraws the main menu over the banner,
-- no automatic recovery action runs until the DFU unit of issue #41 (#41-B)
-  fills that seam with `bl_jump_to_dfu()`; it currently only logs.
+  into the application exactly as on a healthy boot once the offer has
+  expired or been declined,
+- `FW CORRUPT!` is **not** a lock-out screen: after the offer the normal UI is
+  one key press away. The message leaves the display mode in
+  `M1_OPERATION_MODE_DISPLAY_ON`, and the first OK press takes `m1_menu.c` into
+  `menu_main_init()`, which redraws the main menu over the banner,
+- the offer itself never waits indefinitely (5 s window, then fall-through), so
+  a flat battery or a stuck key cannot turn recovery into a hang.
 
 Treat `FW CORRUPT!` as a diagnostic banner rather than containment. What it
 does give you is durable evidence: `boot_fault_signature` and `boot_attempts`
 survive a power cycle in DR1, so a technician can distinguish an erased metadata
 block (magic/header fault) from a genuinely corrupted image (CRC fault). The
-supported ways out of a failed bank for this release are service DFU and the
-SD-card update path (plus the interactive rollback offer below). Automatic DFU
-entry lands with #41-B, and on-device qualification of the whole corrupt-bank
-path is the issue #41 hardware gate (milestone "Post-merge stabilization").
+supported ways out of a failed bank are the recovery-screen DFU offer, the
+service DFU strap, and the SD-card update path (plus the interactive rollback
+offer below). On-device qualification of the whole corrupt-bank path is still
+the issue #41 hardware gate (milestone "Post-merge stabilization").
 
 The manual alternate-bank rollback path is still interactive-only: it runs on
 the first power-up after an update reboot when the user presses BACK+DOWN, and
@@ -219,12 +221,13 @@ a healthy boot clears it, so:
 
 Automatic failed-boot rollback (swapping without the user keypress) is still not
 implemented. On-device qualification of the corrupt-bank boot path -- including
-the `FW CORRUPT!` diagnostic banner (not a lock-out) and the eventual DFU entry
+the `FW CORRUPT!` diagnostic banner (not a lock-out) and the DFU offer/entry
 -- is tracked as the issue #41 hardware gate (milestone "Post-merge
 stabilization"); the host suite covers the span arithmetic, the CRC decision,
-every fault class, the counters and the swap guard, and signs/injects a synthetic
-`0xFFC14`-byte bank with the build's own CRC algorithm (valid, flipped byte,
-zeroed magic, relocated CRC word).
+every fault class, the counters, the swap guard, the teardown order and the
+bounded recovery policy, and signs/injects a synthetic `0xFFC14`-byte bank with
+the build's own CRC algorithm (valid, flipped byte, zeroed magic, relocated CRC
+word).
 
 The boot path performs a READ-ONLY IWDG option-byte check
 (`startup_iwdg_option_byte_check()`) and logs whether the watchdog is
@@ -240,14 +243,275 @@ rollback branch of the same boot path still programs them, via `bl_swap_banks()`
 and so does the offline `m1_pre_power_down()` path: both are explicit
 user/power-down actions, not a per-boot rewrite.)
 
+## DFU entry
+
+The device can enter the STM32H573 ROM USB DFU bootloader in system memory
+(`0x0BF90000`) three ways. All three end in the same non-returning
+`bl_jump_to_dfu()` (`m1_fw_update_bl.c`), so the teardown exists once.
+
+### 1. Hardware strap
+
+Hold the **UP button** (PE11, active low) while powering on. `Core/Src/main.c`
+samples it in the first instructions of `main()`, **before `HAL_Init()` and
+before `MX_IWDG_Init()`**, using raw register access (no HAL exists yet). This
+is the fork's original service entry and the one to use on a unit that no
+longer boots far enough to run the application's recovery screen.
+
+On a strap hit the unit:
+
+1. gives a speaker tick (SPK_CTRL = PC7 driven high ~23 ms -- the emitted loop
+   is 300 000 iterations at 64 MHz -- then low),
+2. drives PD12/PD13 high: these are **user-owned external connector pins 6-7**
+   (`docs/hardware.md`, also the GPIO menu's "Pin PD12"/"Pin PD13" via
+   `m1_ext_gpio[]`), **not** dedicated DFU LEDs,
+3. calls `bl_jump_to_dfu()`.
+
+The strap decision is the pure `m1_dfu_strap_active()` (`m1_dfu_entry.h`),
+host-tested; only the pre-HAL GPIO plumbing lives in `main.c`.
+
+### 2. Software request
+
+`firmware_update_enter_usb_dfu()` (`m1_fw_update.c`) is the single public
+entry point (used by the future `dfu` CLI command, unit PR-CLI, and by the
+recovery offer below). It:
+
+1. persists `DEV_OP_STATUS_USB_DFU_REQUEST` (`5`) in DR1[7:0] through
+   `startup_config_write()` -- never a raw `TAMP->BKP` write; DR2/DR3 stay
+   ESP-owned,
+2. resets the device.
+
+`startup_config_handler()` then honours the request as the **first**
+`device_op_status` branch -- before the update state machine and before the
+boot failsafe, so an explicit request is never misread as an interrupted
+update -- and clears it back to `DEV_OP_STATUS_NO_OP` **before** jumping. The
+request is therefore single-shot: a power loss during the ROM session, or a
+reset after it, cannot put the unit back into DFU, so there is no DFU boot
+loop. Existing enum values keep their persisted numbers
+(`REBOOT` = 4, request = 5, `UNKNOWN` = 6; statically asserted).
+
+### 3. Recovery-screen offer
+
+When the boot CRC validation fails, `startup_boot_recovery_hook()`
+(`m1_system.c`) shows `FW CORRUPT!` and `OK=USB DFU 5s` **together in one
+screen** (`startup_recovery_offer_display()`, one `u8g2` page, so the
+diagnostic line is not cleared by drawing the offer) and offers DFU entry for a
+**bounded** window:
+
+- the decision each poll is the pure `m1_dfu_recovery_poll()`
+  (`m1_dfu_entry.h`). Acceptance is **edge-triggered**: the key level is sampled
+  when the offer opens and a press only counts after a released -> pressed
+  transition, so a deliberate OK press (~100 ms, i.e. two consecutive 50 ms
+  polls, so one noisy sample cannot trigger it) selects DFU while a held,
+  shorted or stuck key never does. A press that lands on the last poll of the
+  window is still honoured, and once the 5 s window has elapsed the helper can
+  never return "keep waiting";
+- the poll loop kicks the IWDG (`m1_wdt_kick()`, documented for long bounded
+  operations) because 5 s exceeds the ~4 s application watchdog period;
+- a press calls `firmware_update_enter_usb_dfu()` (recorded request + reset);
+- on timeout the `FW CORRUPT!` banner is restored and the pre-existing
+  behaviour resumes (the normal UI stays reachable), with the choice logged.
+
+So a flat battery or a stuck key can delay a failed boot by at most the window
+plus one poll interval -- never hang it, and never cycle it into DFU: a stuck
+OK key falls through at 5 s every time -- and a failing image still cannot
+silently present itself as healthy: the banner is drawn and the failure is
+persisted in `boot_attempts` / `boot_fault_signature`. PD12/PD13 (external
+connector pins 6-7) are driven only at the moment of ENTER, on the way into the
+reset, so offering or timing out never leaves an external circuit asserted.
+
+### Teardown order
+
+`bl_jump_to_dfu()` performs, in this order (host-test-enforced by source seam
+in `tools/m1cp_host_test/test_m1cp_dfu.c`):
+
+1. ROM initial-SP sanity (`m1_dfu_sp_plausible()`); implausible -> reset,
+2. `__disable_irq()`,
+3. SysTick teardown (CTRL/LOAD/VAL = 0) and the pended SysTick/PendSV bits
+   cleared (`SCB->ICSR`; `NVIC->ICER`/`ICPR` do not cover core exceptions),
+4. application clock tree down to the HSI **reset state** with a
+   raw-register, iteration-capped teardown (`bl_rcc_teardown_bounded()`):
+   HSI on and selected, prescalers /1, HSE/CSI/HSI48/PLL1-3 off, PLL config
+   registers at their reset values, LSI left running for the watchdog net
+   below. `HAL_RCC_DeInit()` is deliberately **not** used: its internal waits
+   poll `HAL_GetTick()`, whose only tick source (TIM6) step 2 masked, so its
+   timeouts never expire and a stuck ready flag would spin forever -- and on
+   the strap route (before `HAL_Init()`) it additionally returns `HAL_ERROR`
+   at its first `HAL_InitTick()` (no valid `uwTickPrio` yet), i.e. it never
+   tears the tree down at all. The helper's post-condition is **verified**, not
+   discarded: SYSCLK on HSI and PLL1 off, otherwise the teardown fails loudly
+   (step 10's reset) instead of handing the ROM a clock it cannot service,
+5. TIM6 (the HAL tick timebase) stopped and ungated,
+6. `NVIC->ICER`/`NVIC->ICPR` cleared for every interrupt,
+7. `SCB->VTOR = M1_SYSTEM_MEMORY_BASE`,
+8. `__DSB()` / `__ISB()`, then ICACHE and DCACHE handled with a **bounded**
+   busy-wait (BootROM entry with caches enabled can fail or hang silently on
+   H5). Only ICACHE is a real action: it is disabled and the wait covers ST's
+   completion criterion `CR.EN == 0` (what `HAL_ICACHE_Disable()` polls) **and**
+   `SR.BUSYF` (the automatic invalidation the disable starts). DCACHE1 is never
+   enabled in this build -- its `RCC_AHB1ENR.DCACHE1EN` gate is not enabled
+   anywhere in the tree and `HAL_DCACHE_MODULE_ENABLED` is off -- so that read
+   returns 0 and the branch is not taken; it is retained for legacy-fork parity
+   and is confirmed on silicon by checklist item 6,
+9. 32 s IWDG safety net (prescaler /256, reload 4095 -> 32.768 s at the
+   nominal 32 kHz LSI). The sequence is **start-then-configure** --
+   `KR=0xCCCC` (start), `KR=0x5555` (unlock), `PR`, `RLR`, wait for the
+   register update (`IWDG->SR`), `KR=0xAAAA` (feed) -- matching
+   `stm32h5xx_hal_iwdg.c`. That `0xAAAA` is the **last** feed: neither the
+   teardown nor the ROM re-feeds the counter, so the same 32.768 s bounds the
+   **entire** ROM residency -- connect, enumerate, download and verify -- and
+   not merely an abandoned session. On the cold-boot strap route the IWDG/LSI is
+   still stopped (this runs before `MX_IWDG_Init()`), so configuring first would
+   leave the update flags waiting on LSI cycles that never come, or drop the
+   writes and start at the reset-default ~0.5 s period. That update wait is
+   LSI-domain (one
+   *prescaled* LSI period = 8 ms at /256, plus LSI startup), so it uses its own
+   millisecond-class budget (`M1_DFU_IWDG_SYNC_SPIN_LIMIT`, ~4x
+   `HAL_IWDG_DEFAULT_TIMEOUT`) rather than the tens-of-cycles cap the cache
+   waits use. It tests only the four **update** flags,
+   `PVU|RVU|WVU|EWU` (`M1_DFU_IWDG_SR_UPDATE_FLAGS`, == the HAL's private
+   `IWDG_KERNEL_UPDATE_FLAGS` == `LL_IWDG_IsReady()`'s mask), never the whole
+   register: `ONF` (bit 8) is the persistent "IWDG is running" status bit that
+   the `0xCCCC` above sets, so a whole-register `SR == 0` test can never
+   succeed and would send every entry route down the failure path. If the four
+   flags still do not clear the teardown **resets** instead of feeding
+   `0xAAAA`: reloading before `PVU`/`RVU` clear takes the *previous* `PR`/`RLR`
+   (same HAL file), which would silently turn the net back into ~0.5 s on the
+   strap route / ~4 s on the application route,
+10. `CONTROL.SPSEL` cleared with MSP = the ROM initial SP, then interrupts
+   re-enabled, then the branch to the ROM reset vector -- one register-only
+   sequence. The SPSEL clear is required, not cosmetic: under FreeRTOS thread
+   mode runs on **PSP**, so a bare `__set_MSP()` would leave the ROM executing
+   on the abandoned task stack instead of the SP just validated.
+
+Every hardware-flag spin in steps 4, 8 and 9 is capped: the `RCC`
+ready/switch flags and the `ICACHE` `CR.EN`/`SR.BUSYF` wait are bounded by
+`M1_DFU_TEARDOWN_SPIN_LIMIT` (tens-of-cycles flags), and the `IWDG->SR` update
+wait by its own, larger `M1_DFU_IWDG_SYNC_SPIN_LIMIT`. The cache and RCC waits
+fall through to the jump (best effort); the two waits whose expiry would leave
+the unit in a state *worse* than a reset -- the clock tree post-condition and
+the watchdog sync -- fail loudly through `bl_dfu_teardown_failed()`
+(`NVIC_SystemReset()`), so the unit reboots instead of jumping into the ROM
+with a clock it cannot service or a silently disarmed net. Between step 2 and
+step 9 the unit runs with interrupts disabled and, on the strap route, **no**
+watchdog net, so an unbounded wait on a stuck flag would be a hang that only
+removing power clears.
+
+That failure reset is reached only when a teardown step **genuinely fails**;
+every entry route that completes the teardown hands over to the ROM and resets
+nothing. When it is reached it is a recovery on the software-request and
+recovery-offer routes: the persisted request was already consumed before the
+teardown, so the reboot boots the application and the user can retry. It is
+**not** a recovery on the strap route -- `main()` re-samples PE11 before
+`HAL_Init()`, and with the strap still held (holding it is how the user got
+there) the unit re-enters `bl_jump_to_dfu()`, hits the same persistent failure
+(a dead LSI, or a clock tree that never settles) and resets again: an
+**unbounded reset loop** with interrupts off and no logs, ended only by
+releasing UP or removing power. The loop is a consequence of the persistent
+failure plus the held strap, not of strap entry as such. The
+policy is deliberate -- jumping into the ROM with a dead LSI or a half-torn
+clock tree is worse than rebooting loudly, and there is no spare
+backup-register budget for a persistent-failure attempt counter -- and
+checklist item 5 below records how a technician tells this loop from a boot
+hang.
+
+The legacy fork did not tear the clock tree down; it is done here because
+the issue #41 acceptance criterion requires the application clock tree to be
+dropped before the jump and it removes any chance of the ROM inheriting a PLL
+it cannot service. What the teardown normalises is what the ST ROM's own clock
+init depends on (SYSCLK on HSI, prescalers /1, HSE/CSI/HSI48 and PLL1-3 off,
+PLL config registers at reset values, RCC interrupts and flags cleared,
+`SystemCoreClock = HSI_VALUE`), and the ROM brings up the HSI48 it needs for USB
+itself.
+
+It is **not** "exactly the state a hardware reset leaves behind". What is
+deliberately left un-normalised:
+
+- `FLASH->ACR` keeps the application's 3 wait states, where `HAL_RCC_DeInit()`
+  would have restored `FLASH_LATENCY_DEFAULT` at both ends -- over-wait-stated
+  for a 64 MHz HSI SYSCLK, so the safe direction;
+- the `RCC_CCIPR*` kernel-clock muxes keep the application's selection. That is
+  **not** a deviation from the HAL: `HAL_RCC_DeInit()` does not reset them
+  either (it never writes a `CCIPR` register), so both hand the ROM the
+  application's mux selection and the ROM re-initialises what it uses;
+- the MPU stays enabled with region 0 read-only over `0x08FFF800-0x08FFF80C`
+  and `PRIVDEFENA` set, and the ICACHE control register keeps the application's
+  configuration even though caching is switched off at step 8. Benign for a
+  privileged ROM, but not a reset-equivalent machine state.
+
+So the two entry routes reach the ROM in **different** machine states: the
+strap route runs before `HAL_Init()`, `MPU_Config()` and `MX_ICACHE_Init()`
+(MPU off, ICACHE never enabled, no HAL tick), while the software-request and
+recovery-offer routes come from the fully initialised application (MPU on,
+ICACHE enabled and then disabled at step 8). Checklist item 6 requires both
+routes to be exercised separately.
+
+No step programs option bytes: the legacy boot-time IWDG
+option-byte rewrite (`HAL_FLASHEx_OBProgram` + `HAL_FLASH_OB_Launch`) was a
+verified defect and is deliberately **not** ported -- every entry path above is
+read-only with respect to option bytes.
+
+### Hardware qualification checklist (issue #41 DFU gate)
+
+None of this is executable in CI. It is tracked as the issue #41 hardware gate
+(milestone "Post-merge stabilization"):
+
+1. **Strap entry**: hold UP at power-on -> speaker tick (~23 ms), PD12/PD13
+   (external connector pins 6-7) driven high, the ROM DFU enumerates
+   (`dfu-util -l` / STM32CubeProgrammer).
+2. **Strap release**: without the strap the unit boots the application.
+3. **Software request**: `dfu` -> device resets -> ROM DFU enumerates.
+4. **Single-shot**: power-cycle during/after the ROM session -> the unit boots
+   the application, not back into DFU.
+5. **Watchdog net (it bounds the whole session, not just an abandoned one)**:
+   the net is armed immediately before the jump and nothing re-feeds it
+   afterwards -- not the teardown, not the ROM -- so the unit's **entire** ROM
+   residency (connect, enumerate, download, verify) must complete inside
+   32.768 s (LSI/256, reload 4095, LSI-dependent). A successful transfer is
+   capped exactly like an abandoned session: an operator who holds UP and only
+   then opens the host tool, or a slow download, sees the unit reboot
+   mid-transfer and reads it as "DFU is broken". The legacy fork ran the same
+   net at `PR` 7 (65.536 s), so this build halves the window -- measure it
+   rather than assuming the margin. Steps: (a) **time a full-image DFU
+   end-to-end** and record it against 32.768 s; (b) with no USB host attached,
+   confirm the ROM session is not cut off before ~30 s and that it recovers on
+   its own afterwards (the abandoned-session case); (c) confirm the net is armed
+   on every route (the update wait tests the four update flags, so `0xAAAA` is
+   reached); if it were not,
+   the teardown's failure exit (`bl_dfu_teardown_failed()` ->
+   `NVIC_SystemReset()`) would fire. That exit firing *persistently* while UP is
+   still held is the only reset-loop case: the unit reset-loops back into DFU
+   with no net and no logs -- confirm the loop stops as soon as the strap is
+   released (or power is removed), and that the software-request route performs
+   a single reset into the application rather than looping. A successful
+   teardown of any route resets nothing.
+6. **Teardown**: after the jump no application interrupt fires; SysTick/VTOR
+   point into system memory; ICACHE shows disabled (`CR.EN == 0`). `DCACHE1->CR`
+   also reads 0, but trivially: its clock gate is never enabled in this build,
+   so record that read as "data cache was never on", **not** as evidence that a
+   data-cache teardown ran. Exercise the **strap route and the
+   software-request route separately** -- they reach the ROM in different
+   machine states (strap: MPU off, ICACHE never enabled; request: MPU enabled
+   with region 0 read-only + `PRIVDEFENA`, ICACHE enabled then disabled). Record
+   `MPU->CTRL`, the `FLASH->ACR` latency (still 3 wait states) and the
+   `RCC_CCIPR*` muxes as intentionally **not** normalised, so neither route is
+   read as covering the other.
+7. **Corrupt bank**: flash an image with one flipped byte -> `FW CORRUPT!` +
+   offer; OK within 5 s enters DFU; no key leaves the banner and the UI is
+   reachable (no hang).
+8. **No option-byte churn**: `FLASH->OPTSR_CUR` is unchanged across repeated
+   strap/request entries.
+9. **Reflash and rollback demonstration** (deferred acceptance criterion): DFU
+   a known-good image, boot it, and exercise the update + rollback path.
+
 ## Recovery and rollback status
 
 The source contains a manual alternate-bank rollback path, but it is not part
 of the supported FW 0.8.0.5 release claim and has not been hardware-qualified for
 this release. Automatic failed-boot rollback is not implemented; boot-time
-integrity detection and boot/swap accounting are (see "Boot failsafe" above).
-Supported recovery for this release is the SD-card update path, the interactive
-rollback offer, and service DFU.
+integrity detection and boot/swap accounting are (see "Boot failsafe" above),
+and a failed boot offers bounded DFU entry (see "DFU entry" above). Supported
+recovery for this release is the SD-card update path, the DFU strap/request,
+the recovery-screen DFU offer, and the interactive rollback offer.
 
 ## Safety requirements
 

@@ -149,8 +149,23 @@ typedef enum {
 	DEV_OP_STATUS_FW_UPDATE_COMPLETE,
 	DEV_OP_STATUS_FW_ROLLBACK_COMPLETE,
 	DEV_OP_STATUS_REBOOT,
+	/* Software DFU request (issue #41-B, appended so the values above keep
+	 * their persisted meaning). Written by firmware_update_enter_usb_dfu()
+	 * (CLI `dfu`, and the recovery-screen offer) immediately before a reset;
+	 * startup_config_handler() honours it as the FIRST status branch of the
+	 * next boot -- before the update state machine and before the boot
+	 * failsafe -- and clears it back to NO_OP BEFORE jumping to the ROM, so
+	 * the request is single-shot and cannot create a DFU boot loop. It does
+	 * not overlap any update-state transition: those only ever see their own
+	 * values, and this one is cleared before anything else reads the byte. */
+	DEV_OP_STATUS_USB_DFU_REQUEST,
 	DEV_OP_STATUS_UNKNOWN
 } S_M1_DEV_OP_STATUS_t;
+
+/* The append above must not renumber the existing persisted values. */
+_Static_assert(DEV_OP_STATUS_REBOOT == 4, "persisted op-status values must not be renumbered");
+_Static_assert(DEV_OP_STATUS_USB_DFU_REQUEST == 5, "USB DFU request value is persisted; do not renumber");
+_Static_assert(DEV_OP_STATUS_UNKNOWN == 6, "UNKNOWN must stay past every real status");
 
 typedef enum {
 	M1_OPERATION_MODE_POWER_UP = 0x01, // Power is up and the M1 is still in power off mode (shutdown mode)
