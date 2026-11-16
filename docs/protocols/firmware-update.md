@@ -219,11 +219,12 @@ a healthy boot clears it, so:
 
 Automatic failed-boot rollback (swapping without the user keypress) is still not
 implemented. On-device qualification of the corrupt-bank boot path -- including
-the recovery screen and the eventual DFU entry -- is tracked as the issue #41
-hardware gate (milestone "Post-merge stabilization"); the host suite covers the
-span arithmetic, the CRC decision, every fault class, the counters and the swap
-guard, and signs/injects a synthetic `0xFFC14`-byte bank with the build's own CRC
-algorithm (valid, flipped byte, zeroed magic, relocated CRC word).
+the `FW CORRUPT!` diagnostic banner (not a lock-out) and the eventual DFU entry
+-- is tracked as the issue #41 hardware gate (milestone "Post-merge
+stabilization"); the host suite covers the span arithmetic, the CRC decision,
+every fault class, the counters and the swap guard, and signs/injects a synthetic
+`0xFFC14`-byte bank with the build's own CRC algorithm (valid, flipped byte,
+zeroed magic, relocated CRC word).
 
 The boot path performs a READ-ONLY IWDG option-byte check
 (`startup_iwdg_option_byte_check()`) and logs whether the watchdog is

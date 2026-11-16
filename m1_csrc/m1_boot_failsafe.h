@@ -43,13 +43,37 @@
 #define M1_BOOT_CRC_WORD_BYTES			4U
 #define M1_BOOT_IMAGE_FILE_SIZE_CANONICAL	(M1_BOOT_CRC_CROP_END_BYTES + M1_BOOT_CRC_WORD_BYTES)
 
-/* Intake gate decision, kept pure so the host test pins it: is this candidate
- * update image exactly the canonical image? Deliberately exact equality -- no
- * "close enough" tolerance, no alignment-only check. */
+/* Intake gate decision at the width the candidate's size actually has. Kept pure
+ * so the host test pins it: is this candidate update image exactly the canonical
+ * image? Deliberately exact equality -- no "close enough" tolerance, no
+ * alignment-only check.
+ *
+ * The SD intake observes the size with FatFs f_size(), whose result is FSIZE_t:
+ * a QWORD when FF_FS_EXFAT is enabled and a DWORD when it is not
+ * (FatFs/R015/ff.h). The comparison must therefore happen here, at full width,
+ * BEFORE the size is narrowed: a >4 GiB exFAT file whose low 32 bits equal the
+ * canonical size would otherwise pass the gate as a "successful" update. A value
+ * that does not fit the intake's 32-bit image_size cannot equal the canonical
+ * constant, so the same equality rejects it and the caller may narrow only after
+ * this returns true. uint64_t is used as the common wide type so this header
+ * stays independent of the FatFs configuration. */
+static inline bool m1_boot_image_size_is_canonical_wide(uint64_t image_size)
+{
+	return image_size == (uint64_t)M1_BOOT_IMAGE_FILE_SIZE_CANONICAL;
+}
+
+/* 32-bit view for callers whose size is genuinely 32-bit (the streamed M1CP
+ * transport's BEGIN field). Delegates so both intakes share one comparison. */
 static inline bool m1_boot_image_size_is_canonical(uint32_t image_size)
 {
-	return image_size == M1_BOOT_IMAGE_FILE_SIZE_CANONICAL;
+	return m1_boot_image_size_is_canonical_wide((uint64_t)image_size);
 }
+
+/* The transports and the flash engines carry the image size in 32 bits, so the
+ * canonical size must stay representable there; the wide gate above rejects any
+ * larger candidate either way (it cannot equal this constant). */
+_Static_assert(M1_BOOT_IMAGE_FILE_SIZE_CANONICAL <= UINT32_MAX,
+               "canonical update image size must fit the 32-bit intake width");
 
 /* Maximum bank swaps allowed between two CRC-validated boots. A swap counts
  * against the budget until a boot validates the image it swapped in; a healthy

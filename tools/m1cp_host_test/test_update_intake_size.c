@@ -10,9 +10,13 @@
  *   - the pure decision (m1_boot_image_size_is_canonical): canonical accepted;
  *     zero, plain-image-without-CRC, short, long, unaligned and 1 MiB rejected,
  *     and exactly one size in a window around the canonical value accepted,
+ *   - the same decision at the full f_size()/FSIZE_t width: a >4 GiB candidate
+ *     whose low 32 bits equal the canonical size is rejected (the SD intake
+ *     must not narrow the size before the gate),
  *   - the constant itself: 0xFFC18 == 1047576 == crop end 0xFFC14 + 4, and the
  *     same number in build.sh's release contract,
- *   - source seams on the two intakes: m1_fw_update.c (SD path) rejects with
+ *   - source seams on the two intakes: m1_fw_update.c (SD path) feeds the gate
+ *     the wide f_size() value and only narrows after it accepts, rejecting with
  *     M1_FW_IMAGE_SIZE_INVALID before any CRC/flash work, and
  *     bl_flash_stream_begin() (streamed M1CP path) rejects with
  *     BL_CODE_SIZE_ERROR before it erases the target bank,
@@ -192,20 +196,40 @@ int main(void) {
         ok(accepted == 1, "exactly one 4-aligned size near canonical is accepted");
     }
 
+    /* ---- the decision at the f_size()/FSIZE_t width ----------------------- */
+    /* FatFs f_size() returns FSIZE_t: a QWORD with FF_FS_EXFAT=1. These cases
+     * pin the truncation class -- a >4 GiB file whose low 32 bits equal the
+     * canonical size must be rejected at full width. */
+    ok(m1_boot_image_size_is_canonical_wide((uint64_t)CANONICAL_FILE_BYTES),
+       "canonical size accepted at f_size() width");
+    ok(!m1_boot_image_size_is_canonical_wide(0x100000000ULL + (uint64_t)CANONICAL_FILE_BYTES),
+       "4 GiB + canonical size rejected (low 32 bits alone are not the contract)");
+    ok(!m1_boot_image_size_is_canonical_wide(0x0000000100000000ULL),
+       "exactly 4 GiB rejected (low 32 bits zero)");
+    ok(!m1_boot_image_size_is_canonical_wide(~(uint64_t)0),
+       "UINT64_MAX rejected (no wrap onto the canonical size)");
+    ok(m1_boot_image_size_is_canonical(CANONICAL_FILE_BYTES) ==
+       m1_boot_image_size_is_canonical_wide((uint64_t)CANONICAL_FILE_BYTES),
+       "32-bit and wide decisions agree for a representable size");
+
     /* ---- seam: SD intake (m1_fw_update.c) --------------------------------- */
     {
         char *src = read_repo("m1_csrc/m1_fw_update.c");
         ok(src != NULL, "read m1_csrc/m1_fw_update.c for the intake seam");
         if (src != NULL) {
-            const char *gate = strstr(src, "m1_boot_image_size_is_canonical(image_size)");
-            ok(gate != NULL, "SD intake calls the canonical-image predicate");
+            /* The gate must be fed the wide f_size() value -- never the narrowed
+             * 32-bit image_size (the truncation class this test pins). */
+            const char *gate = strstr(src, "m1_boot_image_size_is_canonical_wide((uint64_t)image_file_size)");
+            const char *wide_src = strstr(src, "image_file_size = f_size(&hfile_fw)");
+            const char *narrow = strstr(src, "image_size = (uint32_t)image_file_size");
+            ok(gate != NULL, "SD intake calls the canonical-image predicate at f_size() width");
             if (gate != NULL) {
                 /* the call must be the REJECTION branch, not the acceptance one */
                 ok(rejects_on_predicate(src, gate),
-                   "SD intake rejects on !m1_boot_image_size_is_canonical(image_size)");
+                   "SD intake rejects on !m1_boot_image_size_is_canonical_wide(...)");
                 /* the rejection must carry the existing size-error code ... */
                 ok(strstr(gate, "M1_FW_IMAGE_SIZE_INVALID") != NULL &&
-                   strstr(gate, "M1_FW_IMAGE_SIZE_INVALID") - gate < 600,
+                   strstr(gate, "M1_FW_IMAGE_SIZE_INVALID") - gate < 900,
                    "SD intake rejects with M1_FW_IMAGE_SIZE_INVALID");
                 /* ... and must happen before the pre-flight CRC pass/flash phase */
                 {
@@ -213,7 +237,15 @@ int main(void) {
                     ok(crc_init != NULL && gate < crc_init,
                        "SD intake rejects before the image is verified/flashed");
                 }
+                /* the size reaches the gate straight from f_size(), and the
+                 * 32-bit narrowing happens only after the gate accepted */
+                ok(wide_src != NULL && wide_src < gate,
+                   "SD intake gates the un-narrowed FSIZE_t from f_size()");
+                ok(narrow != NULL && gate < narrow,
+                   "SD intake narrows to 32 bits only after the gate accepts");
             }
+            ok(strstr(src, "image_size = f_size(&hfile_fw)") == NULL,
+               "SD intake never assigns f_size() to the 32-bit image_size");
             ok(strstr(src, "FW_IMAGE_SIZE_MAX + FW_IMAGE_CRC_SIZE") == NULL,
                "permissive 1 MiB upper-bound intake check is gone (no fallback path)");
         }
