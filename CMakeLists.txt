@@ -146,11 +146,14 @@ add_custom_command(
 # The CRC-bearing image is part of the release contract (the on-device update
 # path verifies it), so this step must never silently no-op. srecord stays the
 # authoritative reference when it is installed; otherwise the repository's
-# pure-Python emulator emits the byte-identical image
-# (tools/emulate_srec_cat_crc.py, parity-tested by
-# scripts/verify_crc_parity.sh against this exact srec_cat invocation). If
-# neither emitter exists, configuration fails loudly instead of shipping a
-# build directory without ${CMAKE_PROJECT_NAME}_wCRC.bin.
+# pure-Python emulator (tools/emulate_srec_cat_crc.py, parity-tested by
+# scripts/verify_crc_parity.sh against this exact srec_cat invocation) emits
+# the byte-identical image. That equivalence holds for images of exactly
+# 0xFFC14 bytes -- the only shape the canonical build produces; for shorter
+# images srec_cat 0x00-pads and exits 0 while the emulator refuses (see
+# docs/build-and-debug.md "CRC emitter parity"). If neither emitter exists,
+# configuration fails loudly instead of shipping a build directory without
+# ${CMAKE_PROJECT_NAME}_wCRC.bin.
 #
 # This block must live in this file, not cmake/m1_01/CMakeLists.txt:
 # add_custom_command(TARGET ... POST_BUILD) is only valid in the directory

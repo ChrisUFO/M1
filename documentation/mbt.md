@@ -84,11 +84,14 @@ The **srec_cat** tool from the [SRecord](https://srecord.sourceforge.net/) packa
 > **Windows without SRecord:** `srec_cat` and
 > `tools/emulate_srec_cat_crc.py` are byte-equivalent emitters of the same
 > layout (crop at `0x000FFC14`, CRC-32/MPEG-2 appended little-endian, output
-> exactly `0xFFC18` bytes). The canonical build resolves whichever one is
-> available — `srec_cat` when it is on `PATH`, the Python emitter otherwise —
-> and `sh scripts/verify_crc_parity.sh` proves they agree against
-> `scripts/crc_parity_golden.txt`. Installing SRecord is therefore optional on
-> Windows; see [Build and debug](../docs/build-and-debug.md).
+> exactly `0xFFC18` bytes) for images of exactly `0xFFC14` bytes — the only
+> shape the canonical build produces. For shorter images `srec_cat` pads with
+> `0x00` and exits 0 while the Python emitter refuses, so the equivalence is
+> stated for the image size the build actually emits. The canonical build
+> resolves whichever one is available — `srec_cat` when it is on `PATH`, the
+> Python emitter otherwise — and `sh scripts/verify_crc_parity.sh` proves they
+> agree against `scripts/crc_parity_golden.txt`. Installing SRecord is
+> therefore optional on Windows; see [Build and debug](../docs/build-and-debug.md).
 
 ### Download and install
 

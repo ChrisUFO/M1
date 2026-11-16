@@ -91,6 +91,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fork: CRC parity evidence now enforces what it documents (issue #40) — the
+  golden table's input digest column was never consulted (each generated image
+  was compared against the generator's own stdout, so a corrupted recorded
+  digest still printed `RESULT: PASS`) and a vector whose checks failed still
+  printed `PASS:`; `scripts/verify_crc_parity.sh` now drives input provenance
+  from `scripts/crc_parity_golden.txt`, fails on generator/table vector-name
+  drift, and derives each vector's verdict from its own failure delta. It also
+  runs the **real build image** (`build/<artifact>.bin`, or a path argument)
+  through both emitters and asserts `0xFFC18` — previously every vector was
+  synthetic — pins the documented short-image divergence (the Python emitter
+  refuses a 400-byte input) and gates golden regeneration behind
+  `--update-golden`, which refuses without `srec_cat` on `PATH` so the table
+  cannot be re-baselined from the code under test. `build.sh` now also asserts
+  the plain `<artifact>.bin` is exactly `0xFFC14` bytes and is a byte-identical
+  prefix of the `_wCRC.bin`, closing the crop failure mode a total-size-only
+  check accepts; docs and the CMake comment state the emitter equivalence for
+  `0xFFC14`-byte images (the only shape the build produces) instead of
+  unconditionally. `tools/m1cp_host_test/test_m1cp_fs.c` uses a portable
+  `mkdir` wrapper so the aggregate host suite builds on MinGW as well as POSIX
+  (9/9 targets green on Windows)
 - Fork: canonical build no longer fails on hosts without SRecord (issue #40) —
   the `CMakeLists.txt` CRC step called `srec_cat` unconditionally, so on a
   Windows/Git-Bash host the POST_BUILD command failed, `build/` never got

@@ -40,12 +40,18 @@ at configure time and prints the choice as a `CRC emitter:` status line.
 
 If neither is available, CMake fails at configure time with an actionable
 message — the CRC step is never silently skipped, because the update path
-verifies the appended CRC. The two emitters are byte-equivalent; see
-[CRC emitter parity](#crc-emitter-parity) below.
+verifies the appended CRC. The two emitters are byte-equivalent **for images of
+exactly `0xFFC14` bytes** — the only shape the canonical build produces; for
+shorter images `srec_cat` pads with `0x00` and exits 0 while the Python emitter
+refuses (exit 2). See [CRC emitter parity](#crc-emitter-parity) below.
 
-After the link, `build.sh` asserts that the emitted `_wCRC.bin` is exactly
-`1047576` bytes (`0xFFC18`) before copying anything into `artifacts/`, in both
-plain and `--release` mode.
+After the link, `build.sh` asserts the exact sizes before copying anything into
+`artifacts/`, in both plain and `--release` mode: the application image
+`<artifact>.bin` must be exactly `1047572` bytes (`0xFFC14`), the CRC-appended
+`_wCRC.bin` exactly `1047576` bytes (`0xFFC18`), and the former must be a
+byte-identical prefix of the latter. Checking only the total would accept a
+grown image: both emitters crop at `0xFFC14`, so an application image that
+outgrew the crop end would be silently truncated to exactly `0xFFC18`.
 
 ### Release manifest
 
@@ -101,14 +107,33 @@ published reference vectors (`00000000` → `0xC704DD7B`, `04030201` →
 deterministic full-size images with `tools/crc_test_vectors.py` — nothing
 ~1 MiB is stored in git — and checks each one:
 
+- **input provenance:** every generated image's SHA-256 is compared against the
+  digest recorded for that vector in `scripts/crc_parity_golden.txt`, and the
+  generator's vector names are compared against the table's, so a changed
+  generator (or a spec added without a golden row) fails as drift instead of
+  escaping coverage;
 - with `srec_cat` on `PATH`: both emitters run and their outputs are
   byte-compared (`cmp`), plus size (`0xFFC18`) and CRC-field placement;
 - without `srec_cat`: the Python emitter's output digest and CRC word are
-  compared against `scripts/crc_parity_golden.txt`, captured from the
-  authoritative `srec_cat` pipeline.
+  compared against the same golden table, captured from the authoritative
+  `srec_cat` pipeline;
+- each vector reports its own `PASS`/`FAIL` line, derived from that vector's
+  checks, so a partially failing run can never read as green per vector.
+
+The script also pins the documented short-image divergence (the Python emitter
+must refuse a 400-byte image) and, when `build/<artifact>.bin` exists or a path
+is passed as `$1`, runs the **real build image** through both emitters and
+byte-compares them, asserting a `0xFFC18`-byte output. That is the image the
+release path actually ships; the synthetic vectors only cover the content space.
 
 The script exits non-zero on any mismatch and prints a one-line
 `RESULT: PASS/FAIL` summary.
+
+`scripts/crc_parity_golden.txt` may only be re-baselined with
+`sh scripts/verify_crc_parity.sh --update-golden` on a host where `srec_cat` is
+on `PATH`: the script refuses otherwise and requires the Python emitter to
+agree byte-for-byte before writing, because a table regenerated from the
+emulator would grade the emulator against itself.
 
 ## Debug probes
 
