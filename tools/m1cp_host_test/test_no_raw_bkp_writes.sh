@@ -7,11 +7,26 @@
 # Portable POSIX sh (MinGW Git Bash + POSIX sh).
 set -u
 
-GUARD="../../scripts/check_no_raw_bkp_writes.sh"
+# Resolve the guard from THIS script's location, never from the caller's cwd:
+# `sh tools/m1cp_host_test/test_no_raw_bkp_writes.sh` run from the repo root must
+# behave exactly like `make -C tools/m1cp_host_test test`. With a cwd-relative
+# path the guard was not found from the repo root, every case read the non-zero
+# exit as "violation detected" and three assertions failed -- including the
+# alarming-looking "HAL implementation falsely flagged" (audit finding D2).
+SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1
+REPO_ROOT=$(CDPATH= cd -- "$SELF_DIR/../.." && pwd) || exit 1
+GUARD="$REPO_ROOT/scripts/check_no_raw_bkp_writes.sh"
+
+if [ ! -f "$GUARD" ]; then
+    echo "FAIL: guard script not found at $GUARD" >&2
+    exit 1
+fi
+
 fails=0
 
-tmp=$(mktemp -d 2>/dev/null) || tmp="bkp_guard_$$"
+tmp=$(mktemp -d 2>/dev/null) || tmp="$SELF_DIR/bkp_guard_$$"
 mkdir -p "$tmp" || exit 1
+tmp=$(CDPATH= cd -- "$tmp" && pwd) || exit 1
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
 say_ok()  { echo "  ok   $1"; }
