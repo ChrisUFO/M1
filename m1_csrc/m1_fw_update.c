@@ -254,9 +254,13 @@ void firmware_update_gui_update(const S_M1_Menu_t *phmenu, uint8_t sel_item)
         				break;
 
     	    		case M1_FW_IMAGE_FILE_TYPE_ERROR:
-        			case M1_FW_IMAGE_SIZE_INVALID:
                         m1_info_box_display_init(true);
         				m1_info_box_display_draw(INFO_BOX_ROW_1, "Invalid image file!");
+        				break;
+
+        			case M1_FW_IMAGE_SIZE_INVALID:
+                        m1_info_box_display_init(true);
+        				m1_info_box_display_draw(INFO_BOX_ROW_1, "Invalid image size!");
         				break;
 
         			case M1_FW_VERSION_ERROR:
@@ -332,6 +336,7 @@ void firmware_update_get_image_file(void)
     uint8_t fw_payload[FW_IMAGE_CHUNK_SIZE];
     size_t count, sum;
     uint32_t crc32ret, image_size, fwver_old;
+    FSIZE_t image_file_size;
     S_M1_FW_CONFIG_t fwconfig;
 
 	m1_fb_set_sort_enabled(true);   /* folders first, then files (auto-cleared on deinit) */
@@ -390,13 +395,37 @@ void firmware_update_get_image_file(void)
         uret = m1_fb_open_file(&hfile_fw, pfullpath);
 		if ( !uret )
 		{
-			image_size = f_size(&hfile_fw);
-		    // Both the address and image size must be aligned to 4 bytes
-		    if ( (!image_size) || (image_size % 4 != 0) || (image_size > (FW_IMAGE_SIZE_MAX + FW_IMAGE_CRC_SIZE)) )
+			image_file_size = f_size(&hfile_fw); // FSIZE_t: QWORD with FF_FS_EXFAT
+		    /* Exactly one image size is a valid update: the canonical
+		     * CRC-appended image (signed span + trailing CRC word, 0xFFC18
+		     * bytes) -- the only shape the build's CRC emitter produces and
+		     * the only span the boot failsafe validates. A shorter,
+		     * self-consistent file would pass the CRC screen below, be
+		     * flashed, and then be flagged corrupt on every boot, so reject
+		     * it here, before anything is erased.
+		     *
+		     * The decision is taken at the wide f_size() width: narrowing
+		     * to image_size first would let a >4 GiB file (constructible on
+		     * exFAT; FAT32 cannot exceed 4 GiB-1) whose low 32 bits equal
+		     * the canonical size pass as a valid image. */
+		    if ( !m1_boot_image_size_is_canonical_wide((uint64_t)image_file_size) )
 		    {
+		    	if ( image_file_size > (FSIZE_t)UINT32_MAX )
+		    	{
+		    		M1_LOG_E(M1_LOGDB_TAG, "Rejected image size > 4 GiB (low 32 bits %lu): a firmware image must be exactly %lu bytes (0xFFC14 signed span + 4-byte CRC).\r\n",
+		    				(unsigned long)(uint32_t)image_file_size, (unsigned long)M1_BOOT_IMAGE_FILE_SIZE_CANONICAL);
+		    	} // if ( image_file_size > (FSIZE_t)UINT32_MAX )
+		    	else
+		    	{
+		    		M1_LOG_E(M1_LOGDB_TAG, "Rejected image size %lu: a firmware image must be exactly %lu bytes (0xFFC14 signed span + 4-byte CRC).\r\n",
+		    				(unsigned long)image_file_size, (unsigned long)M1_BOOT_IMAGE_FILE_SIZE_CANONICAL);
+		    	} // else
 		    	uret = M1_FW_IMAGE_SIZE_INVALID;
 		    	break;
-		    } // if ( (!image_size) || (image_size % 4 != 0) || (image_size > (FW_IMAGE_SIZE_MAX + FW_IMAGE_CRC_SIZE) )
+		    } // if ( !m1_boot_image_size_is_canonical_wide((uint64_t)image_file_size) )
+		    /* Narrow only after the gate proved equality with a 32-bit
+		     * constant, so this cast is lossless by construction. */
+		    image_size = (uint32_t)image_file_size;
 
 		    // Call the function to initialize this transaction.
 		    // Do not take the return value in this case. Input data can be anything.

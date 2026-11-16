@@ -21,6 +21,7 @@
 #include "m1_tasks.h"
 #include "m1_power_ctl.h"
 #include "m1_fw_update_bl.h"
+#include "m1_boot_failsafe.h"
 #include "m1_lp5814.h"
 #include "m1_bq25896.h"
 #include "battery.h"
@@ -77,6 +78,8 @@ void startup_config_handler(void);
 void power_on_button_check(void);
 void HAL_Delay(uint32_t Delay);
 static void startup_bu_registers_init(void);
+static void startup_boot_failsafe(void);
+static void startup_iwdg_option_byte_check(void);
 void startup_info_screen_display(const char *scr_text);
 
 /*************** F U N C T I O N   I M P L E M E N T A T I O N ****************/
@@ -688,6 +691,135 @@ void startup_device_init(void)
 
 /*============================================================================*/
 /*
+ * Boot-time READ-ONLY IWDG option-byte check (issue #41-A)
+ *
+ * The legacy fork rewrote the IWDG option bytes on EVERY boot
+ * (HAL_FLASHEx_OBProgram + HAL_FLASH_OB_Launch, i.e. option-byte programming
+ * and its flash-unlock window on every power-up). That rewrite is deliberately
+ * NOT ported: option bytes are only written by the update/rollback path
+ * (m1_fw_update_bl.c bl_swap_banks) and by the offline power-down path
+ * (m1_power_ctl.c m1_pre_power_down). What the recovery story needs is the
+ * FACT that the watchdog is software-started by m1_wdt_init() rather than
+ * armed by hardware before the application can service it, and observing that
+ * is enough.
+ *
+ * READ-ONLY by contract: no HAL_FLASH_Unlock, no HAL_FLASHEx_OBProgram, no
+ * HAL_FLASH_OB_Launch anywhere in this function.
+ */
+/*============================================================================*/
+
+/* The helper's mask is the OPTSR value mask, which HAL names OB_IWDG_SW.
+ * OB_USER_IWDG_SW (0x4) is the USERType selector and bit 2 of OPTSR is
+ * BORH_EN: using it here logged brownout-high-enable as the watchdog mode on
+ * every boot (audit finding D1). Fail the build if the constants ever diverge. */
+_Static_assert(M1_BOOT_OPTSR_IWDG_SW == (uint32_t)OB_IWDG_SW,
+               "M1_BOOT_OPTSR_IWDG_SW must equal the HAL's OB_IWDG_SW value mask");
+
+static void startup_iwdg_option_byte_check(void)
+{
+	FLASH_OBProgramInitTypeDef OBInit = {0};
+	bool hw_watchdog;
+
+	HAL_FLASHEx_OBGetConfig(&OBInit);
+
+	hw_watchdog = m1_boot_iwdg_is_hardware(OBInit.USERConfig);
+	M1_LOG_I(M1_LOGDB_TAG, "IWDG option byte: %s (%s), read-only.\r\n",
+	         hw_watchdog ? "hardware" : "software",
+	         hw_watchdog ? "HARDWARE watchdog may reset before init" : "expected");
+} // static void startup_iwdg_option_byte_check(void)
+
+
+
+/*============================================================================*/
+/*
+ * Recovery seam for a failed boot CRC validation
+ *
+ * PR-DFU (#41-B) fills USB DFU entry (bl_jump_to_dfu()) into this hook. Until
+ * then this hook only logs. Be precise about what that means: the FW CORRUPT!
+ * banner drawn by the caller does NOT block execution, and the normal UI is
+ * one OK press away, so a corrupt image is still able to run. The counters are
+ * persisted in DR1, and this function is the single place a recovery action
+ * will be attached.
+ */
+/*============================================================================*/
+static void startup_boot_recovery_hook(uint8_t boot_attempts)
+{
+	M1_LOG_I(M1_LOGDB_TAG, "Boot failsafe: recovery state, boot attempt %u. "
+	         "DFU entry hook is filled by unit PR-DFU (#41-B).\r\n",
+	         (unsigned)boot_attempts);
+} // static void startup_boot_recovery_hook(uint8_t boot_attempts)
+
+
+
+/*============================================================================*/
+/*
+ * Boot-time firmware integrity failsafe (issue #41-A)
+ *
+ * Runs after the update state machine has been reconciled and before the boot
+ * artwork, so a device whose RUNNING bank does not match the CRC the build
+ * embedded in it does not silently reach the normal UI:
+ *   - the failure is counted in boot_attempts (saturating at 255),
+ *   - the fault class is recorded in boot_fault_signature,
+ *   - the recovery state is entered (screen message + recovery seam above).
+ *
+ * A validating boot is the evidence that clears the accounting, including the
+ * swap budget -- so swap_attempts means "swaps since the last CRC-validated
+ * boot" (m1_boot_failsafe.h) and a device that keeps landing on an unvalidated
+ * bank cannot be swapped back and forth indefinitely.
+ *
+ * Deliberately out of scope here: automatic rollback, bl_jump_to_dfu(), and
+ * on-device qualification of the corrupt-bank boot path (the #41 hardware
+ * gate, milestone "Post-merge stabilization").
+ */
+/*============================================================================*/
+static void startup_boot_failsafe(void)
+{
+	S_M1_BOOT_FAULT_t fault;
+	uint8_t attempts;
+	const char *fault_name;
+
+	fault = bl_crc_validate_active_bank();
+
+	if ( fault==M1_BOOT_FAULT_NONE )
+	{
+		/* Healthy boot: clear any accounting left by previous failures. */
+		if ( startup_config_read(BK_REGS_SELECT_BOOT_ATTEMPTS)!=0 )
+		{
+			startup_config_write(BK_REGS_SELECT_BOOT_ATTEMPTS, 0);
+		}
+		if ( startup_config_read(BK_REGS_SELECT_BOOT_FAULT_SIG)!=(uint8_t)M1_BOOT_FAULT_NONE )
+		{
+			startup_config_write(BK_REGS_SELECT_BOOT_FAULT_SIG, (uint8_t)M1_BOOT_FAULT_NONE);
+		}
+		if ( startup_config_read(BK_REGS_SELECT_SWAP_ATTEMPTS)!=0 )
+		{
+			startup_config_write(BK_REGS_SELECT_SWAP_ATTEMPTS, 0);
+		}
+		return;
+	} // if ( fault==M1_BOOT_FAULT_NONE )
+
+	attempts = m1_boot_next_counter(startup_config_read(BK_REGS_SELECT_BOOT_ATTEMPTS));
+	startup_config_write(BK_REGS_SELECT_BOOT_ATTEMPTS, attempts);
+	startup_config_write(BK_REGS_SELECT_BOOT_FAULT_SIG, (uint8_t)fault);
+
+	switch (fault)
+	{
+		case M1_BOOT_FAULT_MAGIC_MISMATCH:	fault_name = "metadata magic"; break;
+		case M1_BOOT_FAULT_HEADER_MISMATCH:	fault_name = "metadata header"; break;
+		case M1_BOOT_FAULT_CRC_MISMATCH:	fault_name = "image CRC"; break;
+		default:							fault_name = "unknown"; break;
+	} // switch (fault)
+	M1_LOG_E(M1_LOGDB_TAG, "Boot CRC validation failed: %s (attempt %u).\r\n",
+	         fault_name, (unsigned)attempts);
+
+	startup_info_screen_display("FW CORRUPT!");
+	startup_boot_recovery_hook(attempts);
+} // static void startup_boot_failsafe(void)
+
+
+
+/*============================================================================*/
+/*
  * This function checks the start-up status and does tasks accordingly
  */
 /*============================================================================*/
@@ -725,7 +857,13 @@ void startup_config_handler(void)
 		} // else if ( m1_device_stat.bu_regs.device_op_status==DEV_OP_STATUS_FW_UPDATE_COMPLETE )
 		else if ( m1_device_stat.bu_regs.device_op_status==DEV_OP_STATUS_FW_ROLLBACK_COMPLETE )
 		{
+			uint8_t swap_used = startup_config_read(BK_REGS_SELECT_SWAP_ATTEMPTS);
 			startup_bu_registers_init(); // Reinitialize after rollback
+			/* Keep the swap budget across the commit: startup_bu_registers_init()
+			 * zeroes the whole struct, but a swap just happened and the bank it
+			 * selected has not been validated yet. startup_boot_failsafe()
+			 * below clears the budget once a boot validates the image. */
+			startup_config_write(BK_REGS_SELECT_SWAP_ATTEMPTS, swap_used);
 			startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_NO_OP);
 			startup_info_screen_display("ROLLBACK COMPLETED!");
 			M1_LOG_I(M1_LOGDB_TAG, "FW rollback complete!\r\n");
@@ -784,11 +922,35 @@ void startup_config_handler(void)
 			    				fw_ver_old = *(uint32_t *)&old_fw_config.fw_version_rc;
 			    				if ( fw_ver_old < fw_ver_new ) // Existing FW in bank 2 is older than current FW?
 			    				{
-			    					M1_LOG_I(M1_LOGDB_TAG, "Rollback is ready!\r\n");
-			    					startup_info_screen_display("FW ROLLBACK...");
-			    					startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_FW_ROLLBACK_COMPLETE);
-			    					vTaskDelay(pdMS_TO_TICKS(2000));
-			    					bl_swap_banks();
+			    					/* Loop guard (issue #41-A): at most
+			    					 * M1_BOOT_SWAP_ATTEMPTS_MAX swaps between two
+			    					 * CRC-validated boots. The counter is written
+			    					 * BEFORE the swap because a swap that dies inside
+			    					 * HAL_FLASH_OB_Launch() still resets the MCU and
+			    					 * must not be forgotten. */
+			    					if ( m1_boot_swap_allowed(startup_config_read(BK_REGS_SELECT_SWAP_ATTEMPTS)) )
+			    					{
+			    						M1_LOG_I(M1_LOGDB_TAG, "Rollback is ready!\r\n");
+			    						startup_config_write(BK_REGS_SELECT_SWAP_ATTEMPTS,
+			    							m1_boot_next_counter(startup_config_read(BK_REGS_SELECT_SWAP_ATTEMPTS)));
+			    						startup_info_screen_display("FW ROLLBACK...");
+			    						startup_config_write(BK_REGS_SELECT_DEV_OP_STAT, DEV_OP_STATUS_FW_ROLLBACK_COMPLETE);
+			    						vTaskDelay(pdMS_TO_TICKS(2000));
+			    						bl_swap_banks();
+			    					} // if ( m1_boot_swap_allowed(...) )
+			    					else
+			    					{
+			    						/* No swap happened, so op_status stays
+			    						 * DEV_OP_STATUS_REBOOT (the normal
+			    						 * post-update state, cleared by the regular
+			    						 * power-down path) -- never report a
+			    						 * completed rollback. */
+			    						startup_info_screen_display("ROLLBACK LIMITED!");
+			    						M1_LOG_I(M1_LOGDB_TAG, "Rollback refused: swap budget exhausted (%u of %u), "
+			    						         "no CRC-validated boot since the last swap.\r\n",
+			    						         (unsigned)startup_config_read(BK_REGS_SELECT_SWAP_ATTEMPTS),
+			    						         (unsigned)M1_BOOT_SWAP_ATTEMPTS_MAX);
+			    					} // else
 			    				} // if ( fw_ver_old < fw_ver_new )
 			    				else // Existing FW in bank 2 is newer than current FW. Rollback is not allowed!
 			    				{
@@ -812,6 +974,13 @@ void startup_config_handler(void)
 		} // else if ( m1_device_stat.bu_regs.device_op_status==DEV_OP_STATUS_REBOOT )
 	} // else
 
+	/* Issue #41-A: read-only IWDG review, then the boot integrity failsafe.
+	 * Both run AFTER the update state machine above (an interrupted update is
+	 * reported by its own branch) and BEFORE any boot artwork, so a corrupt
+	 * running bank never reaches the normal UI silently. */
+	startup_iwdg_option_byte_check();
+	startup_boot_failsafe();
+
 	if ( m1_device_stat.op_mode != M1_OPERATION_MODE_DISPLAY_ON )
 	{
 		m1_gui_welcome_scr();
@@ -828,33 +997,106 @@ void startup_config_handler(void)
 
 /*============================================================================*/
 /*
- * This function writes data to backup registers
+ * This function writes one byte field of S_M1_BK_REGS_t to its backup register
+ *
+ * The struct is 8 bytes (DR0/DR1 only). The selector is an OPAQUE id: the switch
+ * below maps it to a named field, and the physical register follows from that
+ * field's byte offset inside the struct -- bytes 0-3 live in RTC_BKP_DR0, bytes
+ * 4-7 in RTC_BKP_DR1. The selector's numeric value is NOT an offset
+ * (BK_REGS_SELECT_DEV_OP_STAT is 1 for source compatibility although its field
+ * sits at byte 4), so never reimplement this as `(uint8_t *)&bu_regs + selector`:
+ * that writes byte 1 of magic_number in DR0 and forces a magic-mismatch re-init,
+ * wiping the update state and the boot accounting. DR2/DR3 hold the ESP32
+ * version record and are never touched here (issue #41-A).
+ *
+ * DR1 carries four independent byte fields, so a single-byte update always
+ * rewrites the whole 32-bit word taken from the in-RAM shadow -- writing a
+ * hand-computed register address+offset (as the old DEV_OP_STAT-only version
+ * did with RTC_BKP_DR0+1) silently corrupts the neighbouring fields once an
+ * index >= 4 exists.
  */
 /*============================================================================*/
 void startup_config_write(uint8_t config_byte, uint8_t config_val)
 {
-    uint32_t *bu_reg_read, bu_reg_write;
+    uint8_t *field;
+    uint16_t byte_index, word_index;
+    uint32_t word;
 
-	bu_reg_write = RTC_BKP_DR0; // Backup address, address offset: 0x100 + 0x04 * x, (x = 0 to 31)
-    switch (config_byte)
+	field = NULL;
+	switch (config_byte)
 	{
 		case BK_REGS_SELECT_DEV_OP_STAT:
-			bu_reg_write += 1;
-			bu_reg_read = (uint32_t *)&m1_device_stat.bu_regs.device_op_status;
-			m1_device_stat.bu_regs.device_op_status = config_val;
+			field = &m1_device_stat.bu_regs.device_op_status;
+			break;
+
+		case BK_REGS_SELECT_BOOT_ATTEMPTS:
+			field = &m1_device_stat.bu_regs.boot_attempts;
+			break;
+
+		case BK_REGS_SELECT_BOOT_FAULT_SIG:
+			field = &m1_device_stat.bu_regs.boot_fault_signature;
+			break;
+
+		case BK_REGS_SELECT_SWAP_ATTEMPTS:
+			field = &m1_device_stat.bu_regs.swap_attempts;
 			break;
 
 		default:
 			break;
 	} // switch (config_byte)
 
-    if ( bu_reg_read )
+    if ( field==NULL )
     {
-    	HAL_PWR_EnableBkUpAccess();
-    	HAL_RTCEx_BKUPWrite(&hrtc, bu_reg_write, *bu_reg_read);
-//    	HAL_PWR_DisableBkUpAccess();
-    } // if ( bu_reg_read )
+    	return;
+    }
+
+    *field = config_val;
+
+    /* Byte offset inside the shadow struct -> backup word index. */
+    byte_index = (uint16_t)(field - (uint8_t *)&m1_device_stat.bu_regs);
+    word_index = (uint16_t)(byte_index / 4U);
+    word = *(uint32_t *)((uint8_t *)&m1_device_stat.bu_regs + (byte_index & ~(uint16_t)3U));
+
+    HAL_PWR_EnableBkUpAccess();
+    HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR0 + word_index, word);
+//  HAL_PWR_DisableBkUpAccess();
 } // void startup_config_write(uint8_t config_byte, uint8_t config_val)
+
+
+
+/*============================================================================*/
+/*
+ * This function reads one byte field of S_M1_BK_REGS_t
+ *
+ * Reads come from the in-RAM shadow, which startup_device_init() loads from
+ * DR0/DR1 in a single two-word pass at power-up. Selector/value semantics are
+ * exactly those of startup_config_write(); 0 is returned for an unknown
+ * selector (no field is ever meaningfully "unknown" here, and both counters
+ * treat 0 as "none").
+ */
+/*============================================================================*/
+uint8_t startup_config_read(uint8_t config_byte)
+{
+	switch (config_byte)
+	{
+		case BK_REGS_SELECT_DEV_OP_STAT:
+			return m1_device_stat.bu_regs.device_op_status;
+
+		case BK_REGS_SELECT_BOOT_ATTEMPTS:
+			return m1_device_stat.bu_regs.boot_attempts;
+
+		case BK_REGS_SELECT_BOOT_FAULT_SIG:
+			return m1_device_stat.bu_regs.boot_fault_signature;
+
+		case BK_REGS_SELECT_SWAP_ATTEMPTS:
+			return m1_device_stat.bu_regs.swap_attempts;
+
+		default:
+			break;
+	} // switch (config_byte)
+
+	return 0;
+} // uint8_t startup_config_read(uint8_t config_byte)
 
 
 

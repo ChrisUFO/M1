@@ -91,6 +91,14 @@ This address is coupled to `S_M1_FW_CONFIG_t`; see
 [Firmware image and update](protocols/firmware-update.md). Do not change the
 metadata structure, linker section, crop address, or CRC command independently.
 
+**Flash the `_wCRC.bin`, not the plain `.bin`, the `.hex`, or the ELF**: only the
+CRC-appended image carries the word the boot-time check reads at `0x080FFC14`.
+Provisioning any of the other artifacts (SWD, ST-Link, IDE download) boots but
+reports `FW CORRUPT!` on every boot. See
+[Provisioning](protocols/firmware-update.md#provisioning-which-artifact-to-flash).
+The update intake enforces the same shape — it accepts an image of exactly
+`1047576` bytes (`0xFFC18`) and rejects every other size before flashing.
+
 ### Endianness and word-order cross-check
 
 The appended word is the STM32 hardware CRC unit, i.e. CRC-32/MPEG-2:

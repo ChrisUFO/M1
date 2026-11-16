@@ -57,7 +57,14 @@ ninja --version
 ```bash
 make
 ```
-Output: `./artifacts/` (M1_v0.9.0.0-UFO.elf, .bin, .hex)
+Output: `./artifacts/` (`M1_v0.9.0.0-UFO.elf`, `.bin`, `.hex`, `_wCRC.bin`)
+
+**`_wCRC.bin` is the only flashable artifact.** The boot failsafe reads the CRC
+word at `0x080FFC14` unconditionally, and only the CRC-appended image carries
+it; the `.bin`, `.hex`, and `.elf` stop at `0x080FFC14`. A device provisioned
+from one of those boots and runs but shows `FW CORRUPT!` on every boot, with
+`boot_attempts` counting up in the backup registers. See
+[Firmware image and update](../docs/protocols/firmware-update.md#provisioning-which-artifact-to-flash).
 
 * For Visual Studio Code users:
 - Select build type from PROJECT STATUS - Configure (gcc-14_2_build-release, gcc-14_2_build-debug).
@@ -119,7 +126,14 @@ After running the command, use **M1_v0.9.0.0-UFO_wcrc.bin** (or the name you gav
 
 ## Post-build command for CRC
 
-These instructions are only for users with previous source code who want to generate a binary with CRC bytes appended automatically at build time. Ensure SRecord is installed and `srec_cat` is on your PATH (see [SRecord (srec_cat) – download, install, and use for CRC](#srecord-srec_cat--download-install-and-use-for-crc) above).
+**Required for provisioning: only the CRC-appended image validates at boot.** The
+canonical CMake build (`./build.sh`, VS Code presets) emits it automatically, so
+this section is only for a copy of the project that does not — an old checkout, or
+the STM32CubeIDE project, where the step has to be added by hand (see below).
+Ensure SRecord is installed and `srec_cat` is on your PATH (see [SRecord (srec_cat) – download, install, and use for CRC](#srecord-srec_cat--download-install-and-use-for-crc) above).
+A build that does not check for the step — the CMake build does, and refuses to
+emit an image without it — still succeeds when it is missing, and ships an image
+the boot failsafe rejects: `FW CORRUPT!` on every boot.
 
 * STM32CubeIDE users:
 
@@ -132,6 +146,15 @@ These instructions are only for users with previous source code who want to gene
     ```
 
   - After building the project, an extra binary file `M1_v0.9.0.0-UFO_wCRC.bin` with CRC bytes appended will be generated.
+  - The post-build step is a per-configuration setting, and this repository's
+    `.cproject` sets it in the **Release** configuration only. A **Debug** build —
+    and therefore an IDE debug download — produces no `_wCRC.bin`, so a device
+    flashed that way shows `FW CORRUPT!` on every boot even though the image is
+    the one just built. To avoid that, either repeat the command above in the
+    Debug configuration's Build Steps and download the resulting `_wCRC.bin`
+    instead of the ELF, or debug against a Release `_wCRC.bin` and re-provision
+    before the device leaves your desk (see
+    [Provisioning](../docs/protocols/firmware-update.md#provisioning-which-artifact-to-flash)).
 
 * VSCode users:
 

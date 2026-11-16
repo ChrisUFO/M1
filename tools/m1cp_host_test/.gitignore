@@ -8,5 +8,7 @@
 /validate_file
 /m1_manager_espupdate_seam_test
 /m1_manager_fwupdate_seam_test
+/test_m1cp_failsafe
+/test_update_intake_size
 fs_sandbox/
 *.o

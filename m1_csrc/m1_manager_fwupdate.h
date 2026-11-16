@@ -64,6 +64,12 @@ extern "C" {
 #define M1CP_CMD_FW_UPDATE_ABORT     0x25U
 
 #define M1CP_FW_MAX_IMAGE   0x00100000UL  /* 1 MiB, matches FW_IMAGE_SIZE_MAX    */
+/* Coordinator-level upper bound only. The STM32 target is stricter: its backend
+ * (bl_flash_stream_begin) accepts exactly the canonical CRC-appended image
+ * (M1_BOOT_IMAGE_FILE_SIZE_CANONICAL, 0xFFC18 bytes) and fails BEGIN with
+ * BL_CODE_SIZE_ERROR -- surfaced to the client as M1CP_ERR_FLASH -- for any
+ * other size, because the final check reads the CRC word at the fixed
+ * FW_CRC_ADDRESS. Stream <artifact>_wCRC.bin. */
 #define M1CP_FW_CHUNK_MAX   480U          /* data bytes per FW_UPDATE_DATA (x16) */
 #define M1CP_FW_ACTIVATE_CONFIRM 0xA5C3U  /* required FW_UPDATE_ACTIVATE token   */
 /* FW_UPDATE_BEGIN payload (generic-coordinator manifest, mirrors the ESP

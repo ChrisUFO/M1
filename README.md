@@ -49,7 +49,7 @@ See [HARDWARE.md](HARDWARE.md) for more details.
 
 ## Building
 
-**See [documentation/mbt.md](documentation/mbt.md) for full build instructions** (STM32CubeIDE and VS Code setup, extensions, and optional post-build CRC).
+**See [documentation/mbt.md](documentation/mbt.md) for full build instructions** (STM32CubeIDE and VS Code setup, extensions, and the CRC post-build step). That step is not optional for provisioning: only the CRC-appended `_wCRC.bin` validates at boot — see [Provisioning](docs/protocols/firmware-update.md#provisioning-which-artifact-to-flash).
 
 ### Prerequisites
 
@@ -65,11 +65,23 @@ See [HARDWARE.md](HARDWARE.md) for more details.
 ```
 
 This requires CMake, Ninja, GNU Arm Embedded Toolchain 14.2, and `srec_cat`.
-Output is written to `./artifacts/` (`.elf`, `.bin`, `.hex`, and a release
-manifest). A release build requires a clean Git working tree.
+Output is written to `./artifacts/` (`.elf`, `.bin`, `.hex`, `_wCRC.bin`, and a
+release manifest). A release build requires a clean Git working tree.
+
+**Flash `<artifact>_wCRC.bin`, not the plain `.bin`/`.hex`/ELF.** Only the
+CRC-appended image carries the CRC word the firmware's boot-time integrity check
+reads at `0x080FFC14`; the other artifacts stop at `0x080FFC14`. A device
+provisioned over SWD or an IDE download from one of those boots and runs, but
+shows `FW CORRUPT!` on every boot (and counts failures in the backup registers)
+because the check finds no CRC word. Use `_wCRC.bin` over SWD, or copy
+`_wCRC.bin` to the SD card and install it through the update menu. See
+[Provisioning](docs/protocols/firmware-update.md#provisioning-which-artifact-to-flash).
 
 **STM32CubeIDE:**  
-Open the project and build in the IDE.
+Open the project and build **Release** in the IDE. Only the IDE's Release
+configuration carries the CRC post-build step, so `_wCRC.bin` exists only there:
+a Debug build (and an IDE debug download) produces no CRC-appended image, and a
+device provisioned from it shows `FW CORRUPT!` on every boot.
 
 **VS Code:**  
 1. Configure the project (e.g. `gcc-14_2_build-release` or `gcc-14_2_build-debug`)  

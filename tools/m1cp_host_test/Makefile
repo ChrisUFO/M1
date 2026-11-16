@@ -16,7 +16,7 @@ DEPS    := m1cp_test_stubs.h FreeRTOS.h $(SRC_DIR)/m1_manager_protocol.h \
            $(SRC_DIR)/m1_manager_fs.h $(SRC_DIR)/m1_manager_fw.h $(SRC_DIR)/m1_manager_update_coordinator.h \
            $(SRC_DIR)/m1_manager_fwupdate.h $(SRC_DIR)/m1_manager_espupdate.h $(SRC_DIR)/m1_esp_version.h
 
-test: test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test
+test: test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test test_m1cp_failsafe test_update_intake_size
 	./test_m1cp
 	./test_m1cp_fs
 	./test_m1cp_fw
@@ -26,6 +26,9 @@ test: test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp
 	./test_m1cp_espupdate
 	./m1_manager_espupdate_seam_test
 	./m1_manager_fwupdate_seam_test
+	./test_m1cp_failsafe
+	./test_update_intake_size
+	sh test_no_raw_bkp_writes.sh
 
 test_m1cp: test_m1cp.c $(CORE) $(DEPS)
 	$(CC) $(CFLAGS) $(INCS) test_m1cp.c $(CORE) -o $@
@@ -47,6 +50,18 @@ test_m1cp_update_coordinator: test_m1cp_update_coordinator.c $(SRC_DIR)/m1_manag
 test_m1cp_fwupdate: test_m1cp_fwupdate.c $(CORE) $(DEPS)
 	$(CC) $(CFLAGS) $(INCS) test_m1cp_fwupdate.c $(CORE) -o $@
 
+# Boot-time firmware integrity failsafe (issue #41-A): pure span/decision/
+# classification/counter logic from m1_csrc/m1_boot_failsafe.h plus a source
+# seam on the device-side running-bank CRC check (no HAL, no flash).
+test_m1cp_failsafe: test_m1cp_failsafe.c $(SRC_DIR)/m1_boot_failsafe.h
+	$(CC) $(CFLAGS) $(INCS) test_m1cp_failsafe.c -o $@
+
+# Update intake size gate (PR #61 F1): pure canonical-size decision plus source
+# seams on both intakes (SD file path + streamed M1CP path) and the compile-time
+# tie to the boot failsafe's signed span. No FatFs/HAL.
+test_update_intake_size: test_update_intake_size.c $(SRC_DIR)/m1_boot_failsafe.h
+	$(CC) $(CFLAGS) $(INCS) test_update_intake_size.c -o $@
+
 test_m1cp_espver: test_m1cp_espver.c $(CORE) $(DEPS)
 	$(CC) $(CFLAGS) $(INCS) test_m1cp_espver.c $(CORE) -o $@
 
@@ -67,7 +82,7 @@ validate_file: validate_file.c $(CORE) $(DEPS)
 	$(CC) $(CFLAGS) $(INCS) validate_file.c $(CORE) -o $@
 
 clean:
-	rm -f test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate validate_file m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test
+	rm -f test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate test_m1cp_failsafe test_update_intake_size validate_file m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test
 	rm -rf fs_sandbox
 
 .PHONY: test clean

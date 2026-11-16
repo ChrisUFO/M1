@@ -1,0 +1,170 @@
+/* See COPYING.txt for license details. */
+
+/*
+*
+* m1_boot_failsafe.h
+*
+* Boot-time firmware integrity failsafe (issue #41, part A): pure, host-testable
+* helpers.
+*
+* Everything in this header is plain integer logic with no HAL, flash or RTOS
+* dependency, so tools/m1cp_host_test/test_m1cp_failsafe.c can exercise every
+* decision branch natively. The device side (flash reads + CRC peripheral) lives
+* in bl_crc_validate_active_bank() (m1_fw_update_bl.c) and the recovery state
+* machine in startup_boot_failsafe() (m1_system.c).
+*
+* M1 Project
+*
+*/
+
+#ifndef M1_BOOT_FAILSAFE_H_
+#define M1_BOOT_FAILSAFE_H_
+
+#include <stdint.h>
+#include <stdbool.h>
+
+/* Application image the CRC emitter signs and the boot check validates:
+ * [bank_start, bank_start + M1_BOOT_CRC_CROP_END_BYTES). Must stay equal to the
+ * build's hard-coded crop end (build.sh CROP_END_BYTES, CMakeLists.txt
+ * "-crop 0x0 0x000FFC14"); m1_fw_update_bl.h static-asserts the derived flash
+ * addresses against this constant so the two can never drift apart silently. */
+#define M1_BOOT_CRC_CROP_END_BYTES	0x000FFC14U
+
+/* The one update image shape the boot check can validate: the signed span above
+ * followed by its own 4-byte CRC word -- exactly what the canonical build emits
+ * as <artifact>_wCRC.bin (0xFFC18 bytes). Update intake enforces this size and
+ * nothing else (m1_fw_update.c for the SD path, bl_flash_stream_begin() for the
+ * streamed M1CP path): the pre-flight verifier hashes a file over its own
+ * length, so a shorter, self-consistent file would be erased and programmed
+ * (and, if the fixed-address post-flash check happened to pass, swapped in) and
+ * then be flagged corrupt by this fixed span on every boot.
+ * m1_fw_update_bl.h static-asserts this constant against FW_CRC_ADDRESS -
+ * FW_START_ADDRESS + FW_IMAGE_CRC_SIZE so intake cannot drift from the span. */
+#define M1_BOOT_CRC_WORD_BYTES			4U
+#define M1_BOOT_IMAGE_FILE_SIZE_CANONICAL	(M1_BOOT_CRC_CROP_END_BYTES + M1_BOOT_CRC_WORD_BYTES)
+
+/* Intake gate decision at the width the candidate's size actually has. Kept pure
+ * so the host test pins it: is this candidate update image exactly the canonical
+ * image? Deliberately exact equality -- no "close enough" tolerance, no
+ * alignment-only check.
+ *
+ * The SD intake observes the size with FatFs f_size(), whose result is FSIZE_t:
+ * a QWORD when FF_FS_EXFAT is enabled and a DWORD when it is not
+ * (FatFs/R015/ff.h). The comparison must therefore happen here, at full width,
+ * BEFORE the size is narrowed: a >4 GiB exFAT file whose low 32 bits equal the
+ * canonical size would otherwise pass the gate as a "successful" update. A value
+ * that does not fit the intake's 32-bit image_size cannot equal the canonical
+ * constant, so the same equality rejects it and the caller may narrow only after
+ * this returns true. uint64_t is used as the common wide type so this header
+ * stays independent of the FatFs configuration. */
+static inline bool m1_boot_image_size_is_canonical_wide(uint64_t image_size)
+{
+	return image_size == (uint64_t)M1_BOOT_IMAGE_FILE_SIZE_CANONICAL;
+}
+
+/* 32-bit view for callers whose size is genuinely 32-bit (the streamed M1CP
+ * transport's BEGIN field). Delegates so both intakes share one comparison. */
+static inline bool m1_boot_image_size_is_canonical(uint32_t image_size)
+{
+	return m1_boot_image_size_is_canonical_wide((uint64_t)image_size);
+}
+
+/* The transports and the flash engines carry the image size in 32 bits, so the
+ * canonical size must stay representable there; the wide gate above rejects any
+ * larger candidate either way (it cannot equal this constant). */
+_Static_assert(M1_BOOT_IMAGE_FILE_SIZE_CANONICAL <= UINT32_MAX,
+               "canonical update image size must fit the 32-bit intake width");
+
+/* Maximum bank swaps allowed between two CRC-validated boots. A swap counts
+ * against the budget until a boot validates the image it swapped in; a healthy
+ * boot clears it (startup_boot_failsafe()). This bounds option-byte churn and
+ * stops a device that keeps landing on an unvalidated bank from being swapped
+ * back and forth forever. */
+#define M1_BOOT_SWAP_ATTEMPTS_MAX	1U
+
+/* Why the running bank failed validation. Stored in the backup register as a
+ * single byte (BK_REGS_SELECT_BOOT_FAULT_SIG) AND shown in the log, so a
+ * service engineer can tell an erased metadata block (magic/header) from a
+ * genuinely corrupted image (CRC). */
+typedef enum {
+	M1_BOOT_FAULT_NONE = 0,			/* image validates */
+	M1_BOOT_FAULT_MAGIC_MISMATCH,	/* S_M1_FW_CONFIG_t magic_number_1 wrong */
+	M1_BOOT_FAULT_HEADER_MISMATCH,	/* magic_number_2 / metadata tail wrong */
+	M1_BOOT_FAULT_CRC_MISMATCH,		/* metadata intact, image bytes differ */
+	M1_BOOT_FAULT_UNKNOWN
+} S_M1_BOOT_FAULT_t;
+
+/* Span covered by the stored CRC word, by address arithmetic only -- no
+ * magic-number scan and no image-size field (both are false-positive risks;
+ * see docs/protocols/firmware-update.md). Returns 0 for a degenerate range. */
+static inline uint32_t m1_boot_crc_span_bytes(uint32_t bank_start, uint32_t crc_address)
+{
+	return (crc_address > bank_start) ? (uint32_t)(crc_address - bank_start) : 0U;
+}
+
+/* Pure CRCs-equal decision: the whole point of the failsafe is a full-span
+ * comparison, so this is deliberately exact equality (no "allow N bytes
+ * different" tolerance). */
+static inline bool m1_boot_crc_matches(uint32_t computed_crc, uint32_t stored_crc)
+{
+	return computed_crc == stored_crc;
+}
+
+/* Classify a failed/successful validation. Order matters: metadata faults are
+ * reported in preference to a CRC mismatch, because a wrong magic explains the
+ * mismatch (erased/foreign image) and is the actionable signal. */
+static inline S_M1_BOOT_FAULT_t m1_boot_classify_fault(uint32_t magic_1, uint32_t magic_1_expected,
+                                                       uint32_t magic_2, uint32_t magic_2_expected,
+                                                       uint32_t computed_crc, uint32_t stored_crc)
+{
+	if ( magic_1 != magic_1_expected )
+	{
+		return M1_BOOT_FAULT_MAGIC_MISMATCH;
+	}
+	if ( magic_2 != magic_2_expected )
+	{
+		return M1_BOOT_FAULT_HEADER_MISMATCH;
+	}
+	if ( !m1_boot_crc_matches(computed_crc, stored_crc) )
+	{
+		return M1_BOOT_FAULT_CRC_MISMATCH;
+	}
+	return M1_BOOT_FAULT_NONE;
+} // m1_boot_classify_fault()
+
+/* Saturating 8-bit counter increment: boot/swap counters live in single bytes
+ * and must never wrap (a wrap would look like a healthy reset). */
+static inline uint8_t m1_boot_next_counter(uint8_t current)
+{
+	return (current < UINT8_MAX) ? (uint8_t)(current + 1U) : (uint8_t)UINT8_MAX;
+}
+
+/* Rollback loop guard: is another bank swap permitted? */
+static inline bool m1_boot_swap_allowed(uint8_t swap_attempts)
+{
+	return swap_attempts < (uint8_t)M1_BOOT_SWAP_ATTEMPTS_MAX;
+}
+
+/* FLASH_OPTSR_IWDG_SW (bit 3): 1 = IWDG started by software (m1_wdt_init()),
+ * 0 = IWDG armed by hardware at reset. This is the OPTSR *value* mask.
+ *
+ * Deliberately NOT OB_USER_IWDG_SW: that constant is the USERType *selector*
+ * mask (0x4) that tells HAL_FLASHEx_OBProgram WHICH option byte to program, and
+ * bit 2 of OPTSR is BORH_EN -- testing the selector reports the brownout level
+ * as the watchdog mode on every boot. The same value-vs-selector split is the
+ * proven pattern in bl_swap_banks() (USERConfig pairs with OB_SWAP_BANK_ENABLE,
+ * USERType with OB_USER_SWAP_BANK). m1_system.c static-asserts this constant
+ * against the HAL's OB_IWDG_SW so the two cannot drift. */
+#define M1_BOOT_OPTSR_IWDG_SW	0x00000008U
+
+/* Pure IWDG-mode decision, kept out of the boot path so the host test pins the
+ * mask: input is OBInit.USERConfig (== FLASH->OPTSR_CUR & ~PRODUCT_STATE).
+ * Bit clear means hardware-started -- the configuration the boot diagnostic
+ * exists to surface, because the watchdog could then reset the device before
+ * init can service it. */
+static inline bool m1_boot_iwdg_is_hardware(uint32_t opts_cur)
+{
+	return (opts_cur & M1_BOOT_OPTSR_IWDG_SW) == 0U;
+}
+
+#endif /* M1_BOOT_FAILSAFE_H_ */
