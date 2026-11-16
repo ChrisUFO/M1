@@ -16,8 +16,11 @@
  *           PR/RLR -> feed -> PSP->MSP handover (CONTROL.SPSEL clear) ->
  *           interrupts on -> jump,
  *         every flag spin pinned by its own loop condition (plus a scan that
- *         rejects any uncapped loop in the teardown), and no option-byte
- *         programming inside it,
+ *         rejects any uncapped loop in the teardown), the watchdog update wait
+ *         pinned to the four update flags (PVU|RVU|WVU|EWU) with the whole-SR
+ *         form -- which IWDG_SR_ONF makes unsatisfiable -- asserted absent, the
+ *         ONF/EWIF exclusions pinned by the file's own _Static_asserts, and no
+ *         option-byte programming inside it,
  *       * Core/Src/main.c: the hardware strap is evaluated before HAL_Init()
  *         and before MX_IWDG_Init(), drives PD12/PD13 + the speaker tick, and
  *         the jump call is CONFINED to the strap condition; the strap index is
@@ -441,24 +444,29 @@ int main(void) {
                    "the ICACHE busy wait is bounded");
                 ok(strstr(body, "((DCACHE1->SR & DCACHE_SR_BUSYF) != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") != NULL,
                    "the DCACHE busy wait is bounded");
-                ok(strstr(body, "(IWDG->SR != 0U) && (i < M1_DFU_IWDG_SYNC_SPIN_LIMIT)") != NULL,
+                ok(strstr(body, "((IWDG->SR & M1_DFU_IWDG_SR_UPDATE_FLAGS) != 0U) && (i < M1_DFU_IWDG_SYNC_SPIN_LIMIT)") != NULL,
                    "the watchdog register-update wait is bounded by its OWN budget, not the cache cap");
-                ok(strstr(body, "(IWDG->SR != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") == NULL,
+                ok(strstr(body, "(IWDG->SR != 0U)") == NULL,
+                   "the whole-SR predicate is gone: IWDG_SR_ONF (bit 8, 'running') would make it false forever");
+                ok(strstr(body, "((IWDG->SR & M1_DFU_IWDG_SR_UPDATE_FLAGS) != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") == NULL,
                    "the watchdog wait no longer shares the tens-of-cycles cache cap");
                 {
                     /* On expiry the code must NOT reach the 0xAAAA feed: reloading
                      * before PVU/RVU clear takes the previous PR/RLR and silently
                      * disarms the net. The loud exit must sit between the wait and
-                     * the feed. */
+                     * the feed, and it must be driven by the update flags alone --
+                     * ONF is set by the 0xCCCC above, so a whole-SR test would take
+                     * this branch on every entry route. */
                     const char *spin = strstr(body, "i < M1_DFU_IWDG_SYNC_SPIN_LIMIT");
-                    const char *loud = strstr(body, "if ( IWDG->SR != 0U )");
+                    const char *loud = strstr(body, "if ( (IWDG->SR & M1_DFU_IWDG_SR_UPDATE_FLAGS) != 0U )");
                     const char *feed = strstr(body, "IWDG->KR = M1_DFU_IWDG_KEY_RELOAD;");
                     const char *reset = loud != NULL ? strstr(loud, "bl_dfu_teardown_failed();") : NULL;
                     ok(spin != NULL && loud != NULL && reset != NULL && feed != NULL &&
                        spin < loud && loud < reset && reset < feed,
                        "an unsettled IWDG update check resets instead of feeding the previous PR/RLR");
                 }
-                ok(strstr(body, "while ( IWDG->SR != 0U )") == NULL,
+                ok(strstr(body, "while ( IWDG->SR != 0U )") == NULL &&
+                   strstr(body, "while ( (IWDG->SR & M1_DFU_IWDG_SR_UPDATE_FLAGS) != 0U )") == NULL,
                    "no unbounded IWDG->SR spin remains in the jump");
                 ok(every_loop_is_capped(body),
                    "no loop in the jump teardown lacks an iteration bound");
@@ -477,6 +485,19 @@ int main(void) {
                 ok(strstr(fail, "NVIC_SystemReset();") != NULL && every_loop_is_capped(fail),
                    "the failure exit resets first and its idle spin is the only unbounded loop (deliberate)");
             }
+            /* The update-flag mask and its guards, in the CMSIS translation unit
+             * (the host build has no IWDG_SR_* definitions, so the mask itself
+             * cannot be evaluated here; the _Static_asserts below are what make
+             * the exclusion of ONF/EWIF a build error rather than a comment). */
+            ok(strstr(src, "#define M1_DFU_IWDG_SR_UPDATE_FLAGS") != NULL &&
+               strstr(src, "IWDG_SR_PVU | IWDG_SR_RVU | IWDG_SR_WVU | IWDG_SR_EWU") != NULL,
+               "the IWDG update mask is PVU|RVU|WVU|EWU, the same set the HAL and LL test");
+            ok(strstr(src, "M1_DFU_IWDG_SR_UPDATE_FLAGS == 0x0000000FU") != NULL,
+               "the update mask is pinned to bits 0-3 (IWDG_KERNEL_UPDATE_FLAGS by value)");
+            ok(strstr(src, "_Static_assert((M1_DFU_IWDG_SR_UPDATE_FLAGS & (uint32_t)IWDG_SR_ONF) == 0U") != NULL,
+               "a static assert keeps ONF (persistent 'running' status) out of the update mask");
+            ok(strstr(src, "_Static_assert((M1_DFU_IWDG_SR_UPDATE_FLAGS & (uint32_t)IWDG_SR_EWIF) == 0U") != NULL,
+               "a static assert keeps EWIF (early-wakeup flag) out of the update mask");
             /* The PSP -> MSP handover. Without the CONTROL.SPSEL clear, the ROM
              * executes on the abandoned FreeRTOS task stack: MSP writes do not
              * affect the active (PSP) stack in thread mode. */

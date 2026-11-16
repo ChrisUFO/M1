@@ -53,7 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `M1_DFU_TEARDOWN_SPIN_LIMIT` (they fall through to the jump), the `IWDG->SR`
   prescaler/reload synchronisation at its own millisecond-class budget
   (`M1_DFU_IWDG_SYNC_SPIN_LIMIT`, ~4x ST's `HAL_IWDG_DEFAULT_TIMEOUT`, because
-  that wait is LSI-domain) -- so a stuck flag cannot hang the unit with
+  that wait is LSI-domain) and testing only the four *update* flags
+  (`PVU|RVU|WVU|EWU`, the HAL's `IWDG_KERNEL_UPDATE_FLAGS`; `ONF` is the
+  persistent "IWDG is running" status bit and is deliberately excluded, since
+  `0xCCCC` sets it) -- so a stuck flag cannot hang the unit with
   interrupts disabled and no net armed. The two teardown steps whose failure
   would be worse than a reset fail loudly instead of falling through: the clock
   teardown verifies its post-condition (SYSCLK on HSI, PLL1 off) and the IWDG

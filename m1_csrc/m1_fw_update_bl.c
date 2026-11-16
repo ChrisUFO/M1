@@ -34,6 +34,43 @@
 _Static_assert(M1_DFU_IWDG_PRESCALER == (uint32_t)IWDG_PRESCALER_256,
                "the DFU watchdog net must use IWDG_PRESCALER_256 (IWDG_PR == 6)");
 
+/* IWDG->SR mixes two unrelated kinds of bit, and only one of them answers the
+ * question step 9 asks ("has my PR/RLR write landed in the LSI domain yet?"):
+ *
+ *   - PVU/RVU/WVU/EWU (bits 0-3) are set while a PR/RLR/WINR/EWCR write is
+ *     still propagating and clear once it has been taken. These are the only
+ *     bits that mean "not settled yet".
+ *   - ONF (bit 8) is the persistent "watchdog is running" STATUS bit: it goes
+ *     high when the counter starts and is cleared only by a reset. EWIF (bit
+ *     14) is the early-wakeup interrupt flag.
+ *
+ * A whole-register "SR == 0" test therefore can never be satisfied on any entry
+ * route: step 9 writes 0xCCCC three statements earlier (which SETS ONF on a
+ * stopped IWDG and is a no-op on the already-running application watchdog,
+ * where MX_IWDG_Init() set it at boot). ST never tests the register whole --
+ * its write-settled idiom is always masked:
+ *
+ *   IWDG_KERNEL_UPDATE_FLAGS = EWU|WVU|RVU|PVU   (stm32h5xx_hal_iwdg.c, the
+ *                                                 HAL's private macro)
+ *   LL_IWDG_IsReady()        = (SR & (PVU|RVU|WVU|EWU)) == 0   (LL)
+ *
+ * while "is the watchdog running" is explicitly IWDG_STATUS_ENABLE == SR & ONF
+ * (stm32h5xx_hal_iwdg.h). On STM32H5 those four update flags are bits 0-3, so
+ * the mask is 0x0F (PVU is bit 0 here; it is not 0x1E).
+ *
+ * IWDG_KERNEL_UPDATE_FLAGS is private to the HAL .c file, so it cannot be
+ * referenced from here: the asserts below pin the same set by value AND pin the
+ * exclusions, so re-adding ONF/EWIF to the predicate fails the build. */
+#define M1_DFU_IWDG_SR_UPDATE_FLAGS \
+	((uint32_t)(IWDG_SR_PVU | IWDG_SR_RVU | IWDG_SR_WVU | IWDG_SR_EWU))
+
+_Static_assert(M1_DFU_IWDG_SR_UPDATE_FLAGS == 0x0000000FU,
+               "the IWDG update mask must be PVU|RVU|WVU|EWU (bits 0-3), as HAL_IWDG_Init() uses");
+_Static_assert((M1_DFU_IWDG_SR_UPDATE_FLAGS & (uint32_t)IWDG_SR_ONF) == 0U,
+               "IWDG_SR_ONF is the persistent 'watchdog is running' status bit, never a write-settled flag");
+_Static_assert((M1_DFU_IWDG_SR_UPDATE_FLAGS & (uint32_t)IWDG_SR_EWIF) == 0U,
+               "IWDG_SR_EWIF is the early-wakeup interrupt flag, never a write-settled flag");
+
 //************************** S T R U C T U R E S *******************************
 
 /***************************** V A R I A B L E S ******************************/
@@ -734,6 +771,12 @@ void fw_gui_progress_update(size_t remainder)
 /* Loud failure exit for the teardown: a recovery on the request routes, an
  * unbounded reset loop on the strap route while the strap is held.
  *
+ * This exit is only ever reached when a teardown step genuinely fails (the
+ * clock tree does not settle, or the IWDG prescaler/reload synchronisation
+ * never becomes visible in the four update flags). The success path hands over
+ * to the ROM and never resets; the loop described below is a property of a
+ * persistent *failure*, not of entry by strap as such.
+ *
  * When a teardown step cannot be completed (the clock tree did not settle, or
  * the IWDG prescaler/reload synchronisation never became visible) the unit must
  * NOT continue into the ROM: it would either run on a clock tree the ROM cannot
@@ -758,7 +801,8 @@ void fw_gui_progress_update(size_t remainder)
  *     clock tree is worse than rebooting loudly, and there is no spare
  *     backup-register budget for a persistent-failure attempt counter. The
  *     issue #41 hardware gate names the loop so a technician can tell it from a
- *     boot hang.
+ *     boot hang. It applies to a genuinely failing teardown only: a strap entry
+ *     whose teardown succeeds reaches the ROM and resets nothing.
  *
  * The trailing spin is never reached in practice -- SYSRESETREQ does not return
  * -- and exists only so the function is honest if a debugger holds the reset
@@ -1116,16 +1160,23 @@ void bl_jump_to_dfu(void)
 	 *    register update is the one spin in this function that waits on the LSI
 	 *    domain (one prescaled LSI period = 8 ms at PR == 6), so it uses its own
 	 *    budget (M1_DFU_IWDG_SYNC_SPIN_LIMIT, ~4x ST's HAL_IWDG_DEFAULT_TIMEOUT)
-	 *    rather than the tens-of-cycles cache cap. */
+	 *    rather than the tens-of-cycles cache cap.
+	 *
+	 *    The wait and the check below test ONLY the four update flags
+	 *    (M1_DFU_IWDG_SR_UPDATE_FLAGS), never the whole register: ONF (bit 8)
+	 *    is the persistent "IWDG is running" status bit, set by the 0xCCCC
+	 *    three statements above, so a whole-register test would be false
+	 *    forever and this exit would fire on every entry route. See the mask
+	 *    definition and its static asserts at the top of this file. */
 	IWDG->KR  = M1_DFU_IWDG_KEY_START;
 	IWDG->KR  = M1_DFU_IWDG_KEY_UNLOCK;
 	IWDG->PR  = M1_DFU_IWDG_PRESCALER;
 	IWDG->RLR = M1_DFU_IWDG_RELOAD;
-	for (i = 0U; (IWDG->SR != 0U) && (i < M1_DFU_IWDG_SYNC_SPIN_LIMIT); i++)
+	for (i = 0U; ((IWDG->SR & M1_DFU_IWDG_SR_UPDATE_FLAGS) != 0U) && (i < M1_DFU_IWDG_SYNC_SPIN_LIMIT); i++)
 	{
 		;
 	}
-	if ( IWDG->SR != 0U )
+	if ( (IWDG->SR & M1_DFU_IWDG_SR_UPDATE_FLAGS) != 0U )
 	{
 		/* The PR/RLR writes never became visible. Feeding 0xAAAA now would
 		 * reload with the PREVIOUS PR/RLR -- ~0.5 s on the strap route, where

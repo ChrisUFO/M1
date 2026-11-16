@@ -357,7 +357,13 @@ in `tools/m1cp_host_test/test_m1cp_dfu.c`):
    *prescaled* LSI period = 8 ms at /256, plus LSI startup), so it uses its own
    millisecond-class budget (`M1_DFU_IWDG_SYNC_SPIN_LIMIT`, ~4x
    `HAL_IWDG_DEFAULT_TIMEOUT`) rather than the tens-of-cycles cap the cache
-   waits use. If it still expires the teardown **resets** instead of feeding
+   waits use. It tests only the four **update** flags,
+   `PVU|RVU|WVU|EWU` (`M1_DFU_IWDG_SR_UPDATE_FLAGS`, == the HAL's private
+   `IWDG_KERNEL_UPDATE_FLAGS` == `LL_IWDG_IsReady()`'s mask), never the whole
+   register: `ONF` (bit 8) is the persistent "IWDG is running" status bit that
+   the `0xCCCC` above sets, so a whole-register `SR == 0` test can never
+   succeed and would send every entry route down the failure path. If the four
+   flags still do not clear the teardown **resets** instead of feeding
    `0xAAAA`: reloading before `PVU`/`RVU` clear takes the *previous* `PR`/`RLR`
    (same HAL file), which would silently turn the net back into ~0.5 s on the
    strap route / ~4 s on the application route,
@@ -380,14 +386,18 @@ step 9 the unit runs with interrupts disabled and, on the strap route, **no**
 watchdog net, so an unbounded wait on a stuck flag would be a hang that only
 removing power clears.
 
-That failure reset is a recovery on the software-request and recovery-offer
-routes: the persisted request was already consumed before the teardown, so the
-reboot boots the application and the user can retry. It is **not** a recovery
-on the strap route -- `main()` re-samples PE11 before `HAL_Init()`, and with
-the strap still held (holding it is how the user got there) the unit re-enters
-`bl_jump_to_dfu()`, hits the same persistent failure (a dead LSI, or a clock
-tree that never settles) and resets again: an **unbounded reset loop** with
-interrupts off and no logs, ended only by releasing UP or removing power. The
+That failure reset is reached only when a teardown step **genuinely fails**;
+every entry route that completes the teardown hands over to the ROM and resets
+nothing. When it is reached it is a recovery on the software-request and
+recovery-offer routes: the persisted request was already consumed before the
+teardown, so the reboot boots the application and the user can retry. It is
+**not** a recovery on the strap route -- `main()` re-samples PE11 before
+`HAL_Init()`, and with the strap still held (holding it is how the user got
+there) the unit re-enters `bl_jump_to_dfu()`, hits the same persistent failure
+(a dead LSI, or a clock tree that never settles) and resets again: an
+**unbounded reset loop** with interrupts off and no logs, ended only by
+releasing UP or removing power. The loop is a consequence of the persistent
+failure plus the held strap, not of strap entry as such. The
 policy is deliberate -- jumping into the ROM with a dead LSI or a half-torn
 clock tree is worse than rebooting loudly, and there is no spare
 backup-register budget for a persistent-failure attempt counter -- and
@@ -442,12 +452,15 @@ None of this is executable in CI. It is tracked as the issue #41 hardware gate
    the application, not back into DFU.
 5. **Watchdog net**: with no USB host attached, the ROM session is not cut off
    before ~30 s (the programmed net is 32.768 s, LSI/256 with reload 4095), and
-   an abandoned session recovers on its own afterwards. If the teardown's
-   failure exit (`bl_dfu_teardown_failed()` -> `NVIC_SystemReset()`) fires
-   *persistently* while UP is still held, the unit instead reset-loops back into
-   DFU with no net and no logs -- confirm the loop stops as soon as the strap is
-   released (or power is removed), and that the software-request route performs
-   a single reset into the application rather than looping.
+   an abandoned session recovers on its own afterwards. The net is armed on
+   every route (the update wait tests the four update flags, so `0xAAAA` is
+   reached); if it were not, the teardown's failure exit
+   (`bl_dfu_teardown_failed()` -> `NVIC_SystemReset()`) would fire. That exit
+   firing *persistently* while UP is still held is the only reset-loop case: the
+   unit reset-loops back into DFU with no net and no logs -- confirm the loop
+   stops as soon as the strap is released (or power is removed), and that the
+   software-request route performs a single reset into the application rather
+   than looping. A successful teardown of any route resets nothing.
 6. **Teardown**: after the jump no application interrupt fires; SysTick/VTOR
    point into system memory; ICACHE/DCACHE show disabled. Exercise the **strap
    route and the software-request route separately** -- they reach the ROM in
