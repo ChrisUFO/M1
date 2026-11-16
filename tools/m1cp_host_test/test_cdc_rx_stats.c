@@ -30,12 +30,12 @@
  *      bytes, which is FreeRTOS's real arithmetic.
  *   3. high-watermark monotonicity across drain cycles, buffered-now, reset
  *      semantics and the bridge-mode discard accounting.
- *   4. source seams on usbd_cdc_if.c / m1_log_debug.c (that code is HAL/RTOS
- *      code and cannot be linked here): counters are `volatile` and
+ *   4. source seams on usbd_cdc_if.c / m1_log_debug.c / m1_gpio.c (that code is
+ *      HAL/RTOS code and cannot be linked here): counters are `volatile` and
  *      ISR-updated at the send site, reset is wrapped in
  *      taskENTER_CRITICAL()/taskEXIT_CRITICAL() OUTSIDE the interrupt callback,
  *      the accessors are out-of-line (so the values must be materialised),
- *      buffered-now guards a NULL stream buffer, the mode-switch exit uses the
+ *      buffered-now guards a NULL stream buffer, both mode-switch exits use the
  *      counting discard helper instead of a bare xStreamBufferReset(), and
  *      CDC_Receive_FS gained no blocking call.
  *
@@ -55,28 +55,40 @@ static void ok(int cond, const char *what) {
     else       { printf("  FAIL %s\n", what); fails++; }
 }
 
-/* strstr() that ignores `//` comments: the RX callback keeps commented-out
- * debug calls, which must not be mistaken for live code. */
+/* strstr() that ignores `//` comments and block comments (which may span
+ * lines): the RX callback keeps commented-out debug calls, which must not be
+ * mistaken for live code. */
 static int has_code_token(const char *src, const char *tok) {
-    const char *line = src;
-    size_t tok_len = strlen(tok);
+    size_t src_len = strlen(src);
+    char *code = malloc(src_len + 1U);
+    size_t i, out = 0U;
+    int in_block = 0, in_line = 0, hit = 0;
 
-    while (*line != '\0') {
-        const char *eol = strchr(line, '\n');
-        const char *cmt = strstr(line, "//");
-        size_t line_len = (eol != NULL) ? (size_t)(eol - line) : strlen(line);
-        const char *p;
+    if (code == NULL) return 0;
 
-        if (cmt != NULL && (size_t)(cmt - line) < line_len) line_len = (size_t)(cmt - line);
-
-        for (p = line; (size_t)(p - line) + tok_len <= line_len; p++) {
-            if (memcmp(p, tok, tok_len) == 0) return 1;
+    for (i = 0U; i < src_len; i++) {
+        char c = src[i];
+        if (in_line) {
+            if (c == '\n') { in_line = 0; code[out++] = c; }
+            continue;
         }
-
-        if (eol == NULL) break;
-        line = eol + 1;
+        if (in_block) {
+            if (c == '*' && (i + 1U) < src_len && src[i + 1U] == '/') {
+                in_block = 0; i++;
+            } else if (c == '\n') {
+                code[out++] = c;   /* keep line separation */
+            }
+            continue;
+        }
+        if (c == '/' && (i + 1U) < src_len && src[i + 1U] == '/') { in_line = 1; i++; continue; }
+        if (c == '/' && (i + 1U) < src_len && src[i + 1U] == '*') { in_block = 1; i++; continue; }
+        code[out++] = c;
     }
-    return 0;
+    code[out] = '\0';
+
+    hit = (strstr(code, tok) != NULL);
+    free(code);
+    return hit;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -342,7 +354,9 @@ int main(void) {
             "m1_csrc/m1_cdc_rx_stats.h",
             "../../m1_csrc/m1_cdc_rx_stats.h",
             "m1_csrc/m1_log_debug.c",
-            "../../m1_csrc/m1_log_debug.c"
+            "../../m1_csrc/m1_log_debug.c",
+            "m1_csrc/m1_gpio.c",
+            "../../m1_csrc/m1_gpio.c"
         };
         const char *body_sig = "static int8_t CDC_Receive_FS(uint8_t *Buf, uint32_t *Len)";
         char *src = NULL;
@@ -562,6 +576,37 @@ int main(void) {
                "bridge-mode exit uses the counting discard helper");
             ok(strstr(src, "xStreamBufferReset(h_usb_rx_streambuf)") == NULL,
                "no bare reset of the bridge stream buffer discards bytes uncounted");
+            free(src);
+        }
+
+        /* The other bridge exit (BACK in the USB bridge UI) empties the stream
+         * buffer itself, right before m1_logdb_deinit(), so it must also go
+         * through the counting helper instead of a bare reset. */
+        src = NULL;
+        for (size_t i = 8U; (i < 10U) && (src == NULL); i++) {
+            fp = fopen(paths[i], "rb");
+            if (fp != NULL) {
+                long n;
+                if (fseek(fp, 0, SEEK_END) == 0 && (n = ftell(fp)) >= 0 &&
+                    fseek(fp, 0, SEEK_SET) == 0) {
+                    src = malloc((size_t)n + 1U);
+                    if (src != NULL &&
+                        fread(src, 1U, (size_t)n, fp) == (size_t)n) {
+                        src[n] = '\0';
+                    } else {
+                        free(src);
+                        src = NULL;
+                    }
+                }
+                fclose(fp);
+            }
+        }
+        ok(src != NULL, "read m1_csrc/m1_gpio.c (cwd-independent)");
+        if (src != NULL) {
+            ok(strstr(src, "CDC_CLI_RxDiscardPendingBytes();") != NULL,
+               "bridge-mode exit in m1_gpio.c uses the counting discard helper");
+            ok(strstr(src, "xStreamBufferReset(h_usb_rx_streambuf)") == NULL,
+               "no bare reset of the bridge stream buffer in m1_gpio.c exit path");
             free(src);
         }
     }
