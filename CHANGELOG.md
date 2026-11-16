@@ -38,18 +38,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fork: USB DFU entry ported onto the adopted base (issue #41, part B, closes
   the DFU half) — the fork's ROM-bootloader jump
   (`bl_jump_to_dfu()`, `m1_fw_update_bl.c`) with its full teardown order
-  (interrupts off, SysTick, `HAL_RCC_DeInit` back to HSI, NVIC ICER/ICPR,
-  `SCB->VTOR` = system memory, DSB/ISB, ICACHE/DCACHE off), a 32.768 s IWDG
-  safety net (LSI/256 -- `IWDG_PR` 6, divider derived from the register
+  (interrupts off, SysTick plus the pended SysTick/PendSV bits, a bounded
+  raw-register clock teardown back to the HSI reset state, TIM6 halted, NVIC
+  ICER/ICPR, `SCB->VTOR` = system memory, DSB/ISB, ICACHE/DCACHE off), a 32.768 s
+  IWDG safety net (LSI/256 -- `IWDG_PR` 6, divider derived from the register
   encoding -- with reload 4095) so the ROM can enumerate instead of being reset
-  by the ~4 s application watchdog, then interrupts back on, MSP and jump. The
-  net is armed start-then-configure (`0xCCCC` -> `0x5555` -> `PR`/`RLR` ->
-  `IWDG->SR` wait -> `0xAAAA`, the HAL's own order) so it is guaranteed on the
-  cold-boot strap route, where the IWDG/LSI is still stopped because the jump
-  runs before `MX_IWDG_Init()`; every hardware-flag wait in the teardown
-  (`IWDG->SR`, `ICACHE`/`DCACHE1` `BUSYF`) is iteration-capped and falls
-  through to the jump, so a stuck flag cannot hang the unit with interrupts
-  disabled and no net armed. Three entry routes, all ending in that one
+  by the ~4 s application watchdog, then `CONTROL.SPSEL` cleared with MSP set to
+  the ROM's initial SP, interrupts back on and the jump. The net is armed
+  start-then-configure (`0xCCCC` -> `0x5555` -> `PR`/`RLR` -> `IWDG->SR` wait ->
+  `0xAAAA`, the HAL's own order) so it is guaranteed on the cold-boot strap
+  route, where the IWDG/LSI is still stopped because the jump runs before
+  `MX_IWDG_Init()`; every hardware-flag wait in the teardown (`IWDG->SR`,
+  `ICACHE`/`DCACHE1` `BUSYF`, and every RCC ready/switch flag) is
+  iteration-capped and falls through to the jump, so a stuck flag cannot hang
+  the unit with interrupts disabled and no net armed. Three entry routes, all
+  ending in that one
   non-returning function: the PE11 (UP button) hardware strap sampled with raw
   registers in `Core/Src/main.c` before `HAL_Init()`/`MX_IWDG_Init()` (speaker
   tick on PC7, ~23 ms; PD12/PD13 driven high -- user-owned external connector
@@ -64,8 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at offer start seeds a released->pressed latch), so a flat battery or a
   stuck key can only delay a failed boot, never hang it and never cycle it into
   DFU; the poll loop kicks the IWDG inside the 5 s window and falls back to the
-  existing banner behaviour on timeout. ROM cost of the unit: **+1720 B flash /
-  +/-0 B RAM** (text 713884 -> 715604 B, data/bss unchanged; measured with
+  existing banner behaviour on timeout. ROM cost of the unit: **+1656 B flash /
+  +/-0 B RAM** (text 713884 -> 715540 B, data/bss unchanged; measured with
   `arm-none-eabi-size` on a clean `main` @ `8033236` build and this tree, same
   toolchain). The legacy boot-time IWDG option-byte rewrite is deliberately not
   ported: no DFU entry path programs option bytes. Decisions live in the

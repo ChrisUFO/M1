@@ -10,7 +10,8 @@
  *     never return WAIT again),
  *   - source seams on the device-only code (HAL/CMSIS, cannot be host-linked):
  *       * bl_jump_to_dfu(), the teardown ORDER:
- *           interrupts off -> SysTick -> HAL_RCC_DeInit -> NVIC ICER/ICPR ->
+ *           interrupts off -> SysTick + pended core exceptions -> bounded
+ *           raw-register RCC teardown -> TIM6 halted -> NVIC ICER/ICPR ->
  *           VTOR -> barriers -> ICACHE/DCACHE off -> IWDG start -> unlock ->
  *           PR/RLR -> feed -> PSP->MSP handover (CONTROL.SPSEL clear) ->
  *           interrupts on -> jump,
@@ -338,16 +339,25 @@ int main(void) {
         ok(src != NULL, "read m1_csrc/m1_fw_update_bl.c");
         if (src != NULL) {
             char *body = bound_block(src, "void bl_jump_to_dfu(void)");
+            char *rcc = bound_block(src, "static void bl_rcc_teardown_bounded(void)");
+            char *wait = bound_block(src, "static void bl_rcc_wait_flag(volatile uint32_t *reg, uint32_t mask, uint32_t want)");
             char *tail = bound_block(src, "static void bl_rom_handover(uint32_t sp_val, uint32_t reset_vector)");
 
             ok(body != NULL, "bl_jump_to_dfu() is defined");
+            ok(rcc != NULL, "the bounded RCC teardown helper is defined");
+            ok(wait != NULL, "the capped RCC flag wait is defined");
             ok(tail != NULL, "bl_rom_handover() (the PSP->MSP tail) is defined");
 
             if (body != NULL) {
                 static const char *const order[] = {
                     "__disable_irq();",
                     "SysTick->CTRL = 0U;",
-                    "HAL_RCC_DeInit()",
+                    /* Pended core exceptions are not covered by ICER/ICPR. */
+                    "SCB->ICSR = SCB_ICSR_PENDSTCLR_Msk | SCB_ICSR_PENDSVCLR_Msk;",
+                    "bl_rcc_teardown_bounded();",
+                    /* The ROM must not inherit the running HAL tick timebase. */
+                    "TIM6->CR1 &= ~TIM_CR1_CEN;",
+                    "CLEAR_BIT(RCC->APB1LENR, RCC_APB1LENR_TIM6EN);",
                     "NVIC->ICER[i] = 0xFFFFFFFFU;",
                     "NVIC->ICPR[i] = 0xFFFFFFFFU;",
                     "SCB->VTOR = M1_SYSTEM_MEMORY_BASE;",
@@ -366,7 +376,7 @@ int main(void) {
                     "bl_rom_handover(sp_val, jump_address);"
                 };
                 ok(in_order(body, order, sizeof(order) / sizeof(order[0])),
-                   "teardown order: irq off -> SysTick -> RCC -> NVIC -> VTOR -> barriers -> caches -> IWDG start/unlock/PR/RLR/feed -> handover");
+                   "teardown order: irq off -> SysTick+ICSR -> RCC -> TIM6 -> NVIC -> VTOR -> barriers -> caches -> IWDG start/unlock/PR/RLR/feed -> handover");
                 ok(strstr(body, "m1_dfu_sp_plausible") != NULL,
                    "jump validates the ROM initial SP before using it");
                 ok(strstr(body, "NVIC_SystemReset") != NULL,
@@ -375,6 +385,47 @@ int main(void) {
                    strstr(body, "HAL_FLASH_OB_Launch(") == NULL &&
                    strstr(body, "HAL_FLASH_Unlock(") == NULL,
                    "jump programs no option bytes and unlocks no flash");
+                /* HAL_RCC_DeInit() polls HAL_GetTick(), whose only source (TIM6)
+                 * is masked by then: its timeouts never expire, so a stuck RCC
+                 * flag would spin forever with no watchdog net armed. */
+                ok(strstr(body, "HAL_RCC_DeInit();") == NULL,
+                   "no tick-dependent HAL_RCC_DeInit() runs with interrupts masked");
+                ok(strstr(src, "bl_rcc_teardown_bounded") != NULL,
+                   "the clock teardown is the bounded raw-register one");
+            }
+            if (rcc != NULL && wait != NULL) {
+                ok(strstr(rcc, "bl_rcc_wait_flag(") != NULL,
+                   "every RCC flag wait goes through the capped helper");
+                ok(strstr(rcc, "RCC_CR_HSION") != NULL &&
+                   strstr(rcc, "RCC_CR_PLL1ON") != NULL &&
+                   strstr(rcc, "RCC_CFGR1") != NULL,
+                   "the teardown brings HSI up, drops the PLLs and resets the muxes");
+                ok(strstr(rcc, "RCC_CR_LSION") == NULL,
+                   "LSI is left running: it clocks the IWDG safety net armed later");
+                ok(strstr(wait, "(READ_BIT(*reg, mask) != want) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") != NULL,
+                   "the RCC flag wait is iteration-capped, not an infinite spin");
+            }
+            /* Every spin is pinned by its own loop CONDITION, not by counting a
+             * string that a comment could also satisfy. */
+            if (body != NULL) {
+                ok(strstr(body, "((ICACHE->SR & ICACHE_SR_BUSYF) != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") != NULL,
+                   "the ICACHE busy wait is bounded");
+                ok(strstr(body, "((DCACHE1->SR & DCACHE_SR_BUSYF) != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") != NULL,
+                   "the DCACHE busy wait is bounded");
+                ok(strstr(body, "(IWDG->SR != 0U) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT)") != NULL,
+                   "the watchdog register-update wait is bounded, not an infinite spin");
+                ok(strstr(body, "while ( IWDG->SR != 0U )") == NULL,
+                   "no unbounded IWDG->SR spin remains in the jump");
+                ok(every_loop_is_capped(body),
+                   "no loop in the jump teardown lacks an iteration bound");
+            }
+            if (rcc != NULL) {
+                ok(every_loop_is_capped(rcc),
+                   "no loop in the RCC teardown lacks an iteration bound");
+            }
+            if (wait != NULL) {
+                ok(every_loop_is_capped(wait),
+                   "no loop in the RCC flag wait lacks an iteration bound");
             }
             /* The PSP -> MSP handover. Without the CONTROL.SPSEL clear, the ROM
              * executes on the abandoned FreeRTOS task stack: MSP writes do not
@@ -406,6 +457,8 @@ int main(void) {
                    "the jump goes through the SPSEL-clearing handover");
             }
             free(body);
+            free(rcc);
+            free(wait);
             free(tail);
             ok(strstr(src, "#ifndef M1CP_HOST_TEST") != NULL,
                "CMSIS-touching jump is guarded out of host builds");

@@ -87,7 +87,8 @@ _Static_assert(M1_DFU_IWDG_DIVIDER == 256U,
 #define M1_DFU_IWDG_KEY_START	((uint32_t)0xCCCCU)	/* start if stopped */
 
 /* Fixed iteration cap for every hardware-flag spin in the jump teardown
- * (IWDG->SR update flags, ICACHE->SR.BUSYF, DCACHE1->SR.BUSYF). The teardown
+ * (RCC ready/switch flags, IWDG->SR update flags, ICACHE->SR.BUSYF,
+ * DCACHE1->SR.BUSYF). The teardown
  * runs with interrupts disabled and -- on the cold-boot strap route -- before
  * the watchdog net is armed, so an unbounded spin on a stuck hardware flag
  * would hang the unit until power is removed. Hitting the cap falls through to

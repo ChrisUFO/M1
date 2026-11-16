@@ -731,6 +731,105 @@ void fw_gui_progress_update(size_t remainder)
 #ifndef M1CP_HOST_TEST
 
 /*============================================================================*/
+/* Bounded RCC teardown for the ROM handover.
+ *
+ * This replaces HAL_RCC_DeInit(). The HAL version waits on HAL_GetTick(), and
+ * this project's HAL tick comes from TIM6, whose interrupt is already masked
+ * when the teardown runs (__disable_irq() at step 2). uwTick therefore stops
+ * advancing, every "if ((HAL_GetTick() - tickstart) > RCC_*_TIMEOUT_VALUE)"
+ * inside the HAL call is permanently false, and a stuck ready flag -- HSI never
+ * coming up, a PLL never stopping, a clock switch never completing -- spins
+ * forever with interrupts off and, on the cold-boot strap route, before the
+ * IWDG net is armed: a hang only removing power clears.
+ *
+ * So the same teardown is done here from raw registers, with every flag wait
+ * capped at M1_DFU_TEARDOWN_SPIN_LIMIT and falling through, matching the
+ * discipline the rest of bl_jump_to_dfu() already follows.
+ *
+ * Ending state, which is what the ST ROM expects on entry: it is exactly the
+ * state a hardware reset leaves behind, so the bootloader's own clock init
+ * finds nothing to undo. SYSCLK = HSI (64 MHz, HSIDIV /1), AHB/APB prescalers
+ * /1, HSE / CSI / HSI48 and PLL1/2/3 off, the PLL config registers at their
+ * reset values, RCC interrupts disabled and their flags cleared. The ROM
+ * brings up whatever it needs itself (HSI48 for the USB clock is its own
+ * enable, so switching it off here is the reset state, not a loss). LSI is
+ * deliberately left running: it clocks the IWDG net armed at step 9, and
+ * stopping it would kill the very net that makes an abandoned session
+ * recoverable.
+ *
+ * A flag that never settles is not fatal: the teardown falls through to the
+ * jump (best effort) exactly like the cache and IWDG->SR waits, and the ROM
+ * either enumerates or the IWDG resets the unit.
+ */
+
+/* Bounded poll of one RCC register field. `want` is the masked value meaning
+ * "settled"; the loop gives up after M1_DFU_TEARDOWN_SPIN_LIMIT polls. */
+static void bl_rcc_wait_flag(volatile uint32_t *reg, uint32_t mask, uint32_t want)
+{
+	uint32_t i;
+
+	for (i = 0U; (READ_BIT(*reg, mask) != want) && (i < M1_DFU_TEARDOWN_SPIN_LIMIT); i++)
+	{
+		;
+	}
+} // void bl_rcc_wait_flag(...)
+
+static void bl_rcc_teardown_bounded(void)
+{
+	/* HSI on and ready BEFORE anything is switched off: the CPU is running
+	 * from PLL1 here, so stopping the active SYSCLK source first would stop
+	 * the core mid-sequence. */
+	SET_BIT(RCC->CR, RCC_CR_HSION);
+	bl_rcc_wait_flag(&RCC->CR, RCC_CR_HSIRDY, RCC_CR_HSIRDY);
+
+	/* HSIDIV /1 and the reset trimming: 64 MHz HSI. */
+	CLEAR_BIT(RCC->CR, RCC_CR_HSIDIV);
+	WRITE_REG(RCC->HSICFGR, RCC_HSICFGR_HSITRIM_6);
+
+	/* CFGR1/CFGR2 reset == SYSCLK switched to HSI, every prescaler /1, no
+	 * kernel clock mux or MCO still pointing at a PLL. */
+	CLEAR_REG(RCC->CFGR1);
+	CLEAR_REG(RCC->CFGR2);
+	bl_rcc_wait_flag(&RCC->CFGR1, RCC_CFGR1_SWS, 0U);
+
+	/* The oscillators the application turned on. LSI is not in this list on
+	 * purpose -- see the block comment above. */
+	CLEAR_BIT(RCC->CR, RCC_CR_CSION | RCC_CR_CSIKERON | RCC_CR_HSECSSON |
+	                   RCC_CR_HSIKERON | RCC_CR_HSI48ON | RCC_CR_HSEON);
+	CLEAR_BIT(RCC->CR, RCC_CR_HSEEXT | RCC_CR_HSEBYP);
+
+	/* PLLs off, each with its own capped wait on the matching ready flag. */
+	CLEAR_BIT(RCC->CR, RCC_CR_PLL1ON);
+	bl_rcc_wait_flag(&RCC->CR, RCC_CR_PLL1RDY, 0U);
+	CLEAR_BIT(RCC->CR, RCC_CR_PLL2ON);
+	bl_rcc_wait_flag(&RCC->CR, RCC_CR_PLL2RDY, 0U);
+#if defined(RCC_CR_PLL3ON)
+	CLEAR_BIT(RCC->CR, RCC_CR_PLL3ON);
+	bl_rcc_wait_flag(&RCC->CR, RCC_CR_PLL3RDY, 0U);
+	CLEAR_REG(RCC->PLL3CFGR);
+	WRITE_REG(RCC->PLL3DIVR, 0x01010280U);
+	CLEAR_REG(RCC->PLL3FRACR);
+#endif /* RCC_CR_PLL3ON */
+
+	/* PLL dividers / fractional registers back to their reset values. */
+	CLEAR_REG(RCC->PLL1CFGR);
+	WRITE_REG(RCC->PLL1DIVR, 0x01010280U);
+	CLEAR_REG(RCC->PLL1FRACR);
+	CLEAR_REG(RCC->PLL2CFGR);
+	WRITE_REG(RCC->PLL2DIVR, 0x01010280U);
+	CLEAR_REG(RCC->PLL2FRACR);
+
+	/* No RCC interrupt may reach the ROM. */
+	CLEAR_REG(RCC->CIER);
+	WRITE_REG(RCC->CICR, 0xFFFFFFFFU);
+	SET_BIT(RCC->RSR, RCC_RSR_RMVF);
+
+	/* The HAL keeps the SYSCLK frequency in this variable: nothing after this
+	 * point may still believe it is running at the application's 150 MHz. */
+	SystemCoreClock = HSI_VALUE;
+} // void bl_rcc_teardown_bounded(void)
+
+/*============================================================================*/
 /* PSP -> MSP handover into the ST ROM, and the jump.
  *
  * FreeRTOS runs every task on PSP: the CM33 port sets CONTROL.SPSEL = 1 in
@@ -796,21 +895,32 @@ static void bl_rom_handover(uint32_t sp_val, uint32_t reset_vector)
   *      instead of branching into garbage. No logging is possible here.
   *   2. __disable_irq(). Nothing may preempt the teardown, and the ROM
   *      bootloader must not receive an application ISR.
-  *   3. SysTick teardown (CTRL/LOAD/VAL = 0), so no tick interrupt is pending
-  *      when interrupts are re-enabled for the ROM later.
-  *   4. HAL_RCC_DeInit(), back to HSI with the PLLs off. The legacy fork did
-  *      not do this and relied on the ROM reconfiguring the clock itself; the
-  *      issue #41 acceptance criterion requires the application clock tree to
-  *      be dropped before the jump, and it removes any chance of the ROM
-  *      inheriting a PLL it cannot service. It runs AFTER interrupts are off
-  *      (a tick during clock teardown would be fatal) and BEFORE the NVIC/VTOR
-  *      work.
-  *   5. NVIC->ICER/ICPR cleared: every interrupt disabled and un-pended.
-  *   6. SCB->VTOR = system memory, so any vector taken after this point
+  *   3. SysTick teardown (CTRL/LOAD/VAL = 0) plus clearing the pended
+  *      SysTick/PendSV bits, so no core exception survives into the ROM's
+  *      vector table when interrupts are re-enabled for it later.
+  *   4. Application clock tree down to the reset state
+  *      (bl_rcc_teardown_bounded()): HSI on and selected, prescalers /1,
+  *      HSE/CSI/PLLs off, LSI untouched. The legacy fork did not do this and
+  *      relied on the ROM reconfiguring the clock itself; the issue #41
+  *      acceptance criterion requires the application clock tree to be dropped
+  *      before the jump, and it removes any chance of the ROM inheriting a PLL
+  *      it cannot service. It runs AFTER interrupts are off (a tick during
+  *      clock teardown would be fatal) and BEFORE the NVIC/VTOR work.
+  *      It is a raw-register teardown with capped waits, NOT HAL_RCC_DeInit():
+  *      the HAL call polls HAL_GetTick(), and this project's only tick source
+  *      (TIM6) is masked by step 2, so its timeouts never advance -- a stuck
+  *      RCC flag would then spin forever before the watchdog net exists. The
+  *      helper documents what the ROM needs and why every wait is capped.
+  *   5. TIM6 (the HAL tick timebase) stopped and its clock gate dropped: with
+  *      interrupts off nothing vectors its update, and the ROM never asked for
+  *      it. It must come after step 4, which has just reprogrammed the clock
+  *      tree that feeds it.
+  *   6. NVIC->ICER/ICPR cleared: every interrupt disabled and un-pended.
+  *   7. SCB->VTOR = system memory, so any vector taken after this point
   *      resolves in the ROM's vector table.
-  *   7. DSB/ISB, then ICACHE/DCACHE disabled with busy-wait. On H5, entering
+  *   8. DSB/ISB, then ICACHE/DCACHE disabled with busy-wait. On H5, entering
   *      the BootROM with caches enabled can fail or hang silently.
-  *   8. 32 s IWDG safety net: START first, then UNLOCK/PR/RLR, wait for the
+  *   9. 32 s IWDG safety net: START first, then UNLOCK/PR/RLR, wait for the
   *      register update, feed. The start key survives a software reset and the
   *      ROM never feeds the counter, so the alternative is the application's
   *      ~4 s period resetting the unit mid-enumeration. Starting before
@@ -825,9 +935,10 @@ static void bl_rom_handover(uint32_t sp_val, uint32_t reset_vector)
   *      writing a frame that no longer belongs to this context. See
   *      bl_rom_handover().
   *
-  * Every hardware-flag spin in this function is bounded by
+  * Every hardware-flag spin reachable from this function -- the ones below and
+  * the RCC waits inside bl_rcc_teardown_bounded() -- is bounded by
   * M1_DFU_TEARDOWN_SPIN_LIMIT and falls through to the jump: from step 2 to
-  * step 8 the unit has interrupts disabled and no watchdog net, so an
+  * step 9 the unit has interrupts disabled and no watchdog net, so an
   * unbounded wait on a stuck flag would be a hang only a power cycle clears.
   *
   *
@@ -858,25 +969,40 @@ void bl_jump_to_dfu(void)
 	/* 2. No interrupts from here on until the ROM is ready for them. */
 	__disable_irq();
 
-	/* 3. SysTick off. */
+	/* 3. SysTick off, and drop the core exceptions it may already have pended.
+	 *    NVIC->ICER/ICPR below cover peripheral lines only, so a SysTick or
+	 *    PendSV pended in this window (or by the RTOS just before step 2) would
+	 *    otherwise fire into the ROM's vector table the moment the ROM runs. */
 	SysTick->CTRL = 0U;
 	SysTick->LOAD = 0U;
 	SysTick->VAL  = 0U;
+	SCB->ICSR = SCB_ICSR_PENDSTCLR_Msk | SCB_ICSR_PENDSVCLR_Msk;
+	__ISB();
 
-	/* 4. Application clock tree down: back to HSI, PLLs off. */
-	(void)HAL_RCC_DeInit();
+	/* 4. Application clock tree down: back to HSI, PLLs off (bounded, and
+	 *    tick-free -- see bl_rcc_teardown_bounded()). */
+	bl_rcc_teardown_bounded();
 
-	/* 5. Disable and un-pend every NVIC interrupt. */
+	/* 5. TIM6 is this project's HAL tick timebase: stop the counter, drop its
+	 *    pending update flag and release its clock gate. Its NVIC line is
+	 *    masked at step 6 so nothing vectors it, but the ROM must not inherit a
+	 *    running peripheral it never asked for. Order matters: the timer has to
+	 *    be stopped while its clock is still gated on. */
+	TIM6->CR1 &= ~TIM_CR1_CEN;
+	TIM6->SR  = 0U;
+	CLEAR_BIT(RCC->APB1LENR, RCC_APB1LENR_TIM6EN);
+
+	/* 6. Disable and un-pend every NVIC interrupt. */
 	for (i = 0U; i < (uint32_t)(sizeof(NVIC->ICER) / sizeof(NVIC->ICER[0])); i++)
 	{
 		NVIC->ICER[i] = 0xFFFFFFFFU;
 		NVIC->ICPR[i] = 0xFFFFFFFFU;
 	}
 
-	/* 6. Vectors now resolve in system memory. */
+	/* 7. Vectors now resolve in system memory. */
 	SCB->VTOR = M1_SYSTEM_MEMORY_BASE;
 
-	/* 7. Barriers, then caches off (BootROM entry is unsafe with caches on). */
+	/* 8. Barriers, then caches off (BootROM entry is unsafe with caches on). */
 	jump_address = *(volatile const uint32_t *)(uintptr_t)(M1_SYSTEM_MEMORY_BASE + 4U);
 
 	__DSB();
@@ -901,7 +1027,7 @@ void bl_jump_to_dfu(void)
 		}
 	}
 
-	/* 8. 32 s watchdog safety net (LSI / 256 via IWDG_PR == 6, max reload).
+	/* 9. 32 s watchdog safety net (LSI / 256 via IWDG_PR == 6, max reload).
 	 *    START FIRST, then configure -- the HAL's own order, and the only safe
 	 *    one on the cold-boot strap route where the IWDG/LSI is still stopped
 	 *    and PR/RLR write flags need LSI cycles to appear. The SR wait is

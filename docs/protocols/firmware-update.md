@@ -326,14 +326,22 @@ in `tools/m1cp_host_test/test_m1cp_dfu.c`):
 
 1. ROM initial-SP sanity (`m1_dfu_sp_plausible()`); implausible -> reset,
 2. `__disable_irq()`,
-3. SysTick teardown (CTRL/LOAD/VAL = 0),
-4. `HAL_RCC_DeInit()` -- application clock tree down to HSI, PLLs off,
-5. `NVIC->ICER`/`NVIC->ICPR` cleared for every interrupt,
-6. `SCB->VTOR = M1_SYSTEM_MEMORY_BASE`,
-7. `__DSB()` / `__ISB()`, then ICACHE and DCACHE disabled with a **bounded**
+3. SysTick teardown (CTRL/LOAD/VAL = 0) and the pended SysTick/PendSV bits
+   cleared (`SCB->ICSR`; `NVIC->ICER`/`ICPR` do not cover core exceptions),
+4. application clock tree down to the HSI **reset state** with a
+   raw-register, iteration-capped teardown (`bl_rcc_teardown_bounded()`):
+   HSI on and selected, prescalers /1, HSE/CSI/HSI48/PLL1-3 off, PLL config
+   registers at their reset values, LSI left running for the watchdog net
+   below. `HAL_RCC_DeInit()` is deliberately **not** used: its internal waits
+   poll `HAL_GetTick()`, whose only tick source (TIM6) step 2 masked, so its
+   timeouts never expire and a stuck ready flag would spin forever,
+5. TIM6 (the HAL tick timebase) stopped and ungated,
+6. `NVIC->ICER`/`NVIC->ICPR` cleared for every interrupt,
+7. `SCB->VTOR = M1_SYSTEM_MEMORY_BASE`,
+8. `__DSB()` / `__ISB()`, then ICACHE and DCACHE disabled with a **bounded**
    busy-wait (BootROM entry with caches enabled can fail or hang silently on
    H5),
-8. 32 s IWDG safety net (prescaler /256, reload 4095 -> 32.768 s at the
+9. 32 s IWDG safety net (prescaler /256, reload 4095 -> 32.768 s at the
    nominal 32 kHz LSI). The sequence is **start-then-configure** --
    `KR=0xCCCC` (start), `KR=0x5555` (unlock), `PR`, `RLR`, bounded wait for the
    register update (`IWDG->SR`), `KR=0xAAAA` (feed) -- matching
@@ -341,20 +349,27 @@ in `tools/m1cp_host_test/test_m1cp_dfu.c`):
    stopped (this runs before `MX_IWDG_Init()`), so configuring first would leave
    the update flags waiting on LSI cycles that never come, or drop the writes and
    start at the reset-default ~0.5 s period,
-9. `__enable_irq()` (the ROM bootloader enumerates over USB on interrupts),
-   `__set_MSP(rom_sp)`, jump to the ROM reset vector.
+10. `CONTROL.SPSEL` cleared with MSP = the ROM initial SP, then interrupts
+   re-enabled, then the branch to the ROM reset vector -- one register-only
+   sequence. The SPSEL clear is required, not cosmetic: under FreeRTOS thread
+   mode runs on **PSP**, so a bare `__set_MSP()` would leave the ROM executing
+   on the abandoned task stack instead of the SP just validated.
 
-Every hardware-flag spin in steps 7-8 (`IWDG->SR`, `ICACHE->SR.BUSYF`,
-`DCACHE1->SR.BUSYF`) is capped at a fixed iteration count
-(`M1_DFU_TEARDOWN_SPIN_LIMIT`) and falls through to the jump. Between step 2 and
-step 8 the unit runs with interrupts disabled and **no** watchdog net, so an
-unbounded wait on a stuck flag would be a hang that only removing power clears;
-falling through leaves the ROM either enumerating or the unit resetting.
+Every hardware-flag spin in steps 4, 8 and 9 (`RCC` ready/switch flags,
+`IWDG->SR`, `ICACHE->SR.BUSYF`, `DCACHE1->SR.BUSYF`) is capped at a fixed
+iteration count (`M1_DFU_TEARDOWN_SPIN_LIMIT`) and falls through to the jump.
+Between step 2 and step 9 the unit runs with interrupts disabled and, on the
+strap route, **no** watchdog net, so an unbounded wait on a stuck flag would be
+a hang that only removing power clears; falling through leaves the ROM either
+enumerating or the unit resetting.
 
-The legacy fork did not call `HAL_RCC_DeInit()`; it is included here because
+The legacy fork did not tear the clock tree down; it is done here because
 the issue #41 acceptance criterion requires the application clock tree to be
 dropped before the jump and it removes any chance of the ROM inheriting a PLL
-it cannot service. No step programs option bytes: the legacy boot-time IWDG
+it cannot service. Ending at the reset state is also what the ST ROM expects on
+entry -- the same state a hardware reset leaves -- so its own clock init finds
+nothing to undo, and it brings up the HSI48 it needs for USB itself.
+No step programs option bytes: the legacy boot-time IWDG
 option-byte rewrite (`HAL_FLASHEx_OBProgram` + `HAL_FLASH_OB_Launch`) was a
 verified defect and is deliberately **not** ported -- every entry path above is
 read-only with respect to option bytes.

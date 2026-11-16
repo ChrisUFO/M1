@@ -161,7 +161,8 @@ void bl_swap_banks(void);
  * strap in main.c or an honoured DEV_OP_STATUS_USB_DFU_REQUEST in
  * startup_config_handler()); this function only performs the teardown:
  *
- *   interrupts off -> SysTick -> RCC back to HSI (HAL_RCC_DeInit) -> NVIC
+ *   interrupts off -> SysTick (+ pended core exceptions) -> RCC back to the
+ *   reset state (bounded raw-register teardown) -> TIM6 stopped -> NVIC
  *   ICER/ICPR -> VTOR = system memory -> DSB/ISB -> ICACHE/DCACHE off ->
  *   32 s IWDG net -> CONTROL.SPSEL cleared with MSP = ROM initial SP ->
  *   interrupts on -> jump to the ROM reset vector
