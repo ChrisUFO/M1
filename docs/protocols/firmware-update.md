@@ -184,26 +184,28 @@ machine has been reconciled and before `m1_gui_welcome_scr()`):
      (`startup_boot_recovery_hook()`).
 
 **What the failsafe does and does not do.** Detection and accounting are
-automatic; the *recovery action* is not. On a failure the boot stops at
-`FW CORRUPT!` and the fault is recorded, but:
+automatic; containment is not. On a failure the boot stops at `FW CORRUPT!`,
+the fault is recorded, and a **bounded USB DFU offer** runs (see "DFU entry"
+below):
 
 - the unvalidated image is **not** prevented from running — execution continues
-  into the application exactly as on a healthy boot,
-- `FW CORRUPT!` is **not** a lock-out screen: the normal UI is one key press
-  away. The message leaves the display mode in `M1_OPERATION_MODE_DISPLAY_ON`,
-  and the first OK press takes `m1_menu.c` into `menu_main_init()`, which
-  redraws the main menu over the banner,
-- no automatic recovery action runs until the DFU unit of issue #41 (#41-B)
-  fills that seam with `bl_jump_to_dfu()`; it currently only logs.
+  into the application exactly as on a healthy boot once the offer has
+  expired or been declined,
+- `FW CORRUPT!` is **not** a lock-out screen: after the offer the normal UI is
+  one key press away. The message leaves the display mode in
+  `M1_OPERATION_MODE_DISPLAY_ON`, and the first OK press takes `m1_menu.c` into
+  `menu_main_init()`, which redraws the main menu over the banner,
+- the offer itself never waits indefinitely (5 s window, then fall-through), so
+  a flat battery or a stuck key cannot turn recovery into a hang.
 
 Treat `FW CORRUPT!` as a diagnostic banner rather than containment. What it
 does give you is durable evidence: `boot_fault_signature` and `boot_attempts`
 survive a power cycle in DR1, so a technician can distinguish an erased metadata
 block (magic/header fault) from a genuinely corrupted image (CRC fault). The
-supported ways out of a failed bank for this release are service DFU and the
-SD-card update path (plus the interactive rollback offer below). Automatic DFU
-entry lands with #41-B, and on-device qualification of the whole corrupt-bank
-path is the issue #41 hardware gate (milestone "Post-merge stabilization").
+supported ways out of a failed bank are the recovery-screen DFU offer, the
+service DFU strap, and the SD-card update path (plus the interactive rollback
+offer below). On-device qualification of the whole corrupt-bank path is still
+the issue #41 hardware gate (milestone "Post-merge stabilization").
 
 The manual alternate-bank rollback path is still interactive-only: it runs on
 the first power-up after an update reboot when the user presses BACK+DOWN, and
@@ -219,12 +221,13 @@ a healthy boot clears it, so:
 
 Automatic failed-boot rollback (swapping without the user keypress) is still not
 implemented. On-device qualification of the corrupt-bank boot path -- including
-the `FW CORRUPT!` diagnostic banner (not a lock-out) and the eventual DFU entry
+the `FW CORRUPT!` diagnostic banner (not a lock-out) and the DFU offer/entry
 -- is tracked as the issue #41 hardware gate (milestone "Post-merge
 stabilization"); the host suite covers the span arithmetic, the CRC decision,
-every fault class, the counters and the swap guard, and signs/injects a synthetic
-`0xFFC14`-byte bank with the build's own CRC algorithm (valid, flipped byte,
-zeroed magic, relocated CRC word).
+every fault class, the counters, the swap guard, the teardown order and the
+bounded recovery policy, and signs/injects a synthetic `0xFFC14`-byte bank with
+the build's own CRC algorithm (valid, flipped byte, zeroed magic, relocated CRC
+word).
 
 The boot path performs a READ-ONLY IWDG option-byte check
 (`startup_iwdg_option_byte_check()`) and logs whether the watchdog is
@@ -240,14 +243,128 @@ rollback branch of the same boot path still programs them, via `bl_swap_banks()`
 and so does the offline `m1_pre_power_down()` path: both are explicit
 user/power-down actions, not a per-boot rewrite.)
 
+## DFU entry
+
+The device can enter the STM32H573 ROM USB DFU bootloader in system memory
+(`0x0BF90000`) three ways. All three end in the same non-returning
+`bl_jump_to_dfu()` (`m1_fw_update_bl.c`), so the teardown exists once.
+
+### 1. Hardware strap
+
+Hold the **UP button** (PE11, active low) while powering on. `Core/Src/main.c`
+samples it in the first instructions of `main()`, **before `HAL_Init()` and
+before `MX_IWDG_Init()`**, using raw register access (no HAL exists yet). This
+is the fork's original service entry and the one to use on a unit that no
+longer boots far enough to run the application's recovery screen.
+
+On a strap hit the unit:
+
+1. gives a speaker tick (SPK_CTRL = PC7 driven high ~100 ms, then low),
+2. lights PD12 and PD13,
+3. calls `bl_jump_to_dfu()`.
+
+The strap decision is the pure `m1_dfu_strap_active()` (`m1_dfu_entry.h`),
+host-tested; only the pre-HAL GPIO plumbing lives in `main.c`.
+
+### 2. Software request
+
+`firmware_update_enter_usb_dfu()` (`m1_fw_update.c`) is the single public
+entry point (used by the future `dfu` CLI command, unit PR-CLI, and by the
+recovery offer below). It:
+
+1. persists `DEV_OP_STATUS_USB_DFU_REQUEST` (`5`) in DR1[7:0] through
+   `startup_config_write()` -- never a raw `TAMP->BKP` write; DR2/DR3 stay
+   ESP-owned,
+2. resets the device.
+
+`startup_config_handler()` then honours the request as the **first**
+`device_op_status` branch -- before the update state machine and before the
+boot failsafe, so an explicit request is never misread as an interrupted
+update -- and clears it back to `DEV_OP_STATUS_NO_OP` **before** jumping. The
+request is therefore single-shot: a power loss during the ROM session, or a
+reset after it, cannot put the unit back into DFU, so there is no DFU boot
+loop. Existing enum values keep their persisted numbers
+(`REBOOT` = 4, request = 5, `UNKNOWN` = 6; statically asserted).
+
+### 3. Recovery-screen offer
+
+When the boot CRC validation fails, `startup_boot_recovery_hook()`
+(`m1_system.c`) shows `OK=USB DFU 5s` under the `FW CORRUPT!` banner and offers
+DFU entry for a **bounded** window:
+
+- the decision each poll is the pure `m1_dfu_recovery_action()`
+  (`m1_dfu_entry.h`): a deliberate OK press (~100 ms, i.e. two consecutive
+  50 ms polls, so one noisy sample cannot trigger it) selects DFU, and once the
+  5 s window has elapsed the helper can never return "keep waiting";
+- the poll loop kicks the IWDG (`m1_wdt_kick()`, documented for long bounded
+  operations) because 5 s exceeds the ~4 s application watchdog period;
+- a press calls `firmware_update_enter_usb_dfu()` (recorded request + reset);
+- on timeout the `FW CORRUPT!` banner is restored and the pre-existing
+  behaviour resumes (the normal UI stays reachable), with the choice logged.
+
+So a flat battery or a stuck key can delay a failed boot by at most the window
+plus one poll interval -- never hang it -- and a failing image still cannot
+silently present itself as healthy: the banner is drawn and the failure is
+persisted in `boot_attempts` / `boot_fault_signature`.
+
+### Teardown order
+
+`bl_jump_to_dfu()` performs, in this order (host-test-enforced by source seam
+in `tools/m1cp_host_test/test_m1cp_dfu.c`):
+
+1. ROM initial-SP sanity (`m1_dfu_sp_plausible()`); implausible -> reset,
+2. `__disable_irq()`,
+3. SysTick teardown (CTRL/LOAD/VAL = 0),
+4. `HAL_RCC_DeInit()` -- application clock tree down to HSI, PLLs off,
+5. `NVIC->ICER`/`NVIC->ICPR` cleared for every interrupt,
+6. `SCB->VTOR = M1_SYSTEM_MEMORY_BASE`,
+7. `__DSB()` / `__ISB()`, then ICACHE and DCACHE disabled with busy-wait
+   (BootROM entry with caches enabled can fail or hang silently on H5),
+8. 32 s IWDG safety net (prescaler /256, reload 4095 -> 32.768 s at the
+   nominal 32 kHz LSI), register update awaited, fed, started,
+9. `__enable_irq()` (the ROM bootloader enumerates over USB on interrupts),
+   `__set_MSP(rom_sp)`, jump to the ROM reset vector.
+
+The legacy fork did not call `HAL_RCC_DeInit()`; it is included here because
+the issue #41 acceptance criterion requires the application clock tree to be
+dropped before the jump and it removes any chance of the ROM inheriting a PLL
+it cannot service. No step programs option bytes: the legacy boot-time IWDG
+option-byte rewrite (`HAL_FLASHEx_OBProgram` + `HAL_FLASH_OB_Launch`) was a
+verified defect and is deliberately **not** ported -- every entry path above is
+read-only with respect to option bytes.
+
+### Hardware qualification checklist (issue #41 DFU gate)
+
+None of this is executable in CI. It is tracked as the issue #41 hardware gate
+(milestone "Post-merge stabilization"):
+
+1. **Strap entry**: hold UP at power-on -> speaker tick, PD12/PD13 lit, the ROM
+   DFU enumerates (`dfu-util -l` / STM32CubeProgrammer).
+2. **Strap release**: without the strap the unit boots the application.
+3. **Software request**: `dfu` -> device resets -> ROM DFU enumerates.
+4. **Single-shot**: power-cycle during/after the ROM session -> the unit boots
+   the application, not back into DFU.
+5. **Watchdog net**: with no USB host attached, the ROM session is not cut off
+   before ~30 s, and an abandoned session recovers on its own afterwards.
+6. **Teardown**: after the jump no application interrupt fires; SysTick/VTOR
+   point into system memory; ICACHE/DCACHE show disabled.
+7. **Corrupt bank**: flash an image with one flipped byte -> `FW CORRUPT!` +
+   offer; OK within 5 s enters DFU; no key leaves the banner and the UI is
+   reachable (no hang).
+8. **No option-byte churn**: `FLASH->OPTSR_CUR` is unchanged across repeated
+   strap/request entries.
+9. **Reflash and rollback demonstration** (deferred acceptance criterion): DFU
+   a known-good image, boot it, and exercise the update + rollback path.
+
 ## Recovery and rollback status
 
 The source contains a manual alternate-bank rollback path, but it is not part
 of the supported FW 0.8.0.5 release claim and has not been hardware-qualified for
 this release. Automatic failed-boot rollback is not implemented; boot-time
-integrity detection and boot/swap accounting are (see "Boot failsafe" above).
-Supported recovery for this release is the SD-card update path, the interactive
-rollback offer, and service DFU.
+integrity detection and boot/swap accounting are (see "Boot failsafe" above),
+and a failed boot offers bounded DFU entry (see "DFU entry" above). Supported
+recovery for this release is the SD-card update path, the DFU strap/request,
+the recovery-screen DFU offer, and the interactive rollback offer.
 
 ## Safety requirements
 

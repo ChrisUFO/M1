@@ -116,6 +116,12 @@ Every boot additionally validates the running bank against the fixed-span CRC th
 build embedded in it, keeps failure/boot-attempt and swap counters in the
 backup registers, and shows a `FW CORRUPT!` diagnostic banner (not a lock-out —
 the unvalidated image still runs) when the image does not validate.
+USB DFU entry exists on three routes — the PE11 hardware strap sampled before
+HAL init, a persisted software request (`DEV_OP_STATUS_USB_DFU_REQUEST`,
+honoured once and cleared before the jump), and a bounded 5 s offer on the
+recovery banner — all ending in the same non-returning ROM jump with its
+interrupt/SysTick/NVIC/VTOR/cache teardown and a 32 s watchdog safety net. None
+of these paths writes option bytes.
 See [Firmware image and update](protocols/firmware-update.md).
 
 ## Architectural risks

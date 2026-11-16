@@ -34,6 +34,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not ported). New host tests (`test_m1cp_failsafe`, guard test) and
   `scripts/check_no_raw_bkp_writes.sh` cover the logic and ban raw `TAMP->BKP`
   access and `HAL_RTCEx_BKUPWrite/Read` aimed at DR0/DR1 outside the accessors
+- Fork: USB DFU entry ported onto the adopted base (issue #41, part B, closes
+  the DFU half) — the fork's ROM-bootloader jump
+  (`bl_jump_to_dfu()`, `m1_fw_update_bl.c`) with its full teardown order
+  (interrupts off, SysTick, `HAL_RCC_DeInit` back to HSI, NVIC ICER/ICPR,
+  `SCB->VTOR` = system memory, DSB/ISB, ICACHE/DCACHE off with busy-wait), a
+  32.768 s IWDG safety net (prescaler /256, reload 4095) so the ROM can
+  enumerate instead of being reset by the ~4 s application watchdog, then
+  interrupts back on, MSP and jump. Three entry routes, all ending in that one
+  non-returning function: the PE11 (UP button) hardware strap sampled with raw
+  registers in `Core/Src/main.c` before `HAL_Init()`/`MX_IWDG_Init()` (speaker
+  tick on PC7, PD12/PD13 indication), a persisted software request
+  (`DEV_OP_STATUS_USB_DFU_REQUEST`, appended before `UNKNOWN` so existing
+  values keep their numbers; written by the new public
+  `firmware_update_enter_usb_dfu()` which the `dfu` CLI command will use, and
+  honoured as the first op-status branch and cleared before the jump so it is
+  single-shot and cannot create a DFU boot loop), and a bounded recovery-screen
+  offer (`OK=USB DFU 5s`) on a failed boot CRC validation that kicks the IWDG
+  inside its window and falls back to the existing `FW CORRUPT!` banner
+  behaviour on timeout — a flat battery or stuck key can delay a failed boot,
+  never hang it. The legacy boot-time IWDG option-byte rewrite is deliberately
+  not ported: no DFU entry path programs option bytes. Decisions live in the
+  host-testable `m1_csrc/m1_dfu_entry.h`; the new `test_m1cp_dfu` host target
+  covers strap polarity, SP sanity, watchdog arithmetic/keys, the
+  request→recognised→cleared transition, the bounded recovery policy and the
+  teardown ORDER as a source seam. On-device DFU enumeration/rollback
+  demonstration is deferred to the issue #41 hardware gate (milestone
+  "Post-merge stabilization")
 - Fork: CRC emitter parity harness (issue #40) — `scripts/verify_crc_parity.sh`
   generates four deterministic full-size (`0xFFC14`-byte) images from the
   committed spec in `tools/crc_test_vectors.py` (so no ~1 MiB binaries live in
