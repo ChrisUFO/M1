@@ -9,9 +9,10 @@ makes that class of breakage machine-checkable and is wired into
 
 Checks performed over the tracked file set (``git ls-files``):
 
-1. Include-literal case. Every quoted ``#include "..."`` is resolved by
-   basename, case-insensitively. If the literal's basename names a tracked file
-   whose real spelling differs in case, it is reported as a mismatch.
+1. Include-literal case. Every ``#include`` literal, quoted (``"..."``) or
+   angle-bracket (``<...>``), is resolved by basename, case-insensitively. If
+   the literal's basename names a tracked file whose real spelling differs in
+   case, it is reported as a mismatch.
 2. Case-only path collisions. Two tracked paths that differ in nothing but case
    cannot coexist on a case-insensitive filesystem and are reported.
 
@@ -35,12 +36,22 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Extensions scanned for quoted include directives.
+# Extensions scanned for include directives.
 SOURCE_EXTENSIONS = frozenset(
     {".c", ".h", ".cc", ".cpp", ".cxx", ".hh", ".hpp", ".hxx", ".inl", ".ino"}
 )
 
-INCLUDE_RE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"')
+QUOTED_INCLUDE_RE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"')
+ANGLE_INCLUDE_RE = re.compile(r"^[ \t]*#[ \t]*include[ \t]*<([^>]+)>")
+
+
+def match_include(line: str) -> tuple[re.Match, str] | None:
+    """Match an include directive; returns (match, delimiter), literal in group 1."""
+    for opener, regex in (('"', QUOTED_INCLUDE_RE), ("<", ANGLE_INCLUDE_RE)):
+        match = regex.match(line)
+        if match:
+            return match, opener
+    return None
 
 
 def find_repo_root() -> Path:
@@ -95,9 +106,9 @@ def write_text(path: Path, text: str) -> None:
 
 def scan_includes(
     repo_root: Path, files: list[str], basename_index: dict[str, list[str]]
-) -> list[tuple[str, int, str, list[str]]]:
-    """Return (path, lineno, literal, disk_basenames) for every mismatch."""
-    mismatches: list[tuple[str, int, str, list[str]]] = []
+) -> list[tuple[str, int, str, str, list[str]]]:
+    """Return (path, lineno, delimiter, literal, disk_basenames) per mismatch."""
+    mismatches: list[tuple[str, int, str, str, list[str]]] = []
     for rel in files:
         if os.path.splitext(rel)[1].lower() not in SOURCE_EXTENSIONS:
             continue
@@ -108,9 +119,10 @@ def scan_includes(
             sys.stderr.write("warning: cannot read %s: %s\n" % (rel, exc))
             continue
         for lineno, line in enumerate(text.splitlines(), 1):
-            match = INCLUDE_RE.match(line)
-            if not match:
+            matched = match_include(line)
+            if not matched:
                 continue
+            match, opener = matched
             literal = match.group(1)
             basename = os.path.basename(literal.replace("\\", "/"))
             candidates = basename_index.get(basename.lower(), [])
@@ -118,12 +130,12 @@ def scan_includes(
                 continue  # not a repository header; nothing to check
             disk_basenames = sorted({os.path.basename(c) for c in candidates})
             if basename not in disk_basenames:
-                mismatches.append((rel, lineno, literal, disk_basenames))
+                mismatches.append((rel, lineno, opener, literal, disk_basenames))
     return mismatches
 
 
 def apply_fixes(
-    repo_root: Path, mismatches: list[tuple[str, int, str, list[str]]]
+    repo_root: Path, mismatches: list[tuple[str, int, str, str, list[str]]]
 ) -> tuple[int, list[str]]:
     """Rewrite only include literals. Returns (applied_count, notes).
 
@@ -132,7 +144,7 @@ def apply_fixes(
     """
     by_file: dict[str, dict[int, tuple[str, str]]] = collections.defaultdict(dict)
     notes: list[str] = []
-    for rel, lineno, literal, disk_basenames in mismatches:
+    for rel, lineno, _opener, literal, disk_basenames in mismatches:
         if len(disk_basenames) != 1:
             notes.append(
                 "%s:%d: ambiguous include %r matches %s; not auto-fixed"
@@ -160,10 +172,11 @@ def apply_fixes(
                 notes.append("%s:%d: line vanished during fix" % (rel, lineno))
                 continue
             # Preserve the exact original spacing of the directive keyword.
-            directive_match = INCLUDE_RE.match(lines[idx])
-            if not directive_match or directive_match.group(1) != old_literal:
+            matched = match_include(lines[idx])
+            if not matched or matched[0].group(1) != old_literal:
                 notes.append("%s:%d: directive changed during fix" % (rel, lineno))
                 continue
+            directive_match = matched[0]
             head = lines[idx][: directive_match.start(1)]
             tail = lines[idx][directive_match.end(1) :]
             lines[idx] = head + new_literal + tail
@@ -213,13 +226,17 @@ def main(argv: list[str] | None = None) -> int:
             # as it now stands on disk.
             mismatches = scan_includes(repo_root, files, basename_index)
 
-    for rel, lineno, literal, disk_basenames in mismatches:
+    for rel, lineno, opener, literal, disk_basenames in mismatches:
         disk = (
             disk_basenames[0]
             if len(disk_basenames) == 1
             else " | ".join(disk_basenames)
         )
-        print('%s:%d: include "%s" but on disk "%s"' % (rel, lineno, literal, disk))
+        closer = '"' if opener == '"' else ">"
+        print(
+            '%s:%d: include %s%s%s but on disk "%s"'
+            % (rel, lineno, opener, literal, closer, disk)
+        )
 
     for group in collisions:
         print("collision: paths differ only by case: %s" % " | ".join(group))
