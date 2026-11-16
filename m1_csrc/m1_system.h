@@ -52,8 +52,8 @@
 #define BUTTON_DBC_CLK1             1 // first valid click
 #define BUTTON_DBC_CLK2             2 // second valid click
 
-#define BUTTON_LOGIC_HIGH           0b00000001
-#define BUTTON_LOGIC_LOW            0b00000000
+#define BUTTON_LOGIC_HIGH           0x01
+#define BUTTON_LOGIC_LOW            0x00
 
 #define BUTTON_PRESS_STATE          BUTTON_LOGIC_LOW // logic level of the button when pressed
 #define BUTTON_RELEASE_STATE        BUTTON_LOGIC_HIGH // logic level of the button when released (idle)

@@ -94,3 +94,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `assert(0)` unreachable-guard added to the `SI446x_Change_Radio_Setting()`
   default case (fork origins 78d6b86 + `legacy/v0.8.11` radio stability
   hunks)
+- Fork: non-portable C23 `0b` binary literals replaced with the equivalent
+  hex constants in `Sub_Ghz/m1_sub_ghz_api.h` (13 values) and
+  `m1_csrc/m1_system.h` (`BUTTON_LOGIC_HIGH`/`LOW`) so the documented
+  ARM GNU 14.2 toolchain builds green with the global `-Wpedantic` intact
+  under the scoped `-Werror` gate — gcc 14.2 diagnoses `0b` as a C23/GCC
+  extension inside the gated app include closure, while the Windows host
+  toolchain (gcc 15.2.1) accepts it, which hid the failure; milestone
+  Merge 2
