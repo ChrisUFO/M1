@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: CRC emitter parity harness (issue #40) — `scripts/verify_crc_parity.sh`
+  generates four deterministic full-size (`0xFFC14`-byte) images from the
+  committed spec in `tools/crc_test_vectors.py` (so no ~1 MiB binaries live in
+  git) and checks each one: with `srec_cat` installed it runs both emitters and
+  byte-compares the outputs, without it, it compares the Python emitter's
+  SHA-256 and CRC word against `scripts/crc_parity_golden.txt`, whose values
+  were captured from the authoritative `srec_cat` pipeline
 - Fork: Sub-GHz Rx DMA deferred-context ingestion ported onto the adopted
   base (issue #52, closes the #22/#26/#27 stability carry from d3a0208) —
   GPDMA1 Channel 3 double-buffered RAW record capture (TIM1_CH1 request)
@@ -84,6 +91,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fork: canonical build no longer fails on hosts without SRecord (issue #40) —
+  the `CMakeLists.txt` CRC step called `srec_cat` unconditionally, so on a
+  Windows/Git-Bash host the POST_BUILD command failed, `build/` never got
+  `_wCRC.bin`, and `build.sh` aborted with an empty `artifacts/`. The step now
+  resolves exactly one emitter at configure time (srecord stays authoritative
+  when it is on `PATH`, otherwise the byte-equivalent
+  `tools/emulate_srec_cat_crc.py`; if neither exists, configure fails loudly
+  instead of skipping the CRC) and prints the choice as a `CRC emitter:`
+  status line. `build.sh` asserts the emitted `_wCRC.bin` is exactly `0xFFC18`
+  (1047576) bytes in plain and `--release` mode, and the release manifest now
+  hashes portably (`md5sum`/`md5 -q`, `sha256sum`/`shasum -a 256`, shared
+  implementation in `scripts/portable_hash.sh`) with identical keys on every
+  host
 - Fork: filename/include case corrected for case-sensitive filesystems
   (issue #46) — `m1_csrc/Res_String.{c,h}` → `res_string.{c,h}` and
   `Battery/Golden_Image_0420.h` → `golden_image_0420.h` (renamed with

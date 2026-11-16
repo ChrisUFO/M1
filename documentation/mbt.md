@@ -81,6 +81,15 @@ Firmware is built in the folder ./Release for release configuration and ./Debug 
 
 The **srec_cat** tool from the [SRecord](https://srecord.sourceforge.net/) package is used to append CRC-32 bytes to the firmware binary.
 
+> **Windows without SRecord:** `srec_cat` and
+> `tools/emulate_srec_cat_crc.py` are byte-equivalent emitters of the same
+> layout (crop at `0x000FFC14`, CRC-32/MPEG-2 appended little-endian, output
+> exactly `0xFFC18` bytes). The canonical build resolves whichever one is
+> available — `srec_cat` when it is on `PATH`, the Python emitter otherwise —
+> and `sh scripts/verify_crc_parity.sh` proves they agree against
+> `scripts/crc_parity_golden.txt`. Installing SRecord is therefore optional on
+> Windows; see [Build and debug](../docs/build-and-debug.md).
+
 ### Download and install
 
 - **Tool:** `srec_cat` (part of SRecord)
