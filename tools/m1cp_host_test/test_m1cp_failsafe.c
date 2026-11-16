@@ -61,6 +61,20 @@ static long slurp(const char *path, char *buf, size_t cap) {
     return (long)n;
 }
 
+/* Resolve a repo-root-relative path from either cwd: the repository root
+ * (documented standalone usage, e.g. ./tools/m1cp_host_test/test_m1cp_failsafe)
+ * or tools/m1cp_host_test/ (this directory's own `make test`, which runs with
+ * that directory as its working directory). Same dual-path convention as
+ * m1_manager_espupdate_seam_test.c -- a seam check must not depend on the
+ * caller's cwd (audit finding D2). */
+static long slurp_repo(const char *path, char *buf, size_t cap) {
+    char alt[512];
+    long n = slurp(path, buf, cap);
+    if (n >= 0) return n;
+    snprintf(alt, sizeof(alt), "../../%s", path);
+    return slurp(alt, buf, cap);
+}
+
 /* ---- synthetic bank image ------------------------------------------------ */
 
 /* CRC-32/MPEG-2 exactly as the STM32 CRC unit (and the emitter) computes it:
@@ -294,7 +308,7 @@ int main(void) {
     /* ---- device-seam: running bank, not candidate bank ---- */
     {
         static char src[1 << 20];
-        long n = slurp("../../m1_csrc/m1_fw_update_bl.c", src, sizeof src);
+        long n = slurp_repo("m1_csrc/m1_fw_update_bl.c", src, sizeof src);
         ok(n > 0, "read m1_csrc/m1_fw_update_bl.c for the seam check");
         if (n > 0) {
             char *fn = strstr(src, "S_M1_BOOT_FAULT_t bl_crc_validate_active_bank(void)");
