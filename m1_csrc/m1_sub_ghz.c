@@ -367,6 +367,16 @@ volatile uint8_t subghz_rx_dma_block_q[SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN] = {0};
 volatile uint8_t subghz_rx_dma_block_head = 0;
 volatile uint8_t subghz_rx_dma_block_tail = 0;
 volatile uint8_t subghz_rx_dma_block_count = 0;
+/* DMA capture double buffer (fork d3a0208: 32-byte aligned for D-Cache
+ * invalidation granularity) + cross-block pulse-delta state. */
+static uint32_t subghz_rx_dma_buffer[SUBGHZ_RX_DMA_BUFFER_SAMPLES]
+    __attribute__((aligned(32)));
+static uint32_t subghz_rx_dma_prev_capture = 0;
+static bool subghz_rx_dma_have_prev_capture = false;
+/* Capture engine latch (port adaptation): 1 while the RAW record capture is
+ * armed over GPDMA1 Ch3 (HAL_TIM_IC_Start_DMA), so sub_ghz_rx_pause() stops
+ * the engine that was actually armed regardless of later mode-flag changes. */
+static uint8_t subghz_rx_dma_armed = 0;
 /* Record RAW Ready-state RSSI graph render context + ~100ms tick deadlines.
  * Ready-only GUI (Option C): the v0.8.0.49 capture path (ISR / subghz_rx_rawdata_rb
  * / subghz_record_mode_flag / rx_raw_save) is unchanged, and NO captured/flushed
@@ -487,6 +497,8 @@ static void subghz_record_gui_destroy(uint8_t param);
 static void subghz_record_gui_update(uint8_t param);
 static int subghz_record_gui_message(void);
 static int subghz_record_kp_handler(void);
+static void subghz_rx_dma_process_blocks(void);
+static void subghz_rx_dma_invalidate_block(uint32_t start, uint32_t count);
 static int16_t subghz_record_read_rssi(void);
 static void subghz_record_disp_rssi_update(int16_t rssi);
 static void subghz_record_enter_ready(void);
@@ -1620,9 +1632,11 @@ static void subghz_record_tick(void)
 					subghz_modulation_text[subghz_scan_config.modulation]);
 			g_rr_render++;
 			m1_u8g2_nextpage();
-			M1_LOG_I(M1_LOGDB_TAG, "RECDBG live=%d disp=%d push=%lu rnd=%lu N=%lu\r\n",
+			M1_LOG_I(M1_LOGDB_TAG, "RECDBG live=%d disp=%d push=%lu rnd=%lu N=%lu ht=%lu tc=%lu drop=%lu thr=%lu\r\n",
 					rssi, subghz_rr_ctx.rssi_disp_dbm, (unsigned long)g_rr_push,
-					(unsigned long)g_rr_render, (unsigned long)subghz_rr_ctx.sample_total);
+					(unsigned long)g_rr_render, (unsigned long)subghz_rr_ctx.sample_total,
+					(unsigned long)subghz_rx_dma_ht_count, (unsigned long)subghz_rx_dma_tc_count,
+					(unsigned long)subghz_rx_queue_drop_count, (unsigned long)subghz_rx_throttle_count);
 			break;
 
 		case SUBGHZ_RECORD_DISPLAY_PARAM_PLAY:
@@ -1650,6 +1664,107 @@ static bool subghz_record_abort_overflow(bool capture_stopped)
 	M1_LOG_E(M1_LOGDB_TAG, "Recording aborted: capture buffer overflow\r\n");
 	m1_uiView_display_update(SUBGHZ_RECORD_DISPLAY_PARAM_SYS_ERROR);
 	return true;
+}
+
+/* Drain the ISR-produced DMA block queue (task side; fork d3a0208, #22).
+ * For each completed half/full block: invalidate the D-Cache lines covering
+ * it, convert the captured CCR1 timer values into inter-edge pulse widths
+ * (uint16 samples) and insert them into subghz_rx_rawdata_rb, then flush
+ * full SUBGHZ_RAW_DATA_SAMPLES_TO_RW batches to the SD capture file.
+ *
+ * Ported from the fork with two adaptations for this base:
+ * - Ring-full handling: the fork dropped the sample and continued; this
+ *   base's capture-overflow policy (see TIM1_CC_IRQHandler and
+ *   subghz_record_abort_overflow) latches subghz_capture_overflow and aborts
+ *   the recording, so the same policy is applied here (drop counter still
+ *   records the event).
+ * - The drain flush accumulates into subghz_record_flushed_samples (this
+ *   base's record-GUI sample counter). */
+static void subghz_rx_dma_process_blocks(void) {
+  uint8_t blocks[SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN];
+  uint8_t n_blocks = 0;
+  uint8_t i;
+  uint32_t rcv_samples;
+
+  taskENTER_CRITICAL();
+  while ((subghz_rx_dma_block_count > 0U) &&
+         (n_blocks < SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN)) {
+    blocks[n_blocks++] = subghz_rx_dma_block_q[subghz_rx_dma_block_tail];
+    subghz_rx_dma_block_tail = (uint8_t)((subghz_rx_dma_block_tail + 1U) %
+                                         SUBGHZ_RX_DMA_BLOCK_QUEUE_LEN);
+    subghz_rx_dma_block_count--;
+  }
+  taskEXIT_CRITICAL();
+
+  for (i = 0; i < n_blocks; i++) {
+    uint8_t block_id = blocks[i];
+    uint32_t start = (block_id == 0U) ? 0U : SUBGHZ_RX_DMA_BLOCK_SAMPLES;
+    uint32_t end = start + SUBGHZ_RX_DMA_BLOCK_SAMPLES;
+    uint32_t idx;
+
+    subghz_rx_dma_invalidate_block(start, SUBGHZ_RX_DMA_BLOCK_SAMPLES);
+
+    for (idx = start; idx < end; idx++) {
+      uint32_t cur_capture = subghz_rx_dma_buffer[idx];
+      uint32_t pulse_width;
+      uint16_t pulse16;
+
+      if (!subghz_rx_dma_have_prev_capture) {
+        subghz_rx_dma_prev_capture = cur_capture;
+        subghz_rx_dma_have_prev_capture = true;
+        continue;
+      }
+
+      if (cur_capture >= subghz_rx_dma_prev_capture) {
+        pulse_width = cur_capture - subghz_rx_dma_prev_capture;
+      } else {
+        pulse_width = (uint32_t)timerhdl_subghz_rx.Init.Period + 1U -
+                      subghz_rx_dma_prev_capture + cur_capture;
+      }
+      subghz_rx_dma_prev_capture = cur_capture;
+
+      if (pulse_width == 0U) {
+        continue;
+      }
+
+      if (pulse_width > 0xFFFFU) {
+        pulse_width = 0xFFFFU;
+      }
+      if (ringbuffer_get_empty_slots(&subghz_rx_rawdata_rb) == 0U) {
+        subghz_rx_queue_drop_count++;
+        subghz_capture_overflow = 1U; /* this base: freeze + abort policy */
+        return;
+      }
+      pulse16 = (uint16_t)pulse_width;
+      m1_ringbuffer_insert(&subghz_rx_rawdata_rb, (uint8_t *)&pulse16);
+    }
+  }
+
+  while (1) {
+    rcv_samples = ringbuffer_get_data_slots(&subghz_rx_rawdata_rb);
+    if (rcv_samples < SUBGHZ_RAW_DATA_SAMPLES_TO_RW) {
+      break;
+    }
+    subghz_record_flushed_samples += sub_ghz_rx_raw_save(false, false);
+  }
+}
+
+/* Invalidate the D-Cache lines covering one DMA block before the CPU reads
+ * it (fork d3a0208 verbatim; no-op when no D-Cache is present or enabled). */
+static void subghz_rx_dma_invalidate_block(uint32_t start, uint32_t count) {
+#if defined(__DCACHE_PRESENT) && (__DCACHE_PRESENT == 1U)
+  if ((SCB->CCR & SCB_CCR_DC_Msk) != 0U) {
+    uintptr_t addr = (uintptr_t)&subghz_rx_dma_buffer[start];
+    uintptr_t end = addr + ((uintptr_t)count * sizeof(uint32_t));
+    uintptr_t aligned_start = addr & ~(uintptr_t)0x1FU;
+    uintptr_t aligned_end = (end + 31U) & ~(uintptr_t)0x1FU;
+    SCB_InvalidateDCache_by_Addr((uint32_t *)aligned_start,
+                                 (int32_t)(aligned_end - aligned_start));
+  }
+#else
+  (void)start;
+  (void)count;
+#endif
 }
 
 static int subghz_record_gui_message(void)
@@ -1683,15 +1798,16 @@ static int subghz_record_gui_message(void)
 		}
 		else if ( q_item.q_evt_type==Q_EVENT_SUBGHZ_RX )
 		{
-			//arrpush(subghz_rx_q, q_item);
-			//m1_buzzer_notification();
+			/* Rx DMA ingestion (fork d3a0208, #22): the GPDMA1-Ch3 ISR only
+			 * queues completed blocks; all heavy lifting (delta computation,
+			 * ring-buffer inserts, SD flushing) happens here in task context.
+			 * The single-flush form is replaced by subghz_rx_dma_process_blocks
+			 * draining the block queue and ring buffer in a loop. */
+			subghz_rx_queue_notify_pending = 0;
+			subghz_rx_dma_process_blocks();
 			rcv_samples = ringbuffer_get_data_slots(&subghz_rx_rawdata_rb);
-			if ( rcv_samples >= SUBGHZ_RAW_DATA_SAMPLES_TO_RW )
-			{
-				M1_LOG_N(M1_LOGDB_TAG, "Raw samples %lu\r\n", (unsigned long)rcv_samples);
-				subghz_record_flushed_samples += sub_ghz_rx_raw_save(false, false); // GUI: accumulate flushed count
-				vTaskDelay(10); // Give the system some time in case RF noise is flooding the receiver
-			} // if ( rcv_samples >= SUBGHZ_RAW_DATA_SAMPLES_TO_RW )
+			M1_LOG_N(M1_LOGDB_TAG, "Raw samples %lu\r\n", (unsigned long)rcv_samples);
+			vTaskDelay(10); // Give the system some time in case RF noise is flooding the receiver
 		} // if ( q_item.q_evt_type==Q_EVENT_SUBGHZ_RX )
 
 		else if ( q_item.q_evt_type==Q_EVENT_SUBGHZ_TX )
@@ -1833,8 +1949,16 @@ static int subghz_record_kp_handler(void)
 					// Adjust the attack and decay times
 					SI446x_Change_Modem_OOK_PDTC(SUB_GHZ_433_92_NEW_PDTC);
 					sub_ghz_rx_init();
-					sub_ghz_rx_start();
+					/* Rx DMA port (fork d3a0208): set the record flag BEFORE
+					 * arming capture so sub_ghz_rx_start() selects the DMA
+					 * engine (scan keeps the per-edge TIM1_CC path); the fork
+					 * set the flag after start because its rx_start was
+					 * unconditionally DMA-driven. */
 					subghz_record_mode_flag = true;
+					sub_ghz_rx_start();
+					subghz_rx_queue_notify_pending = 0;
+					subghz_rx_throttle_count = 0;
+					subghz_rx_queue_drop_count = 0;
 					// Fresh RSSI history + sample count + display smoothing for this recording (GUI).
 					subghz_rr_ctx_reset(&subghz_rr_ctx, SUBGHZ_RECORD_RSSI_THRESHOLD_DBM);
 					subghz_record_flushed_samples = 0;
@@ -2845,6 +2969,50 @@ static void sub_ghz_rx_init(void)
 		//Error_Handler(__FILE__, __LINE__);
 		Error_Handler();
 	}
+
+	/* Sub-GHz Rx DMA wiring (fork d3a0208, #22): GPDMA1 Channel 3 on the
+	 * TIM1_CH1 capture request feeds subghz_rx_dma_buffer; HT/TC interrupts
+	 * drive the block queue handled in GPDMA1_Channel3_IRQHandler
+	 * (m1_int_hdl.c). Priority = configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY
+	 * (ISR uses FreeRTOS FromISR APIs); subpriority 5 as tuned on the fork. */
+	__HAL_RCC_GPDMA1_CLK_ENABLE();
+
+	hdma_subghz_rx.Instance = GPDMA1_Channel3;
+	hdma_subghz_rx.Init.Request = GPDMA1_REQUEST_TIM1_CH1;
+	hdma_subghz_rx.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
+	hdma_subghz_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;
+	hdma_subghz_rx.Init.SrcInc = DMA_SINC_FIXED;
+	hdma_subghz_rx.Init.DestInc = DMA_DINC_INCREMENTED;
+	hdma_subghz_rx.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_WORD;
+	hdma_subghz_rx.Init.DestDataWidth = DMA_DEST_DATAWIDTH_WORD;
+	hdma_subghz_rx.Init.Priority = DMA_HIGH_PRIORITY;
+	hdma_subghz_rx.Init.SrcBurstLength = 1;
+	hdma_subghz_rx.Init.DestBurstLength = 1;
+	hdma_subghz_rx.Init.TransferAllocatedPort =
+	    DMA_SRC_ALLOCATED_PORT0 | DMA_DEST_ALLOCATED_PORT0;
+	hdma_subghz_rx.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
+	hdma_subghz_rx.Init.Mode = DMA_NORMAL;
+
+	if (HAL_DMA_Init(&hdma_subghz_rx) != HAL_OK)
+	{
+		Error_Handler();
+	}
+
+	__HAL_LINKDMA(&timerhdl_subghz_rx, hdma[TIM_DMA_ID_CC1], hdma_subghz_rx);
+
+	if (HAL_DMA_ConfigChannelAttributes(&hdma_subghz_rx, DMA_CHANNEL_NPRIV) !=
+	    HAL_OK)
+	{
+		Error_Handler();
+	}
+
+	__HAL_DMA_CLEAR_FLAG(&hdma_subghz_rx,
+	                     DMA_FLAG_TC | DMA_FLAG_HT | DMA_FLAG_DTE | DMA_FLAG_ULE |
+	                         DMA_FLAG_USE | DMA_FLAG_SUSP | DMA_FLAG_TO);
+	HAL_NVIC_SetPriority(GPDMA1_Channel3_IRQn,
+	                     configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY, 5);
+	HAL_NVIC_EnableIRQ(GPDMA1_Channel3_IRQn);
+
 /*
   Input capture mode
   In input capture mode, the capture/compare registers (TIMx_CCRx) are used to latch the value of the counter after a transition detected by the corresponding ICx signal. When a
@@ -2934,10 +3102,38 @@ static void sub_ghz_rx_init(void)
 /*============================================================================*/
 static void sub_ghz_rx_start(void)
 {
-	if (HAL_TIM_IC_Start_IT(&timerhdl_subghz_rx, SUBGHZ_RX_TIMER_RX_CHANNEL) != HAL_OK)
+	subghz_rx_dma_prev_capture = 0;
+	subghz_rx_dma_have_prev_capture = false;
+
+	/* Rx DMA port (fork d3a0208, #22): record RAW captures over the
+	 * double-buffered DMA engine; the scanner keeps the per-edge
+	 * TIM1_CC_IT path (the fork armed DMA unconditionally because its
+	 * scanner did not share this function). */
+	if ( subghz_record_mode_flag )
 	{
-		//_Error_Handler(__FILE__, __LINE__);
-		Error_Handler();
+		subghz_rx_queue_notify_pending = 0;
+		subghz_rx_dma_ht_count = 0;
+		subghz_rx_dma_tc_count = 0;
+		subghz_rx_dma_block_head = 0;
+		subghz_rx_dma_block_tail = 0;
+		subghz_rx_dma_block_count = 0;
+		subghz_rx_dma_armed = 1;
+		if (HAL_TIM_IC_Start_DMA(&timerhdl_subghz_rx, SUBGHZ_RX_TIMER_RX_CHANNEL,
+		                         subghz_rx_dma_buffer,
+		                         SUBGHZ_RX_DMA_BUFFER_SAMPLES) != HAL_OK)
+		{
+			//_Error_Handler(__FILE__, __LINE__);
+			Error_Handler();
+		}
+	}
+	else
+	{
+		subghz_rx_dma_armed = 0;
+		if (HAL_TIM_IC_Start_IT(&timerhdl_subghz_rx, SUBGHZ_RX_TIMER_RX_CHANNEL) != HAL_OK)
+		{
+			//_Error_Handler(__FILE__, __LINE__);
+			Error_Handler();
+		}
 	}
 } // static void sub_ghz_rx_start(void)
 
@@ -2952,7 +3148,16 @@ static void sub_ghz_rx_start(void)
 /*============================================================================*/
 static void sub_ghz_rx_pause(void)
 {
-	if (HAL_TIM_IC_Stop_IT(&timerhdl_subghz_rx, SUBGHZ_RX_TIMER_RX_CHANNEL) != HAL_OK)
+	if ( subghz_rx_dma_armed ) /* stop the engine that was armed (port latch) */
+	{
+		subghz_rx_dma_armed = 0;
+		if (HAL_TIM_IC_Stop_DMA(&timerhdl_subghz_rx, SUBGHZ_RX_TIMER_RX_CHANNEL) != HAL_OK)
+		{
+			//_Error_Handler(__FILE__, __LINE__);
+			Error_Handler();
+		}
+	}
+	else if (HAL_TIM_IC_Stop_IT(&timerhdl_subghz_rx, SUBGHZ_RX_TIMER_RX_CHANNEL) != HAL_OK)
 	{
 		//_Error_Handler(__FILE__, __LINE__);
 		Error_Handler();
@@ -2982,6 +3187,18 @@ static void sub_ghz_rx_deinit(void)
 
 	SUBGHZ_RX_TIMER_CLK_DIS();
 	HAL_NVIC_DisableIRQ(SUBGHZ_RX_TIMER_IRQn);
+	/* Rx DMA teardown (fork d3a0208): stop the Ch3 interrupt and release the
+	 * channel (same pattern this base already uses for the TX channel in
+	 * sub_ghz_tx_raw_deinit). */
+	subghz_rx_dma_armed = 0;
+	HAL_NVIC_DisableIRQ(GPDMA1_Channel3_IRQn);
+	if ( hdma_subghz_rx.Instance != NULL )
+	{
+		HAL_DMA_DeInit(&hdma_subghz_rx);
+		__HAL_DMA_DISABLE_IT(&hdma_subghz_rx,
+		                     (DMA_IT_TC | DMA_IT_HT | DMA_IT_DTE | DMA_IT_ULE |
+		                      DMA_IT_USE | DMA_IT_TO));
+	}
 
 	HAL_GPIO_DeInit(SUBGHZ_RX_GPIO_PORT, SUBGHZ_RX_GPIO_PIN);
 
@@ -3236,6 +3453,17 @@ static void sub_ghz_ring_buffers_deinit(void)
 	}
 	subghz_front_buffer_size = 0;
 	subghz_record_mode_flag = false;
+	/* Rx DMA state reset (fork d3a0208): leave the block queue and counters
+	 * clean for the next capture session. */
+	subghz_rx_queue_notify_pending = 0;
+	subghz_rx_throttle_count = 0;
+	subghz_rx_queue_drop_count = 0;
+	subghz_rx_dma_ht_count = 0;
+	subghz_rx_dma_tc_count = 0;
+	subghz_rx_dma_block_head = 0;
+	subghz_rx_dma_block_tail = 0;
+	subghz_rx_dma_block_count = 0;
+	subghz_rx_dma_have_prev_capture = false;
 	M1_LOG_I(M1_LOGDB_TAG, "sub_ghz_ring_buffers_deinit %d\r\n", subghz_back_buffer_size);
 } // static void sub_ghz_ring_buffers_deinit(void)
 
