@@ -480,6 +480,12 @@ target_sources(m1_01 INTERFACE
     ../../lfrfid/lfrfid_protocol_keri.c
     ../../lfrfid/lfrfid_protocol_nexwatch.c
     ../../lfrfid/t5577.c
+)
+
+
+# App sources (m1_csrc) -- fork-owned application code, kept as one named list
+# so the scoped -Werror gate below and target_sources() cannot drift apart.
+set(M1_APP_SOURCES
     ../../m1_csrc/res_string.c
     ../../m1_csrc/bit_util.c
     ../../m1_csrc/logger.c
@@ -571,6 +577,32 @@ target_sources(m1_01 INTERFACE
     ../../m1_csrc/privateprofilestring.c
     ../../m1_csrc/uiView.c
 )
+
+target_sources(m1_01 INTERFACE ${M1_APP_SOURCES})
+
+# --- Scoped warning enforcement (issue #39) -----------------------------------
+# App sources compile warning-clean under -Werror; every other tree (HAL,
+# CMSIS, FreeRTOS, u8g2, FatFs, IRMP, RFAL, ESP, USB, lfrfid, ...) keeps the
+# relaxed default: the toolchain file's global -Wall -Wextra -Wpedantic as
+# non-fatal warnings, untouched. Mechanism (librarian-verified): source-file
+# properties with TARGET_DIRECTORY visibility -- a CMake >= 3.18 mechanism,
+# valid at this project's 3.22 floor -- so the COMPILE_OPTIONS land only on
+# the M1_APP_SOURCES translation units compiled into the root executable
+# (created before add_subdirectory(cmake/m1_01), hence already in scope here).
+# Deliberately NOT used:
+#   * target_compile_options() on this INTERFACE m1_01 (or the executable):
+#     INTERFACE flags leak to every consumer -- vendor TUs would get -Werror.
+#   * COMPILE_WARNING_AS_ERROR: silently inert on CMake binaries < 3.24; the
+#     project floor is 3.22, so it could never be trusted here.
+# -Wall/-Wextra are already set globally by cmake/gcc-arm-none-eabi.cmake;
+# restating them keeps the app gate self-contained if that ever changes, and
+# -Werror is the incremental enforcement.
+# To extend the gate to a new file: add it to M1_APP_SOURCES above.
+# Emergency escape hatch: see DEVELOPMENT.md "Scoped -Werror policy".
+set_source_files_properties(${M1_APP_SOURCES}
+    TARGET_DIRECTORY ${CMAKE_PROJECT_NAME}
+    PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
+
 
 target_link_directories(m1_01 INTERFACE
 )
