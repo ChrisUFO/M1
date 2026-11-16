@@ -68,3 +68,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recoverable from `legacy/v0.8.11` and pending re-land in follow-up
   units; per-file disposition will live in `docs/merge/LEDGER.md`
   (tracked as issue #38)
+
+### Fixed
+
+- Fork: small port-stability fixes re-landed from the legacy tree (issue #52
+  carry, part 1 of 2) — `dat_filename` widened 64 → 256 bytes to stop SD
+  data-file paths truncating at 63 chars (FatFS LFN names alone reach 255;
+  the file-loader `fu_path_combine` join scales with `sizeof` automatically,
+  no other bound-dependent site exists), the GPIO CTS wait in
+  `SI446x_Wait_CTS()` bounded to 0xFFFF iterations so a stuck CTS line
+  degrades to a timeout instead of hanging the radio task, and an
+  `assert(0)` unreachable-guard added to the `SI446x_Change_Radio_Setting()`
+  default case (fork origins 78d6b86 + `legacy/v0.8.11` radio stability
+  hunks)
