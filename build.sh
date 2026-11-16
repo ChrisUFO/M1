@@ -33,6 +33,7 @@ if [ -z "$FW_VERSION_QUAD" ] || [ -z "$FW_FORK_TAG" ]; then
     exit 1
 fi
 ARTIFACT_STEM="M1_v${FW_VERSION_QUAD}-${FW_FORK_TAG}"
+MANIFEST="$OUTPUT_DIR/${ARTIFACT_STEM}_wCRC.manifest.txt"
 mkdir -p $BUILD_DIR $OUTPUT_DIR
 
 GIT_COMMIT=$(git rev-parse --short=8 HEAD)
@@ -46,6 +47,14 @@ if [ "$RELEASE_MODE" = "1" ] && [ "$GIT_DIRTY" = "1" ]; then
     echo "Error: --release requires a clean tree (git status --short is non-empty)." >&2
     git status --short >&2
     exit 1
+fi
+
+if [ "$RELEASE_MODE" = "1" ]; then
+    # A manifest from an earlier release must never survive beside freshly built
+    # binaries: if this run aborts (parity gate, missing artifact, ...), the
+    # directory must not look like a completed release to someone who hands it
+    # off without reading the exit status.
+    rm -f "$MANIFEST"
 fi
 
 # Deterministic release metadata: derive SOURCE_DATE_EPOCH from the SOURCE
@@ -131,6 +140,31 @@ if ! head -c "$CROP_END_BYTES" "$WCRC_FILE" | cmp -s - "$PLAIN_FILE"; then
 fi
 echo "Verified: ${ARTIFACT_STEM}_wCRC.bin is $WCRC_SIZE bytes (0xFFC18), prefix == ${ARTIFACT_STEM}.bin"
 
+if [ "$RELEASE_MODE" = "1" ]; then
+    # Emitter parity gate (issue #40: "cross-platform build+vector test"): the
+    # byte-equivalence guarantee is only as fresh as its last run, and this
+    # repo has no CI workflow to run it. The release path is the only automated
+    # invocation there is, so gate it here -- both emitters must agree on the
+    # image this release ships, and the golden table must still match the
+    # generator. Plain developer builds skip this deliberately: it generates
+    # four ~1 MiB images and would slow every local iteration.
+    #
+    # --expect-wcrc is what makes the manifest claim literally true: the harness
+    # derives the CRC-appended image from $PLAIN_FILE and compares it byte for
+    # byte against $WCRC_FILE, the exact bytes hashed below and copied to
+    # artifacts/. Size and prefix alone leave the 4 CRC bytes unconstrained.
+    #
+    # It runs before the artifacts/ copy so a failure leaves artifacts/ as it
+    # found it rather than looking like a release without a manifest.
+    if ! sh "$SCRIPT_DIR/scripts/verify_crc_parity.sh" "$PLAIN_FILE" --expect-wcrc "$WCRC_FILE"; then
+        echo "Error: CRC emitter parity harness failed -- refusing to write a release" >&2
+        echo "       manifest for unverified output. See the FAIL lines above: the" >&2
+        echo "       emitters, the golden table, or the shipped image disagree." >&2
+        exit 1
+    fi
+    echo "Verified: CRC emitter parity harness passed on $PLAIN_FILE and $WCRC_FILE"
+fi
+
 for artifact in \
     "$ARTIFACT_STEM.bin" \
     "$ARTIFACT_STEM.elf" \
@@ -173,24 +207,6 @@ if [ "$RELEASE_MODE" = "1" ]; then
     fi
     echo "Verified: embedded commit literal '$GIT_COMMIT' present in $ELF_FILE"
 
-    # Emitter parity gate (issue #40: "cross-platform build+vector test"): the
-    # byte-equivalence guarantee is only as fresh as its last run, and this
-    # repo has no CI workflow to run it. The release path is the only automated
-    # invocation there is, so gate it here -- both emitters must agree on the
-    # image this release ships, and the golden table must still match the
-    # generator. It runs against the real build output ($PLAIN_FILE, i.e.
-    # build/<artifact>.bin) before the manifest is written, so a manifest can
-    # only ever describe parity-verified artifacts. Plain developer builds skip
-    # this deliberately: it generates four ~1 MiB images and would slow every
-    # local iteration.
-    if ! sh "$SCRIPT_DIR/scripts/verify_crc_parity.sh" "$PLAIN_FILE"; then
-        echo "Error: CRC emitter parity harness failed -- refusing to write a release" >&2
-        echo "       manifest for unverified output. See the FAIL lines above: the" >&2
-        echo "       emitters, the golden table, or the shipped image disagree." >&2
-        exit 1
-    fi
-    echo "Verified: CRC emitter parity harness passed on $PLAIN_FILE"
-
     ARTIFACT_BIN="$OUTPUT_DIR/${ARTIFACT_STEM}_wCRC.bin"
 
     MD5_HASH=$(md5_of "$ARTIFACT_BIN")
@@ -199,7 +215,9 @@ if [ "$RELEASE_MODE" = "1" ]; then
     BRANCH=$(git branch --show-current)
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-    MANIFEST="$OUTPUT_DIR/$(basename "$ARTIFACT_BIN" .bin).manifest.txt"
+    # Written aside and renamed into place so an interrupted run cannot leave a
+    # truncated manifest where a complete-looking one is expected.
+    MANIFEST_TMP="$MANIFEST.tmp"
     {
         echo "binary=$(basename "$ARTIFACT_BIN")"
         echo "commit=$GIT_COMMIT"
@@ -213,7 +231,8 @@ if [ "$RELEASE_MODE" = "1" ]; then
         echo "md5=$MD5_HASH"
         echo "sha256=$SHA256_HASH"
         arm-none-eabi-size "$ELF_FILE" 2>/dev/null | tail -1 | awk '{print "flash_text="$1"\nflash_data="$2"\nram_bss="$3}'
-    } > "$MANIFEST"
+    } > "$MANIFEST_TMP"
+    mv -f "$MANIFEST_TMP" "$MANIFEST"
     echo "Release manifest: $MANIFEST"
     cat "$MANIFEST"
 fi

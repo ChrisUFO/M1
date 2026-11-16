@@ -14,7 +14,11 @@
 #      byte-identical (deterministic via SOURCE_DATE_EPOCH).   [requires --build]
 #
 # Structural checks (1) always run and are fast. The build checks (2,3) run only
-# with --build and need the pinned arm-none-eabi toolchain on PATH.
+# with --build and need the pinned arm-none-eabi toolchain on PATH. Each of the
+# two --release builds also runs the CRC emitter parity harness (issue #40),
+# which needs Python 3 on PATH and spends a few seconds and ~8 MiB of temporary
+# images per build; that harness is part of the release contract, so a gate
+# failure is reported as such instead of as a missing Esp_spi_at/build/.
 #
 # Usage:  scripts/verify_esp_interface_contract.sh [--build]
 
@@ -24,6 +28,20 @@ REPO="$(pwd)"
 FAIL=0
 ok()   { echo "  ok   : $1"; }
 bad()  { echo "  FAIL : $1"; FAIL=1; }
+
+# A --release build now also runs the CRC emitter parity harness, so a failed
+# build can come from the harness rather than from this contract. Name the
+# failing stage instead of always blaming the Esp_spi_at/build/ directory.
+bad_build() {
+    # $1 = description, $2 = build log
+    if grep -q 'refusing to write a release' "$2" 2>/dev/null; then
+        bad "$1: FAILED at the CRC emitter parity gate (see $2)"
+    else
+        bad "$1: FAILED (see $2)"
+    fi
+    tail -5 "$2"
+    exit 1
+}
 
 echo "== structural checks =="
 
@@ -100,9 +118,7 @@ rm -rf build artifacts
 if sh build.sh --release > /tmp/vic_build1.log 2>&1; then
     ok "clean --release build succeeds with NO Esp_spi_at/build/ directory"
 else
-    bad "clean build FAILED without Esp_spi_at/build/ (see /tmp/vic_build1.log)"
-    tail -5 /tmp/vic_build1.log
-    exit 1
+    bad_build "clean build without Esp_spi_at/build/" /tmp/vic_build1.log
 fi
 H1=$(md5 -q artifacts/*_wCRC.bin 2>/dev/null || md5sum artifacts/*_wCRC.bin | cut -d' ' -f1)
 E1=$(md5 -q artifacts/*.elf 2>/dev/null || md5sum artifacts/*.elf | cut -d' ' -f1)
@@ -112,8 +128,7 @@ rm -rf build artifacts
 if sh build.sh --release > /tmp/vic_build2.log 2>&1; then
     ok "second clean --release build succeeds"
 else
-    bad "second clean build FAILED"
-    exit 1
+    bad_build "second clean build" /tmp/vic_build2.log
 fi
 H2=$(md5 -q artifacts/*_wCRC.bin 2>/dev/null || md5sum artifacts/*_wCRC.bin | cut -d' ' -f1)
 E2=$(md5 -q artifacts/*.elf 2>/dev/null || md5sum artifacts/*.elf | cut -d' ' -f1)

@@ -53,14 +53,24 @@ byte-identical prefix of the latter. Checking only the total would accept a
 grown image: both emitters crop at `0xFFC14`, so an application image that
 outgrew the crop end would be silently truncated to exactly `0xFFC18`.
 
+Size and prefix still leave the four CRC bytes at `0xFFC14` unconstrained, so
+`--release` does not rely on them: the parity harness re-derives the
+CRC-appended image from `<artifact>.bin` and byte-compares it against the exact
+`_wCRC.bin` that is copied to `artifacts/` and hashed into the manifest. A
+wrongly encoded (for example big-endian) CRC word keeps both the size and the
+prefix, so without that comparison it would ship.
+
 ### Release manifest
 
 `./build.sh --release` writes `<artifact>_wCRC.manifest.txt` next to the
 binaries, and only after the [CRC emitter parity](#crc-emitter-parity) gate
-passes. Keys: `binary`, `commit`, `dirty`, `branch`, `flags`,
-`source_date_epoch`, `source_date_utc`, `build_timestamp_utc`, `size_bytes`,
-`md5`, `sha256`, `flash_text`, `flash_data`, `ram_bss`. Hashing is portable:
-`md5sum` is preferred with `md5 -q` as the macOS fallback, and `sha256sum` with
+passes. A manifest left by an earlier run is removed as the release starts and
+the new one is written aside and renamed into place, so an aborted release never
+leaves a manifest beside freshly built (or previously built) binaries. Keys:
+`binary`, `commit`, `dirty`, `branch`, `flags`, `source_date_epoch`,
+`source_date_utc`, `build_timestamp_utc`, `size_bytes`, `md5`, `sha256`,
+`flash_text`, `flash_data`, `ram_bss`. Hashing is portable: `md5sum` is
+preferred with `md5 -q` as the macOS fallback, and `sha256sum` with
 `shasum -a 256` (see `scripts/portable_hash.sh`), so the same keys are produced
 identically on Git-Bash/Windows, Linux, and macOS.
 
@@ -126,17 +136,25 @@ must refuse a 400-byte image) and, when `build/<artifact>.bin` exists or a path
 is passed as `$1`, runs the **real build image** through both emitters and
 byte-compares them, asserting a `0xFFC18`-byte output. That is the image the
 release path actually ships; the synthetic vectors only cover the content space.
+`--expect-wcrc <file>` adds the shipped-image check: the CRC-appended file is
+compared byte-for-byte against the derivation from the real build image, which
+is the only check that constrains the appended CRC word itself.
 
 The script exits non-zero on any mismatch and prints a one-line
 `RESULT: PASS/FAIL` summary.
 
-`./build.sh --release` runs this harness on `build/<artifact>.bin` — the image
-that build just produced — before writing the release manifest, and aborts the
-release if any check fails. That is the only automated invocation the repository
-has (there is no CI), so a release always proves emitter equivalence and
-golden-table integrity on the artifact it ships. Plain `./build.sh` builds skip
-the harness deliberately: it generates four ~1 MiB images and would slow local
-iteration.
+`./build.sh --release` runs this harness on `build/<artifact>.bin` with
+`--expect-wcrc build/<artifact>_wCRC.bin` — the exact bytes it copies to
+`artifacts/` and hashes into the manifest — before anything is copied and before
+the manifest is written, and aborts the release if any check fails. That is the
+only automated invocation the repository has (there is no CI), so a release
+always proves emitter equivalence, golden-table integrity and shipped-image byte
+equality. Plain `./build.sh` builds skip the harness deliberately: it generates
+four ~1 MiB images and would slow local iteration.
+
+`--release` therefore also requires Python 3 on `PATH`, even on a host where
+`srec_cat` is installed and CMake would not need it, because the harness runs
+the Python emitter on every vector and on the real build image.
 
 `scripts/crc_parity_golden.txt` may only be re-baselined with
 `sh scripts/verify_crc_parity.sh --update-golden` on a host where `srec_cat` is

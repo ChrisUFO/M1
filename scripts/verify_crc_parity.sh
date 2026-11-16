@@ -28,9 +28,12 @@
 # patterns; the image the release path actually ships is a build output. When a
 # path is given, or build/<artifact>.bin exists, both emitters also run on that
 # image and are byte-compared, and its output must be exactly 0xFFC18 bytes.
+# --expect-wcrc additionally compares the CRC-appended image that ships against
+# that derivation byte-for-byte, so an image with the right size and the right
+# prefix but a wrongly encoded CRC word cannot pass.
 #
 # Usage (from the repo root):
-#   sh scripts/verify_crc_parity.sh [<real-image.bin>]
+#   sh scripts/verify_crc_parity.sh [<real-image.bin>] [--expect-wcrc <wCRC.bin>]
 #   sh scripts/verify_crc_parity.sh --update-golden   # re-baseline, needs srec_cat
 #
 # Exit status: 0 = all vectors pass, 1 = any mismatch or environment error.
@@ -38,14 +41,29 @@ set -eu
 
 MODE=verify
 REAL_IMAGE_ARG=""
-for arg in "$@"; do
-    case $arg in
+EXPECT_WCRC=""
+while [ $# -gt 0 ]; do
+    case $1 in
         --update-golden) MODE=update-golden ;;
         -h|--help) MODE=help ;;
-        -*) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
-        *) REAL_IMAGE_ARG=$arg ;;
+        --expect-wcrc)
+            if [ $# -lt 2 ] || [ -z "$2" ]; then
+                echo "option --expect-wcrc needs a file argument (try --help)" >&2
+                exit 2
+            fi
+            EXPECT_WCRC=$2
+            shift
+            ;;
+        -*) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
+        *) REAL_IMAGE_ARG=$1 ;;
     esac
+    shift
 done
+
+if [ "$MODE" != "verify" ] && [ -n "$EXPECT_WCRC" ]; then
+    echo "--expect-wcrc only applies to verify mode (try --help)" >&2
+    exit 2
+fi
 
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$REPO_ROOT"
@@ -65,10 +83,14 @@ fail() {
 
 usage() {
     # Print only the leading comment block: skip the shebang, strip the comment
-    # marker, and stop at the first non-comment line. A hard-coded line range
-    # silently leaked source code ("set -eu", assignments) into --help as soon
-    # as the header shrank, so derive the end from the block itself.
-    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+    # marker, and stop at the first line that is neither a comment nor blank. A
+    # hard-coded line range silently leaked source code ("set -eu",
+    # assignments) into --help as soon as the header shrank, so derive the end
+    # from the block itself. Blank lines are tolerated up to the code block, so
+    # a future separator line inside the header cannot truncate --help silently.
+    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next }
+         /^[[:space:]]*$/ { print ""; next }
+         { exit }' "$0"
 }
 
 PYTHON=""
@@ -366,6 +388,9 @@ if [ -z "$REAL_IMAGE" ]; then
     else
         echo "skipped: no $BUILD_DIR/<artifact>.bin (pass a build image path as an argument)"
     fi
+    if [ -n "$EXPECT_WCRC" ]; then
+        fail "--expect-wcrc $EXPECT_WCRC given, but no real build image to derive the expected output from"
+    fi
 else
     echo "input:    $REAL_IMAGE"
     real_fails_before=$FAIL_COUNT
@@ -409,14 +434,38 @@ else
                     fail "real artifact: srec_cat (authoritative pipeline) failed"
                 fi
             fi
+
+            # The release path ships (and hashes into its manifest) the
+            # CRC-appended image, not the plain one. Size and prefix alone leave
+            # the 4 CRC bytes at 0xFFC14 unconstrained, and the crop/CRC recipe
+            # is duplicated between CMakeLists.txt and SREC_CAT_ARGS -- so a
+            # wrong-endian or otherwise mis-encoded CRC word would keep both
+            # checks green. Compare the shipped bytes against the derivation.
+            if [ -n "$EXPECT_WCRC" ]; then
+                if [ ! -f "$EXPECT_WCRC" ]; then
+                    fail "expected shipped image does not exist: $EXPECT_WCRC"
+                elif [ ! -f "$real_emu" ]; then
+                    fail "cannot compare $EXPECT_WCRC: no derived image (the python emitter failed)"
+                elif ! cmp -s "$real_emu" "$EXPECT_WCRC"; then
+                    exp_size=$(wc -c < "$EXPECT_WCRC" | tr -d ' ')
+                    fail "shipped image $EXPECT_WCRC does not match the derivation for $REAL_IMAGE ($exp_size bytes vs $EXPECTED_BYTES expected)"
+                    echo "      derived CRC word: $(tail -c 4 "$real_emu" | od -An -tx1 | tr -d ' \n')" >&2
+                    echo "      shipped CRC word: $(tail -c 4 "$EXPECT_WCRC" | od -An -tx1 | tr -d ' \n')" >&2
+                fi
+            fi
         fi
 
         if [ "$FAIL_COUNT" -eq "$real_fails_before" ]; then
+            verdict="python emitter, 0xFFC18"
             if [ -n "$SREC_CAT" ]; then
-                echo "PASS: real artifact (srec_cat == python emitter, 0xFFC18)"
-            else
-                echo "PASS: real artifact (python emitter, 0xFFC18; srec_cat absent -- size/prefix only)"
+                verdict="srec_cat == python emitter, 0xFFC18"
+            elif [ -z "$EXPECT_WCRC" ]; then
+                verdict="python emitter, 0xFFC18; srec_cat absent -- size/prefix only"
             fi
+            if [ -n "$EXPECT_WCRC" ]; then
+                verdict="$verdict, shipped $(basename "$EXPECT_WCRC") byte-identical"
+            fi
+            echo "PASS: real artifact ($verdict)"
         else
             echo "FAIL: real artifact (see the check failure(s) above)" >&2
         fi
@@ -435,5 +484,8 @@ else
 fi
 if [ -n "$REAL_IMAGE" ]; then
     echo "         real artifact cross-checked: $REAL_IMAGE"
+fi
+if [ -n "$EXPECT_WCRC" ]; then
+    echo "         shipped image byte-identical to the derivation: $EXPECT_WCRC"
 fi
 exit 0

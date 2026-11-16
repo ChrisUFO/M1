@@ -69,9 +69,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Fork: `./build.sh --release` now runs the CRC emitter parity harness on the
-  image the release ships (`build/<artifact>.bin`) and refuses to write the
-  release manifest if it fails, so emitter equivalence and golden-table
-  integrity are gated by the only automated build path the repo has; plain
+  image the release ships (`build/<artifact>.bin`) and byte-compares the
+  CRC-appended `<artifact>_wCRC.bin` — the exact bytes hashed into the manifest
+  — against the emitters' derivation, before anything is copied to `artifacts/`;
+  it refuses to write the release manifest if either check fails and drops any
+  manifest left by an earlier run, so emitter equivalence and golden-table
+  integrity are gated by the only automated build path the repo has. The gate
+  needs Python 3 on `PATH` even where `srec_cat` is installed; plain
   `./build.sh` builds skip it to keep local iteration fast (issue #40)
 - Fork: version namespace frozen to 0.9.0.0-UFO, single-sourced from
   `m1_csrc/m1_fw_update_bl.h` and derived into the CMake project name,
