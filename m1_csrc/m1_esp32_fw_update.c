@@ -453,8 +453,8 @@ void setting_esp32_firmware_update(void)
 	} // if ( (uret==M1_FW_UPDATE_FAILED) || (uret==M1_FW_UPDATE_SUCCESS) )
 
 	// Restart the backlight timeout so the result screen stays lit for a full
-	// LCD_SAVER_PERIOD. Set before op_mode is restored, while the saver is
-	// still suspended.
+	// screen-timeout window (settings_get()->screen_timeout_s). Set before
+	// op_mode is restored, while the saver is still suspended.
 	m1_device_stat.active_timestamp = HAL_GetTick();
 	m1_device_stat.op_mode = old_op_mode;
 
