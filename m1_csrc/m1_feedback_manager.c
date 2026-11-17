@@ -128,6 +128,7 @@ static const fb_hw_adapter_t *g_hw;
 static fb_instance_t   g_inst[FB_MAX_ACTIVE];
 static fb_res_state_t  g_res[FB_RES_COUNT];
 static bool            g_sound_enabled = true;
+static bool            g_led_notifications = true;
 static uint8_t         g_volume_pct = 100;
 static uint8_t         g_brightness_pct = 100;
 
@@ -583,6 +584,7 @@ void fb_manager_init(const fb_hw_adapter_t *hw)
 		g_res[r].active = -1;
 	g_hw = hw;
 	g_sound_enabled = true;
+	g_led_notifications = true;
 	g_volume_pct = 100;
 	g_brightness_pct = 100;
 	FB_EXIT_CRITICAL();
@@ -869,6 +871,26 @@ bool fb_get_sound_enabled(void)
 {
 	return g_sound_enabled;
 } // bool fb_get_sound_enabled(void)
+
+/* LED-notification gate (reference section 6 leaves this a product policy,
+ * not an arbitration rule, so -- exactly like the sound gate -- it lives as
+ * a manager-level global that the orchestration layer consults, and it is
+ * NOT part of the request/admission path: disabling it must never change
+ * ownership bookkeeping for any resource, only which notification-class
+ * LED legs the orchestration layer chooses to issue. The boot code applies
+ * the persisted preference after fb_manager_init() resets it to the
+ * compiled default (enabled). */
+void fb_set_led_notifications_enabled(bool enabled)
+{
+	FB_ENTER_CRITICAL();
+	g_led_notifications = enabled;
+	FB_EXIT_CRITICAL();
+} // void fb_set_led_notifications_enabled(bool enabled)
+
+bool fb_get_led_notifications_enabled(void)
+{
+	return g_led_notifications;
+} // bool fb_get_led_notifications_enabled(void)
 
 void fb_set_alert_volume_pct(uint8_t pct)
 {

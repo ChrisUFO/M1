@@ -67,9 +67,24 @@ static const fb_msg_t SEQ_PROG_ALERT_NOTIFY_BL[] = {
 	FB_MSG(FB_MSG_BL_RESTORE, 0), FB_END,
 };
 
+/* Issue the LED leg of a notification-class alert unless the user disabled
+ * LED notifications (issue #4). This is the ONLY place the gate applies:
+ * success/notify are user notifications. Error alerts, power/lifecycle,
+ * radio, USB, payload and firmware-update cues never pass through here and
+ * are therefore never suppressible by the setting. The backlight-wake and
+ * sound legs of these same composites are intentionally NOT gated either --
+ * display wake is screen behavior (governed by brightness/timeout) and
+ * sound has its own Sound setting. */
+static void notify_led_request(const fb_msg_t *prog, fb_owner_t owner, fb_seq_id_t tag)
+{
+	if ( !fb_get_led_notifications_enabled() )
+		return;
+	(void)fb_request_raw(prog, FB_RES_LED, owner, FB_PRIO_APP_ALERT, FB_KIND_ONESHOT, tag);
+} // static void notify_led_request(...)
+
 void fb_alert_success(fb_owner_t owner)
 {
-	(void)fb_request_raw(fb_seq_prog(SEQ_FLASH_GREEN_100), FB_RES_LED, owner, FB_PRIO_APP_ALERT, FB_KIND_ONESHOT, SEQ_ALERT_SUCCESS);
+	notify_led_request(fb_seq_prog(SEQ_FLASH_GREEN_100), owner, SEQ_ALERT_SUCCESS);
 	(void)fb_request_raw(SEQ_PROG_ALERT_SUCCESS_BL, FB_RES_BL, owner, FB_PRIO_APP_ALERT, FB_KIND_ONESHOT, SEQ_ALERT_SUCCESS);
 	(void)fb_request(SEQ_SND_SUCCESS, owner, FB_PRIO_APP_ALERT);
 } // void fb_alert_success(fb_owner_t owner)
@@ -83,7 +98,7 @@ void fb_alert_error(fb_owner_t owner)
 
 void fb_alert_notify(fb_owner_t owner)
 {
-	(void)fb_request_raw(SEQ_PROG_ALERT_NOTIFY_LED, FB_RES_LED, owner, FB_PRIO_APP_ALERT, FB_KIND_ONESHOT, SEQ_ALERT_NOTIFY);
+	notify_led_request(SEQ_PROG_ALERT_NOTIFY_LED, owner, SEQ_ALERT_NOTIFY);
 	(void)fb_request_raw(SEQ_PROG_ALERT_NOTIFY_BL, FB_RES_BL, owner, FB_PRIO_APP_ALERT, FB_KIND_ONESHOT, SEQ_ALERT_NOTIFY);
 	(void)fb_request(SEQ_SND_NOTIFY, owner, FB_PRIO_APP_ALERT);
 } // void fb_alert_notify(fb_owner_t owner)
