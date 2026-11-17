@@ -16,7 +16,7 @@ DEPS    := m1cp_test_stubs.h FreeRTOS.h $(SRC_DIR)/m1_manager_protocol.h \
            $(SRC_DIR)/m1_manager_fs.h $(SRC_DIR)/m1_manager_fw.h $(SRC_DIR)/m1_manager_update_coordinator.h \
            $(SRC_DIR)/m1_manager_fwupdate.h $(SRC_DIR)/m1_manager_espupdate.h $(SRC_DIR)/m1_esp_version.h
 
-test: test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test test_m1cp_failsafe test_m1cp_dfu test_update_intake_size test_cdc_rx_stats test_log_capture test_cli_commands
+test: test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test test_m1cp_failsafe test_m1cp_dfu test_update_intake_size test_cdc_rx_stats test_log_capture test_cli_commands test_sdcard_usage
 	./test_m1cp
 	./test_m1cp_fs
 	./test_m1cp_fw
@@ -32,7 +32,9 @@ test: test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp
 	./test_cdc_rx_stats
 	./test_log_capture
 	./test_cli_commands
+	./test_sdcard_usage
 	sh test_no_raw_bkp_writes.sh
+	sh check_mtest_compile.sh
 
 test_m1cp: test_m1cp.c $(CORE) $(DEPS)
 	$(CC) $(CFLAGS) $(INCS) test_m1cp.c $(CORE) -o $@
@@ -88,11 +90,22 @@ test_log_capture: test_log_capture.c $(SRC_DIR)/m1_log_capture.h
 
 # CLI command table + log capture wiring (issue #44, part B): source seams on
 # Core/Src/cli_app.c and m1_csrc/m1_log_debug.c (registration, mandatory help
-# strings, no orphan handlers, bounded writes, the enqueue funnel using the
-# clamped count, reboot/dfu flushing before the reset). Uses seam_util.h, the
+# strings under configCOMMAND_INT_MAX_OUTPUT_SIZE, no orphan handlers, bounded
+# writes, the enqueue funnel using the clamped count, reboot/dfu flushing
+# before the reset, no 32-bit capacity arithmetic, honest probe-failure
+# reporting), on the built-in help path that terminates its own response
+# (Core/Src/FreeRTOS_CLI.c), and a walked scan of the project trees proving no
+# build file or source defines either dev-only guard. Uses seam_util.h, the
 # same comment-stripping helpers test_cdc_rx_stats.c uses.
 test_cli_commands: test_cli_commands.c seam_util.h
 	$(CC) $(CFLAGS) $(INCS) test_cli_commands.c -o $@
+
+# SD card capacity arithmetic (issue #44, part B): the pure, HAL-free
+# used-percentage helper behind the CLI `sdcard` command
+# (m1_csrc/m1_sdcard_capacity.h) executed natively over 0/32/64/128 GB used and
+# the 2^32/100 KB overflow boundary the old 32-bit expression wrapped at.
+test_sdcard_usage: test_sdcard_usage.c $(SRC_DIR)/m1_sdcard_capacity.h
+	$(CC) $(CFLAGS) $(INCS) test_sdcard_usage.c -o $@
 
 test_m1cp_espver: test_m1cp_espver.c $(CORE) $(DEPS)
 	$(CC) $(CFLAGS) $(INCS) test_m1cp_espver.c $(CORE) -o $@
@@ -114,7 +127,7 @@ validate_file: validate_file.c $(CORE) $(DEPS)
 	$(CC) $(CFLAGS) $(INCS) validate_file.c $(CORE) -o $@
 
 clean:
-	rm -f test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate test_m1cp_failsafe test_m1cp_dfu test_update_intake_size test_cdc_rx_stats test_log_capture test_cli_commands validate_file m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test
+	rm -f test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate test_m1cp_failsafe test_m1cp_dfu test_update_intake_size test_cdc_rx_stats test_log_capture test_cli_commands test_sdcard_usage validate_file m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test
 	rm -rf fs_sandbox
 
 .PHONY: test clean

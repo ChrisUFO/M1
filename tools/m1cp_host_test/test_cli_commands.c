@@ -31,9 +31,16 @@
  *      to a free ID, and is compiled out of shipped images: the flash
  *      unlock/erase/program/lock path sits inside `#if defined(M1_TEST_CMDS)`,
  *      the `#else` branch explains the disabled build, and no build file or
- *      source defines that guard. The published ID map (cmd_m1_mtest_help())
- *      lists 9 as dev-only and marks 22/23/24 legacy-equivalent; IDs 7/8 stay
- *      free and nothing is renumbered.
+ *      project source file defines that guard or `M1_SUBGHZ_CW_TEST_TX` (the
+ *      source set is walked from the project trees, not hardcoded). The
+ *      published ID map (cmd_m1_mtest_help()) lists 9 as dev-only and marks
+ *      22/23/24 legacy-equivalent; IDs 7/8 stay free and nothing is renumbered.
+ *   8. every `pcHelpString` in the table is SHORTER than
+ *      configCOMMAND_INT_MAX_OUTPUT_SIZE (read from Core/Inc/FreeRTOSConfig.h),
+ *      and the built-in help path NUL-terminates what it copies
+ *      (prvHelpCommand(), Core/Src/FreeRTOS_CLI.c) -- a longer help string used
+ *      to leave the 200-byte CLI output buffer unterminated, which the caller's
+ *      strlen() then read past.
  *
  * Run either from the repository root or from this directory:
  *   ./tools/m1cp_host_test/test_cli_commands
@@ -42,6 +49,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include "seam_util.h"
 
 static int count = 0, fails = 0;
@@ -58,9 +67,25 @@ static const char *const commands[] = {
 };
 #define NUM_COMMANDS (sizeof(commands) / sizeof(commands[0]))
 
+/* Every pcHelpString must fit the CLI response slot: `help` sends one help
+ * string per response, so a longer one is truncated (and, before the
+ * prvHelpCommand() terminator below, left unterminated). One entry predates
+ * that rule and is deliberately kept word-for-word: `cdcstats` (289 B, already
+ * on main). It is truncated at the slot, not overrun, and its counter
+ * semantics are documented in docs/protocols/usb-cdc.md. */
+static const char *const help_over_slot_known[] = { "cdcstats" };
+
+static int help_over_slot_allowed(const char *command) {
+    size_t i;
+
+    for (i = 0; i < sizeof(help_over_slot_known) / sizeof(help_over_slot_known[0]); i++) {
+        if (strcmp(command, help_over_slot_known[i]) == 0) return 1;
+    }
+    return 0;
+}
+
 /* Non-empty string literal: the opening quote is followed by something other
- * than the closing quote. `""` is not a help string. */
-static int nonempty_string_literal_at(const char *p) {
+ * than the closing quote. `""` is not a help string. */static int nonempty_string_literal_at(const char *p) {
     while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
     if (*p != '"') return 0;
     p++;
@@ -128,12 +153,162 @@ static char *copy_span(const char *from, const char *to) {
     return s;
 }
 
+/* Bound the LAST occurrence of `sig` (its definition when the file also has a
+ * prototype, e.g. static functions like prvHelpCommand()). Caller frees. */
+static char *bound_last_block(const char *src, const char *sig) {
+    const char *p = src, *last = NULL;
+    char *body;
+
+    while ((p = strstr(p, sig)) != NULL) { last = p; p++; }
+    if (last == NULL) return NULL;
+    return seam_bound_block(last, sig);
+}
+
+/* Decoded length of the C string literal that starts at `p` (which must point
+ * at the opening quote), or -1 when it is not a plain terminated literal.
+ * Escapes count as the single byte they produce, so "\\r\\n" counts as two --
+ * this is the number of bytes the CLI buffer would hold. */
+static int literal_length(const char *p) {
+    int len = 0;
+
+    if (p == NULL) return -1;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p != '"') return -1;
+    p++;
+    while (*p != '"') {
+        if (*p == '\0' || *p == '\n') return -1;   /* unterminated literal */
+        if (*p == '\\') {
+            p++;
+            if (*p == '\0') return -1;
+            if (*p >= '0' && *p <= '7') {          /* \ooo: up to three digits */
+                int digits = 0;
+                while (digits < 3 && *p >= '0' && *p <= '7') { p++; digits++; }
+                len++;
+                continue;
+            }
+            p++;                                   /* \r \n \t \" \\ ...: one byte */
+            len++;
+            continue;
+        }
+        p++;
+        len++;
+    }
+    return len;
+}
+
+/* Value of `#define <name> <decimal>` in `src`, or -1 when it is not there. */
+static int macro_value(const char *src, const char *name) {
+    char needle[96];
+    const char *p;
+
+    if (src == NULL) return -1;
+    snprintf(needle, sizeof(needle), "#define %s", name);
+    p = strstr(src, needle);
+    if (p == NULL) return -1;
+    p += strlen(needle);
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p < '0' || *p > '9') return -1;
+    return (int)strtol(p, NULL, 10);
+}
+
+/* ---- dev-guard scan -------------------------------------------------------
+ * The guards must be off in every shipped build, so no build definition and no
+ * project source file may define either macro. The source set is WALKED from
+ * the project trees instead of being a fixed list of paths: a new file cannot
+ * hide from the scan. `tools/` is deliberately not walked -- this test and
+ * check_mtest_compile.sh name the macros on purpose (the compile check passes
+ * -DM1_TEST_CMDS to prove the guarded code still builds).
+ */
+static const char *const guard_macros[] = { "M1_TEST_CMDS", "M1_SUBGHZ_CW_TEST_TX" };
+#define NUM_GUARD_MACROS (sizeof(guard_macros) / sizeof(guard_macros[0]))
+
+static int guard_files_scanned;
+static int guard_dirs_missing;
+static int guard_definitions;
+
+/* "" when the current directory is the repository root, "../../" when it is
+ * this test directory -- the same discovery seam_read_repo() performs. */
+static const char *repo_root_prefix(void) {
+    static char prefix[8];
+    static int resolved = 0;
+
+    if (!resolved) {
+        FILE *fp = fopen("Core/Src/cli_app.c", "rb");
+        if (fp != NULL) { fclose(fp); prefix[0] = '\0'; }
+        else { snprintf(prefix, sizeof(prefix), "../../"); }
+        resolved = 1;
+    }
+    return prefix;
+}
+
+/* Files whose text can carry a build definition. */
+static int guard_scan_wants(const char *path) {
+    static const char *const exts[] = { ".c", ".h", ".cmake", ".sh" };
+    size_t n = strlen(path), i;
+
+    for (i = 0; i < sizeof(exts) / sizeof(exts[0]); i++) {
+        size_t e = strlen(exts[i]);
+        if (n >= e && strcmp(path + n - e, exts[i]) == 0) return 1;
+    }
+    return 0;
+}
+
+static void guard_scan_file(const char *path) {
+    char *raw = seam_read_all(path);
+    char *code;
+    size_t i;
+
+    if (raw == NULL) { printf("       (unreadable: %s)\n", path); return; }
+    code = seam_strip_comments(raw);   /* a commented-out define is not a build */
+    free(raw);
+    if (code == NULL) return;
+    guard_files_scanned++;
+    for (i = 0; i < NUM_GUARD_MACROS; i++) {
+        char define_tok[96], dash_tok[96];
+
+        snprintf(define_tok, sizeof(define_tok), "#define %s", guard_macros[i]);
+        snprintf(dash_tok, sizeof(dash_tok), "-D%s", guard_macros[i]);
+        if (strstr(code, define_tok) != NULL || strstr(code, dash_tok) != NULL) {
+            printf("       (defines %s: %s)\n", guard_macros[i], path);
+            guard_definitions++;
+        }
+    }
+    free(code);
+}
+
+static void guard_scan_tree(const char *dir) {
+    DIR *d = opendir(dir);
+    struct dirent *e;
+
+    if (d == NULL) {
+        printf("       (missing tree: %s)\n", dir);
+        guard_dirs_missing++;
+        return;
+    }
+    while ((e = readdir(d)) != NULL) {
+        char path[1024];
+        struct stat st;
+
+        if (e->d_name[0] == '.') continue;      /* "." ".." and dot-entries */
+        if (snprintf(path, sizeof(path), "%s/%s", dir, e->d_name) >= (int)sizeof(path)) continue;
+        if (stat(path, &st) != 0) continue;
+        if ((st.st_mode & S_IFMT) == S_IFDIR) guard_scan_tree(path);
+        else if (guard_scan_wants(path)) guard_scan_file(path);
+    }
+    closedir(d);
+}
+
 int main(void) {
     char *raw = seam_read_repo("Core/Src/cli_app.c");
     char *code;
     char *table;
     /* Device-side log plumbing. */
     char *logc_raw, *logc, *logh, *enqueue, *getter;
+    /* Help-string slot accounting (from FreeRTOSConfig.h + the table). */
+    int help_ceiling = 0;
+    int longest_help = 0;
+    int help_over_slot = 0;
+    const char *longest_help_name = "";
 
     ok(raw != NULL, "read Core/Src/cli_app.c (cwd-independent)");
     if (raw == NULL) {
@@ -146,6 +321,15 @@ int main(void) {
 
     /* ---- 1. the command table -------------------------------------------- */
     printf("command table\n");
+    /* The ceiling comes from the firmware config, not from this test: a change
+     * to configCOMMAND_INT_MAX_OUTPUT_SIZE must move this assertion with it. */
+    {
+        char *frc = seam_read_repo("Core/Inc/FreeRTOSConfig.h");
+        help_ceiling = macro_value(frc, "configCOMMAND_INT_MAX_OUTPUT_SIZE");
+        ok(help_ceiling > 0, "configCOMMAND_INT_MAX_OUTPUT_SIZE is defined in Core/Inc/FreeRTOSConfig.h");
+        if (help_ceiling <= 0) help_ceiling = 200;   /* keep going, but the line above failed */
+        free(frc);
+    }
     table = seam_bound_block(code, "const CLI_Command_Definition_t xCommandList[]");
     ok(table != NULL, "xCommandList[] is defined (not just declared)");
     if (table != NULL) {
@@ -175,6 +359,27 @@ int main(void) {
                 const char *helper = strstr(span, ".pxCommandHelper = cmd_");
                 ok(help != NULL && nonempty_string_literal_at(help + strlen(".pcHelpString =")),
                    "  has a non-empty pcHelpString");
+                /* `help` prints one help string per response through
+                 * prvHelpCommand(): anything at or above the ceiling is
+                 * truncated, and used to leave the buffer unterminated. */
+                {
+                    int help_len = (help != NULL) ? literal_length(help + strlen(".pcHelpString =")) : -1;
+                    int allowed = help_over_slot_allowed(commands[i]);
+                    if (help_len > longest_help) {
+                        longest_help = help_len;
+                        longest_help_name = commands[i];
+                    }
+                    if (help_len < 0 || help_len >= help_ceiling) {
+                        if (allowed) {
+                            help_over_slot++;
+                        }
+                        printf("       (%s help string is %d bytes, ceiling %d%s)\n",
+                               commands[i], help_len, help_ceiling,
+                               allowed ? ", documented pre-existing exception" : "");
+                    }
+                    ok(help_len > 0 && (help_len < help_ceiling || allowed),
+                       "  help string fits configCOMMAND_INT_MAX_OUTPUT_SIZE");
+                }
                 ok(interp != NULL, "  is registered with a .pxCommandInterpreter");
                 ok(helper != NULL, "  has a .pxCommandHelper");
                 {
@@ -193,6 +398,13 @@ int main(void) {
         }
         ok(strstr(table, ".pcCommand = NULL") != NULL,
            "the table stays NULL-terminated");
+        printf("       (longest help string: %s, %d bytes; ceiling %d)\n",
+               longest_help_name, longest_help, help_ceiling);
+        ok(longest_help > 0 && (longest_help < help_ceiling ||
+                                help_over_slot_allowed(longest_help_name)),
+           "no table entry overflows the help response beyond the known exception");
+        ok(help_over_slot <= 1,
+           "at most the pre-existing cdcstats help line is over the slot (it is truncated, not overrun)");
     }
     free(table);
 
@@ -353,6 +565,39 @@ int main(void) {
         free(dfu);
     }
 
+    /* ---- sdcard / battery handlers: honest failures, no 32-bit overflow --- */
+    printf("sdcard and battery handlers\n");
+    {
+        char *sdcard = seam_bound_block(code, "BaseType_t cmd_sdcard(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)");
+        char *battery = seam_bound_block(code, "BaseType_t cmd_battery(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)");
+
+        ok(sdcard != NULL, "cmd_sdcard() is defined");
+        if (sdcard != NULL) {
+            ok(strstr(sdcard, "m1_sdcard_used_percent(") != NULL,
+               "sdcard takes the used percentage from the host-tested helper");
+            ok(strstr(sdcard, "* 100U") == NULL,
+               "sdcard keeps no 32-bit used_kb * 100 expression (overflows above ~41 GiB)");
+            ok(strstr(sdcard, "capacity probe failed") != NULL,
+               "a failed capacity probe gets its own status line, not the cached \"OK\"");
+            ok(seam_in_order(sdcard,
+                             (const char *const[]){ "status != SD_access_OK",
+                                                    "m1_sd_error_msg(status)",
+                                                    "info == NULL" },
+                             3U),
+               "the cached-status and probe-failure branches stay separate");
+        }
+        free(sdcard);
+
+        ok(battery != NULL, "cmd_battery() is defined");
+        if (battery != NULL) {
+            ok(strstr(battery, "bq27421_readStateofCharge_percent(") != NULL,
+               "battery reads the state of charge through the checked accessor");
+            ok(strstr(battery, "bq27421_soc(") == NULL,
+               "battery no longer prints Level: 0 % for a failed SoC read");
+        }
+        free(battery);
+    }
+
     /* ---- 7. mtest ID allocation: 9 is the dev-only corruption test --------- */
     printf("mtest command IDs\n");
     {
@@ -407,36 +652,46 @@ int main(void) {
                "m1_cli.c never defines M1_TEST_CMDS itself");
         }
 
-        /* The guard must be off in every shipped build: no build file and no
-         * source file may define it. (Using it in `#if defined(...)` is fine --
-         * that is what makes it off.) */
+        /* The guards must be off in every shipped build: no build definition
+         * and no project source file may define either macro. (Using them in
+         * `#if defined(...)` is fine -- that is what makes them off.) Both
+         * macros are checked, over a source set WALKED from the project trees:
+         * a new file cannot hide from the scan. `tools/` is excluded on purpose
+         * -- this test and check_mtest_compile.sh name the macros, and the
+         * compile check passes -DM1_TEST_CMDS to the compiler. */
         {
-            static const char *const guard_scan[] = {
-                "CMakeLists.txt", "build.sh", "CMakePresets.json",
-                "cmake/gcc-arm-none-eabi.cmake", "Makefile",
-                "tools/m1cp_host_test/Makefile", "Core/Src/cli_app.c",
-                "m1_csrc/m1_cli.h", "m1_csrc/m1_cli_help.c"
+            static const char *const source_trees[] = {
+                "Core", "m1_csrc", "USB", "Battery", "Sub_Ghz", "Infrared",
+                "lfrfid", "Esp32_serial_flasher", "cmake"
             };
+            /* Build definitions live in a small, known set of root files; the
+             * cmake/ tree is covered by the walk above. */
+            static const char *const build_files[] = {
+                "CMakeLists.txt", "CMakePresets.json", "build.sh", "Makefile"
+            };
+            const char *prefix = repo_root_prefix();
             size_t i;
-            int defined = 0, missing = 0;
 
-            for (i = 0; i < sizeof(guard_scan) / sizeof(guard_scan[0]); i++) {
-                char *src = seam_read_repo(guard_scan[i]);
-
-                if (src == NULL) {
-                    printf("       (missing: %s)\n", guard_scan[i]);
-                    missing++;
-                    continue;
-                }
-                if (strstr(src, "#define M1_TEST_CMDS") != NULL ||
-                    strstr(src, "-DM1_TEST_CMDS") != NULL) {
-                    printf("       (defines the guard: %s)\n", guard_scan[i]);
-                    defined++;
-                }
-                free(src);
+            for (i = 0; i < sizeof(source_trees) / sizeof(source_trees[0]); i++) {
+                char path[512];
+                snprintf(path, sizeof(path), "%s%s", prefix, source_trees[i]);
+                guard_scan_tree(path);
             }
-            ok(missing == 0, "every file in the guard scan exists");
-            ok(defined == 0, "no build file or source defines M1_TEST_CMDS (off by default)");
+            for (i = 0; i < sizeof(build_files) / sizeof(build_files[0]); i++) {
+                char path[512];
+                snprintf(path, sizeof(path), "%s%s", prefix, build_files[i]);
+                guard_scan_file(path);
+            }
+
+            printf("       (scanned %d files over %d trees and %d build files for %d macros)\n",
+                   guard_files_scanned,
+                   (int)(sizeof(source_trees) / sizeof(source_trees[0])),
+                   (int)(sizeof(build_files) / sizeof(build_files[0])),
+                   (int)NUM_GUARD_MACROS);
+            ok(guard_dirs_missing == 0, "every project source tree in the guard scan exists");
+            ok(guard_files_scanned > 0, "the guard scan actually read files");
+            ok(guard_definitions == 0,
+               "no build file or project source defines M1_TEST_CMDS or M1_SUBGHZ_CW_TEST_TX");
         }
 
         if (help != NULL) {
@@ -454,6 +709,35 @@ int main(void) {
         free(help_raw);
         free(cli);
         free(cli_raw);
+    }
+
+    /* ---- 8. the help path terminates what it copies ----------------------- */
+    printf("help framework\n");
+    {
+        char *fcli_raw = seam_read_repo("Core/Src/FreeRTOS_CLI.c");
+        char *fcli = (fcli_raw != NULL) ? seam_strip_comments(fcli_raw) : NULL;
+
+        ok(fcli != NULL, "read Core/Src/FreeRTOS_CLI.c (cwd-independent)");
+        if (fcli != NULL) {
+            char *body = bound_last_block(fcli, "static BaseType_t prvHelpCommand(");
+
+            ok(body != NULL, "prvHelpCommand() is defined");
+            if (body != NULL) {
+                /* strncpy() writes no NUL when the help string is at least
+                 * xWriteBufferLen bytes, and the caller strlen()s the buffer:
+                 * the terminator must follow the copy. */
+                ok(seam_in_order(body,
+                                 (const char *const[]){ "strncpy( pcWriteBuffer",
+                                                        "xWriteBufferLen - 1U ] = '\\0';" },
+                                 2U),
+                   "prvHelpCommand() NUL-terminates the copied help string");
+                ok(strstr(body, "[ xWriteBufferLen - 1U ]") != NULL,
+                   "the terminator is the last byte of the CLI buffer, never past it");
+            }
+            free(body);
+        }
+        free(fcli);
+        free(fcli_raw);
     }
 
     free(code);
