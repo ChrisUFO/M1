@@ -223,6 +223,7 @@ static const char *const guard_macros[] = { "M1_TEST_CMDS", "M1_SUBGHZ_CW_TEST_T
 #define NUM_GUARD_MACROS (sizeof(guard_macros) / sizeof(guard_macros[0]))
 
 static int guard_files_scanned;
+static int guard_files_missing;
 static int guard_dirs_missing;
 static int guard_definitions;
 
@@ -258,7 +259,11 @@ static void guard_scan_file(const char *path) {
     char *code;
     size_t i;
 
-    if (raw == NULL) { printf("       (unreadable: %s)\n", path); return; }
+    if (raw == NULL) {
+        printf("       (unreadable: %s)\n", path);
+        guard_files_missing++;
+        return;
+    }
     code = seam_strip_comments(raw);   /* a commented-out define is not a build */
     free(raw);
     if (code == NULL) return;
@@ -689,6 +694,8 @@ int main(void) {
                    (int)(sizeof(build_files) / sizeof(build_files[0])),
                    (int)NUM_GUARD_MACROS);
             ok(guard_dirs_missing == 0, "every project source tree in the guard scan exists");
+            ok(guard_files_missing == 0,
+               "every file in the guard scan was readable (a skipped file is an unproven one)");
             ok(guard_files_scanned > 0, "the guard scan actually read files");
             ok(guard_definitions == 0,
                "no build file or project source defines M1_TEST_CMDS or M1_SUBGHZ_CW_TEST_TX");
