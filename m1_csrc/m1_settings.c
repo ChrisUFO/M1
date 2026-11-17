@@ -31,6 +31,17 @@
 *     with the event-receive result checked (pdFALSE skips the event,
 *     like m1_vkb_get_filename()) so a stale or uninitialized button
 *     struct is never acted on.
+*  The Date & Time screen (PR-3) reuses the modal idiom with the button
+*  axes the clock-editor layout calls for: LEFT/RIGHT select the field,
+*  UP/DOWN step its value, OK applies the whole edited date/time to the
+*  RTC (validated by the pure domain first, then re-synced by reading
+*  the RTC back -- the idiom's post-setter re-sync with the RTC playing
+*  the role of the store), and BACK exits WITHOUT applying: the
+*  battery-backed RTC is its own persistence, so this screen never
+*  marks a settings session dirty, never calls settings_save(), and
+*  time is deliberately NOT a settings.cfg field (Reset defaults
+*  leaves the clock alone). The current date/time is shown read-only in
+*  the System screen, refreshed on entry.
 *  Value stepping/formatting logic lives in the host-testable
 *  M1_SETTINGS_SCREENS_PURE_CORE region below.
 *
@@ -55,6 +66,7 @@
 #include "m1_sdcard.h"
 #include "m1_file_util.h"
 #include "m1_power_ctl.h"
+#include "m1_rtc.h"
 
 /*************************** D E F I N E S ************************************/
 
@@ -88,9 +100,13 @@ static void settings_lcd_gui_update(uint8_t sel_row, uint8_t bright, uint16_t ti
 static void settings_exit_save(uint8_t session_dirty);
 void settings_str_clip(char *dst, size_t dst_size, const char *src);
 void settings_system(void);
-static void settings_system_gui_update(uint8_t sel_row, const char *dev_name, uint8_t storage_ok, uint64_t free_b, uint32_t total_kb);
+static void settings_system_gui_update(uint8_t sel_row, const char *dev_name, uint8_t time_ok, const char *time_str, uint8_t storage_ok, uint64_t free_b, uint32_t total_kb);
 static uint8_t settings_system_edit_name(char *name_buf, size_t buf_size);
 static void settings_system_reset_confirm(void);
+void settings_date_time(void);
+static void settings_dt_gui_update(uint8_t sel_field, const S_M1_DateTime_t *dt);
+static uint8_t settings_dt_draw_seg(uint8_t x, uint8_t y, uint8_t seg_top_off, uint8_t seg_h, const char *txt, uint8_t selected);
+static void settings_dt_notice(const uint8_t *icon_10x10, const char *msg, uint16_t show_ms);
 
 /* ================= M1_SETTINGS_SCREENS_PURE_CORE BEGIN ================= */
 /* Value stepping and label formatting for the settings screens. Plain
@@ -588,32 +604,45 @@ void settings_lcd_notifications(void)
 
 /*============================================================================*/
 /**
-  * @brief System settings screen (issue #7, non-RTC part).
+  * @brief System settings screen (issue #7, non-RTC part + PR-3 time row).
   *
-  * Rows: device Name (OK opens the virtual keyboard; persisted with the
-  * settings store, 32-char store bound -- the keyboard itself caps entry
-  * at its own 20-char buffer), SD storage totals (informational), and
-  * Reset defaults (OK opens a confirmation; executing it restores the
+  * Rows: current date/time (read-only, from the RTC on entry -- the
+  * RTC is the timebase, no settings-store copy exists), device Name
+  * (OK opens the virtual keyboard; persisted with the settings store,
+  * 32-char store bound -- the keyboard itself caps entry at its own
+  * 20-char buffer), SD storage totals (informational), and Reset
+  * defaults (OK opens a confirmation; executing it restores the
   * compiled defaults, persists them over the stored file, and reboots
-  * through the standard power_reboot() path). The flash metadata sector
-  * is never touched -- user settings live only on the SD card.
+  * through the standard power_reboot() path). The flash metadata
+  * sector is never touched -- user settings live only on the SD card,
+  * and the clock lives only in the RTC.
   */
 /*============================================================================*/
-#define SETTING_SYS_NAME_ROW_Y			23
-#define SETTING_SYS_STORAGE_ROW_Y		35
-#define SETTING_SYS_RESET_ROW_Y			47
+#define SETTING_SYS_TIME_ROW_Y			18
+#define SETTING_SYS_NAME_ROW_Y			28
+#define SETTING_SYS_STORAGE_ROW_Y		38
+#define SETTING_SYS_RESET_ROW_Y			48
 
 void settings_system(void)
 {
 	S_M1_Buttons_Status this_button_status;
 	S_M1_Main_Q_t q_item;
 	BaseType_t ret;
-	uint8_t sel_row, storage_ok, session_dirty;
+	uint8_t sel_row, storage_ok, session_dirty, time_ok;
 	uint64_t free_b;
 	uint32_t total_kb;
 	char name_buf[33]; // store bound (32) + NUL
+	char time_str[M1_RTC_DATETIME_STR_LEN];
+	S_M1_DateTime_t rtc_now;
 
 	settings_str_clip(name_buf, sizeof(name_buf), settings_get()->device_name);
+
+	/* Time snapshot, taken once on entry (informational like the storage
+	 * row; the Date & Time leaf is where the clock is edited). */
+	time_str[0] = '\0';
+	time_ok = (uint8_t)m1_rtc_get_datetime(&rtc_now);
+	if ( time_ok )
+		m1_rtc_format_datetime(&rtc_now, time_str, sizeof(time_str));
 
 	/* Storage snapshot, taken once on entry (same sources as the
 	 * Settings > Storage > About SD Card screen: free bytes via
@@ -634,7 +663,7 @@ void settings_system(void)
 
 	sel_row = 0; // Only the Name and Reset rows are actionable
 	session_dirty = 0u; // Set when the name edit changes it; BACK saves only when set
-	settings_system_gui_update(sel_row, name_buf, storage_ok, free_b, total_kb);
+	settings_system_gui_update(sel_row, name_buf, time_ok, time_str, storage_ok, free_b, total_kb);
 
 	while (1 ) // Main loop of this task
 	{
@@ -663,20 +692,20 @@ void settings_system(void)
 					this_button_status.event[BUTTON_DOWN_KP_ID]==BUTTON_EVENT_CLICK ) // Switch row?
 				{
 					sel_row = (sel_row==0) ? 1 : 0; // Two actionable rows
-					settings_system_gui_update(sel_row, name_buf, storage_ok, free_b, total_kb);
+					settings_system_gui_update(sel_row, name_buf, time_ok, time_str, storage_ok, free_b, total_kb);
 				} // else if ( UP/DOWN == BUTTON_EVENT_CLICK )
 				else if ( this_button_status.event[BUTTON_OK_KP_ID]==BUTTON_EVENT_CLICK ) // Row action?
 				{
 					if ( sel_row==0 ) // Name: open the virtual keyboard
 					{
 						session_dirty |= settings_system_edit_name(name_buf, sizeof(name_buf));
-						settings_system_gui_update(sel_row, name_buf, storage_ok, free_b, total_kb);
+						settings_system_gui_update(sel_row, name_buf, time_ok, time_str, storage_ok, free_b, total_kb);
 					} // if ( sel_row==0 )
 					else // Reset: ask for confirmation
 					{
 						settings_system_reset_confirm();
 						/* Cancel returns here; the confirmed path reboots the device. */
-						settings_system_gui_update(sel_row, name_buf, storage_ok, free_b, total_kb);
+						settings_system_gui_update(sel_row, name_buf, time_ok, time_str, storage_ok, free_b, total_kb);
 					} // else
 				} // else if ( this_button_status.event[BUTTON_OK_KP_ID]==BUTTON_EVENT_CLICK )
 			} // if ( q_item.q_evt_type==Q_EVENT_KEYPAD )
@@ -696,7 +725,7 @@ void settings_system(void)
   * @brief Draw the System screen.
   */
 /*============================================================================*/
-static void settings_system_gui_update(uint8_t sel_row, const char *dev_name, uint8_t storage_ok, uint64_t free_b, uint32_t total_kb)
+static void settings_system_gui_update(uint8_t sel_row, const char *dev_name, uint8_t time_ok, const char *time_str, uint8_t storage_ok, uint64_t free_b, uint32_t total_kb)
 {
 	char info_str[48];
 	uint8_t row_y;
@@ -707,6 +736,13 @@ static void settings_system_gui_update(uint8_t sel_row, const char *dev_name, ui
 	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
 	u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_B);
 	u8g2_DrawStr(&m1_u8g2, 0, 9, "System");
+
+	/* Date/time row (informational, never selected): RTC read on entry;
+	 * "Time not set" after a backup-domain loss until the clock is set. */
+	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+	u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_N);
+	label = time_ok ? time_str : "Time not set";
+	u8g2_DrawStr(&m1_u8g2, (M1_LCD_DISPLAY_WIDTH - u8g2_GetStrWidth(&m1_u8g2, label))/2, SETTING_SYS_TIME_ROW_Y, label);
 
 	/* Row 0: device name (actionable) */
 	row_y = SETTING_SYS_NAME_ROW_Y;
@@ -896,3 +932,229 @@ static void settings_system_reset_confirm(void)
 	} // while (1 ) // Main loop of this task
 
 } // static void settings_system_reset_confirm(void)
+
+
+
+/*============================================================================*/
+/**
+  * @brief Date & Time editor screen (issue #7 completion, PR-3).
+  *
+  * Two-line clock editor: "YYYY-MM-DD" and "HH:MM" in the large font,
+  * the selected field marked by an inverted segment. Buttons follow the
+  * clock-editor axes (documented deviation from the LCD screen's
+  * UP/DOWN-row axes, per the approved plan): LEFT/RIGHT select the
+  * field (wrapping), UP/DOWN step the selected value through the pure
+  * domain (wrapping month/day/hour/minute, clamped year, day kept
+  * possible across month/year steps), OK applies the whole edited
+  * date/time to the RTC -- m1_rtc_set_datetime() validates first, and
+  * success re-syncs the edit copy from a read-back (displayed ==
+  * effective), the idiom's post-setter re-sync with the RTC as the
+  * store -- and BACK exits WITHOUT applying. No session-dirty state
+  * and no settings_save() call exist here on purpose: the RTC is its
+  * own battery-backed persistence and time is not a settings.cfg
+  * field, so the SD card is never touched by this screen.
+  */
+/*============================================================================*/
+#define SETTING_DT_DATE_Y				28 // Baseline of the "YYYY-MM-DD" line
+#define SETTING_DT_TIME_Y				46 // Baseline of the "HH:MM" line
+
+void settings_date_time(void)
+{
+	S_M1_Buttons_Status this_button_status;
+	S_M1_Main_Q_t q_item;
+	BaseType_t ret;
+	S_M1_DateTime_t edit;
+	uint8_t sel_field;
+
+	/* Seed from the RTC; a not-set clock (backup-domain loss) starts at
+	 * the window base so the first visit edits a full, valid date. */
+	if ( !m1_rtc_get_datetime(&edit) )
+	{
+		edit.year = (uint16_t)M1_RTC_YEAR_MIN;
+		edit.month = 1u;
+		edit.day = 1u;
+		edit.hour = 0u;
+		edit.minute = 0u;
+	} // if ( !m1_rtc_get_datetime(&edit) )
+
+	sel_field = 0u;
+	settings_dt_gui_update(sel_field, &edit);
+
+	while (1 ) // Main loop of this task
+	{
+		;
+		; // Do other parts of this task here
+		;
+
+		ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
+		if (ret==pdTRUE)
+		{
+			if ( q_item.q_evt_type==Q_EVENT_KEYPAD )
+			{
+				// Notification is only sent to this task when there's any button activity,
+				// so it doesn't need to wait when reading the event from the queue
+				ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+				if ( ret!=pdTRUE )
+				{
+					continue; // No event behind the notification: never act on a stale struct
+				} // if ( ret!=pdTRUE )
+				if ( this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK ) // Exit without applying?
+				{
+					xQueueReset(main_q_hdl); // Reset main q before return (nothing to save)
+					break; // Exit and return to the calling task (subfunc_handler_task)
+				} // if ( this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK )
+				else if ( this_button_status.event[BUTTON_LEFT_KP_ID]==BUTTON_EVENT_CLICK ) // Previous field?
+				{
+					sel_field = (uint8_t)((sel_field + M1_RTC_FIELD_COUNT - 1u) % M1_RTC_FIELD_COUNT);
+					settings_dt_gui_update(sel_field, &edit);
+				} // else if ( this_button_status.event[BUTTON_LEFT_KP_ID]==BUTTON_EVENT_CLICK )
+				else if ( this_button_status.event[BUTTON_RIGHT_KP_ID]==BUTTON_EVENT_CLICK ) // Next field?
+				{
+					sel_field = (uint8_t)((sel_field + 1u) % M1_RTC_FIELD_COUNT);
+					settings_dt_gui_update(sel_field, &edit);
+				} // else if ( this_button_status.event[BUTTON_RIGHT_KP_ID]==BUTTON_EVENT_CLICK )
+				else if ( this_button_status.event[BUTTON_UP_KP_ID]==BUTTON_EVENT_CLICK ||
+					this_button_status.event[BUTTON_DOWN_KP_ID]==BUTTON_EVENT_CLICK ) // Step the field value?
+				{
+					m1_rtc_datetime_step(&edit, (E_M1_RtcField_t)sel_field,
+						(this_button_status.event[BUTTON_UP_KP_ID]==BUTTON_EVENT_CLICK) ? 1 : -1);
+					settings_dt_gui_update(sel_field, &edit);
+				} // else if ( UP/DOWN == BUTTON_EVENT_CLICK )
+				else if ( this_button_status.event[BUTTON_OK_KP_ID]==BUTTON_EVENT_CLICK ) // Apply to the RTC?
+				{
+					if ( m1_rtc_set_datetime(&edit) ) // Validates before any register is touched
+					{
+						(void)m1_rtc_get_datetime(&edit); // Post-setter re-sync from the timebase
+						settings_dt_gui_update(sel_field, &edit);
+						settings_dt_notice(check_10x10, "Set", 700u);
+					} // if ( m1_rtc_set_datetime(&edit) )
+					else
+					{
+						settings_dt_notice(error_10x10, "Set failed", 1500u);
+					} // else
+					settings_dt_gui_update(sel_field, &edit);
+				} // else if ( this_button_status.event[BUTTON_OK_KP_ID]==BUTTON_EVENT_CLICK )
+			} // if ( q_item.q_evt_type==Q_EVENT_KEYPAD )
+			else
+			{
+				; // Do other things for this task
+			}
+		} // if (ret==pdTRUE)
+	} // while (1 ) // Main loop of this task
+
+} // void settings_date_time(void)
+
+
+
+/*============================================================================*/
+/**
+  * @brief Draw one field segment of the Date & Time editor (see
+  *        settings_dt_gui_update); returns the advance to the next
+  *        segment so a proportional font cannot desync the layout.
+  */
+/*============================================================================*/
+static uint8_t settings_dt_draw_seg(uint8_t x, uint8_t y, uint8_t seg_top_off, uint8_t seg_h, const char *txt, uint8_t selected)
+{
+	uint8_t w = u8g2_GetStrWidth(&m1_u8g2, txt);
+
+	if ( selected )
+	{
+		// Inverted segment bar over the selected field, like the row bars
+		u8g2_DrawBox(&m1_u8g2, x, (uint8_t)(y - seg_top_off), (uint8_t)(w + 2u), seg_h);
+		u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
+	} // if ( selected )
+	else
+	{
+		u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+	} // else
+	u8g2_DrawStr(&m1_u8g2, (uint8_t)(x + 1u), y, txt);
+	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+	return (uint8_t)(w + 2u);
+} // static uint8_t settings_dt_draw_seg(...)
+
+
+
+/*============================================================================*/
+/**
+  * @brief Draw the Date & Time editor (see settings_date_time).
+  */
+/*============================================================================*/
+static void settings_dt_gui_update(uint8_t sel_field, const S_M1_DateTime_t *dt)
+{
+	char seg[16]; // Wide enough that GCC can prove no %u truncation
+	char line[24];
+	uint8_t x, seg_top_off, seg_h, w;
+	int16_t asc, desc;
+
+	/* Graphic work starts here */
+	u8g2_FirstPage(&m1_u8g2);
+	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+	u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_B);
+	u8g2_DrawStr(&m1_u8g2, 0, 9, "Date & Time");
+
+	/* Large font for both value lines (profont17: mono digits, already
+	 * linked for the Sub-GHz frequency display). The segment bar is
+	 * derived from the font's real ascent/descent, no magic numbers. */
+	u8g2_SetFont(&m1_u8g2, M1_DISP_LARGE_FONT_1B);
+	asc = u8g2_GetAscent(&m1_u8g2);
+	desc = u8g2_GetDescent(&m1_u8g2); // <= 0
+	seg_top_off = (uint8_t)(asc + 1);
+	seg_h = (uint8_t)(asc - desc + 2);
+
+	/* Date line "YYYY-MM-DD": centered as a whole, drawn per field so
+	 * the selected field can carry the inverted segment bar. */
+	snprintf(line, sizeof(line), "%04u-%02u-%02u",
+		(unsigned)dt->year, (unsigned)dt->month, (unsigned)dt->day);
+	x = (uint8_t)((M1_LCD_DISPLAY_WIDTH - u8g2_GetStrWidth(&m1_u8g2, line)) / 2u);
+	snprintf(seg, sizeof(seg), "%04u", (unsigned)dt->year);
+	x = (uint8_t)(x + settings_dt_draw_seg(x, SETTING_DT_DATE_Y, seg_top_off, seg_h, seg, (uint8_t)(sel_field==M1_RTC_FIELD_YEAR)));
+	x = (uint8_t)(x + settings_dt_draw_seg(x, SETTING_DT_DATE_Y, seg_top_off, seg_h, "-", 0u));
+	snprintf(seg, sizeof(seg), "%02u", (unsigned)dt->month);
+	x = (uint8_t)(x + settings_dt_draw_seg(x, SETTING_DT_DATE_Y, seg_top_off, seg_h, seg, (uint8_t)(sel_field==M1_RTC_FIELD_MONTH)));
+	x = (uint8_t)(x + settings_dt_draw_seg(x, SETTING_DT_DATE_Y, seg_top_off, seg_h, "-", 0u));
+	snprintf(seg, sizeof(seg), "%02u", (unsigned)dt->day);
+	(void)settings_dt_draw_seg(x, SETTING_DT_DATE_Y, seg_top_off, seg_h, seg, (uint8_t)(sel_field==M1_RTC_FIELD_DAY));
+
+	/* Time line "HH:MM": centered as a whole, drawn per field. */
+	snprintf(line, sizeof(line), "%02u:%02u", (unsigned)dt->hour, (unsigned)dt->minute);
+	x = (uint8_t)((M1_LCD_DISPLAY_WIDTH - u8g2_GetStrWidth(&m1_u8g2, line)) / 2u);
+	snprintf(seg, sizeof(seg), "%02u", (unsigned)dt->hour);
+	x = (uint8_t)(x + settings_dt_draw_seg(x, SETTING_DT_TIME_Y, seg_top_off, seg_h, seg, (uint8_t)(sel_field==M1_RTC_FIELD_HOUR)));
+	x = (uint8_t)(x + settings_dt_draw_seg(x, SETTING_DT_TIME_Y, seg_top_off, seg_h, ":", 0u));
+	snprintf(seg, sizeof(seg), "%02u", (unsigned)dt->minute);
+	(void)settings_dt_draw_seg(x, SETTING_DT_TIME_Y, seg_top_off, seg_h, seg, (uint8_t)(sel_field==M1_RTC_FIELD_MINUTE));
+
+	// Inverted hint bar: LEFT/RIGHT select the field, UP/DOWN step (+/-), OK sets
+	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+	u8g2_DrawBox(&m1_u8g2, 0, 52, M1_LCD_DISPLAY_WIDTH, 12);
+	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG); // Write text in inverted color
+	u8g2_SetFont(&m1_u8g2, M1_DISP_FUNC_MENU_FONT_N);
+	u8g2_DrawXBMP(&m1_u8g2, 1, 53, 8, 8, arrowleft_8x8); // draw arrowleft icon
+	u8g2_DrawStr(&m1_u8g2, 11, 61, "Field");
+	w = u8g2_GetStrWidth(&m1_u8g2, "+/-");
+	u8g2_DrawStr(&m1_u8g2, (uint8_t)((M1_LCD_DISPLAY_WIDTH - w)/2u), 61, "+/-");
+	w = u8g2_GetStrWidth(&m1_u8g2, "Set OK");
+	u8g2_DrawStr(&m1_u8g2, (uint8_t)(117u - w), 61, "Set OK");
+	u8g2_DrawXBMP(&m1_u8g2, 119, 53, 8, 8, arrowright_8x8); // draw arrowright icon
+	m1_u8g2_nextpage(); // Update display RAM
+} // static void settings_dt_gui_update(...)
+
+
+
+/*============================================================================*/
+/**
+  * @brief Brief full-frame result notice for the Date & Time apply path
+  *        (check icon on success, error icon on refusal). A refused Set
+  *        is shown, never silently swallowed.
+  */
+/*============================================================================*/
+static void settings_dt_notice(const uint8_t *icon_10x10, const char *msg, uint16_t show_ms)
+{
+	u8g2_FirstPage(&m1_u8g2);
+	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+	u8g2_DrawXBMP(&m1_u8g2, 20, 27, 10, 10, icon_10x10);
+	u8g2_SetFont(&m1_u8g2, M1_DISP_FUNC_MENU_FONT_N);
+	u8g2_DrawStr(&m1_u8g2, 34, 36, msg);
+	m1_u8g2_nextpage(); // Update display RAM
+	vTaskDelay(pdMS_TO_TICKS(show_ms));
+} // static void settings_dt_notice(...)

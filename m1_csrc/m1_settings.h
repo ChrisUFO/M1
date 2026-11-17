@@ -21,5 +21,6 @@ void settings_power(void);
 void settings_about(void);
 void settings_lcd_notifications(void);
 void settings_system(void);
+void settings_date_time(void);
 
 #endif /* M1_SETTINGS_H_ */

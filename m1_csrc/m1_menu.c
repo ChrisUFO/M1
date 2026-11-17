@@ -367,7 +367,9 @@ S_M1_Menu_t menu_Settings_About =
 
 /* Leaf screens over the durable settings store (PR-2): modal editors
  * following the settings_about() button idiom; BACK persists via one
- * atomic settings_save(). */
+ * atomic settings_save(). The Date & Time leaf (PR-3) follows the same
+ * modal idiom but persists to the battery-backed RTC on OK instead --
+ * time is not a settings.cfg field, so its BACK never saves. */
 S_M1_Menu_t menu_Settings_LCD_Notifications =
 {
     "LCD & Notifications", settings_lcd_notifications, NULL, NULL, 0, 0, NULL, NULL, {NULL}
@@ -378,10 +380,15 @@ S_M1_Menu_t menu_Settings_System =
     "System", settings_system, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
+S_M1_Menu_t menu_Settings_Date_Time =
+{
+    "Date & Time", settings_date_time, NULL, NULL, 0, 0, NULL, NULL, {NULL}
+};
+
 S_M1_Menu_t menu_Settings =
 {
-    "Settings", menu_settings_init, NULL, NULL, 7, 0, menu_m1_icon_setting, NULL,
-    {&menu_Settings_LCD_Notifications, &menu_Settings_System, &menu_Settings_Storage, &menu_Settings_Power, &menu_Setting_Firmware_Update, &menu_Setting_ESP32, &menu_Settings_About}
+    "Settings", menu_settings_init, NULL, NULL, 8, 0, menu_m1_icon_setting, NULL,
+    {&menu_Settings_LCD_Notifications, &menu_Settings_System, &menu_Settings_Date_Time, &menu_Settings_Storage, &menu_Settings_Power, &menu_Setting_Firmware_Update, &menu_Setting_ESP32, &menu_Settings_About}
 };
 
 /*--------------------------------- > Wifi -----------------------------------*/
