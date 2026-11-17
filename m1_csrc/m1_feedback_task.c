@@ -57,7 +57,15 @@ void m1_feedback_task_init(void)
 	fb_manager_init(m1_feedback_hw_adapter_get());
 	/* Register the awake baseline before any task can release a temporary
 	 * backlight owner. The saver starts awake and only requests a hold on
-	 * its first sleep/wake transition, leaving boot otherwise unowned. */
+	 * its first sleep/wake transition, leaving boot otherwise unowned.
+	 * This seeding must also stay synchronous here, before the feedback
+	 * task's first tick: it is what leaves the BL output tracking user
+	 * brightness (last_applied == FB_VALUE_USER_BRIGHTNESS), so the
+	 * persisted brightness applied via fb_set_brightness_pct() in
+	 * m1_system_init_task() (after m1_tasks_init()) re-marks the output
+	 * dirty and reaches the hardware at once instead of waiting for the
+	 * next backlight transition. Moving or dropping this call silently
+	 * breaks that boot-time settings apply. */
 	fb_sleep_timer_wake();
 
 	ret = xTaskCreate(feedback_task, "m1_feedback_task_n", FEEDBACK_TASK_STACK_SIZE,

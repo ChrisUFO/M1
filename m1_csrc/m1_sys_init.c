@@ -185,8 +185,9 @@ void m1_system_init_task(void *param)
 
 			/* Load durable user settings once the filesystem is up and before
 			 * any consumer task starts (m1_tasks_init below creates the UI
-			 * task, the store's only writer). Missing file, corruption, or an
-			 * absent SD card all leave the compiled defaults active. */
+			 * task, the store's only writer). Missing file, corruption with
+			 * no recoverable .bak, or an absent SD card all leave the
+			 * compiled defaults active. */
 			(void)settings_init();
 
 			//m1_esp32_init();

@@ -70,11 +70,16 @@ typedef struct
 } S_M1_Settings_t;
 
 /** Load settings from SD (tolerantly) into RAM. Idempotent: exactly one
- *  load attempt per boot, no retries. Missing file, corrupt/truncated
- *  file, or an absent/failed SD card all leave the compiled defaults in
- *  effect (logged once each). Returns true iff a persisted file was found
- *  and CRC-validated (individual out-of-range values may still have been
- *  clamped); false when defaults are in effect. Never blocks or hangs. */
+ *  load attempt per boot, no retries. A missing file, an absent/failed
+ *  SD card, or a corrupt/truncated/unsupported-version file whose .bak
+ *  fallback is absent or equally unreadable leaves the compiled
+ *  defaults in effect (logged once each). When settings.cfg is
+ *  unreadable but settings.bak passes the same checks, the .bak content
+ *  is adopted (logged once, both files left in place). Returns true
+ *  iff a persisted file was found and CRC-validated -- directly or via
+ *  the .bak fallback (individual out-of-range values may still have
+ *  been clamped); false when defaults are in effect. Never blocks or
+ *  hangs. */
 bool settings_init(void);
 
 /** Read-only view of the current settings (see ownership contract above). */
@@ -85,7 +90,9 @@ const S_M1_Settings_t *settings_get(void);
  *  out-of-range number. String setters bound length only; string content
  *  is stored verbatim -- if a control character ever reaches a string
  *  field, settings_save() refuses and warns rather than emit a
- *  corruptible line format. Setters update RAM only; persistence is
+ *  corruptible line format. The file parser cannot introduce one: a
+ *  loaded value containing a control byte resets that field to its
+ *  default. Setters update RAM only; persistence is
  *  settings_save(). */
 void settings_set_brightness_pct(uint8_t pct);
 void settings_set_screen_timeout_s(uint16_t seconds);
@@ -112,11 +119,17 @@ void settings_set_bt_interval_ms(uint16_t interval_ms);
  *  settings.cfg survives.
  *
  *  Refused (false, one warning) when settings_init() could not account
- *  for the card: absent/failed SD, or a corrupt/unsupported-version
- *  settings file. The RAM image is then compiled defaults, and writing
- *  it could clobber a live settings.cfg after a late card insertion
- *  (the store loads exactly once per boot); a reboot with the card
- *  readable re-enables saving. Clearing the SD copy is the caller's
+ *  for the card's content: absent/failed SD, or a settings.cfg that is
+ *  corrupt/truncated/unsupported-version with no validating .bak
+ *  fallback. The RAM image is then compiled defaults, and writing it
+ *  could clobber a live settings.cfg after a late card insertion (the
+ *  store loads exactly once per boot). A reboot with the card readable
+ *  re-enables saving whenever that load then accounts for the card: a
+ *  valid file, a corrupt file recovered from its .bak, or a provably
+ *  file-less card. When settings.cfg AND settings.bak are both
+ *  unreadable, rebooting re-reads the same corrupt pair -- the
+ *  unreadable file must be removed or replaced (e.g. over USB MSC)
+ *  before saving works again. Clearing the SD copy is the caller's
  *  factory-reset policy (see settings_reset_defaults()).
  *
  *  The serialization work buffer is file-scope; the calling task still

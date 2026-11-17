@@ -149,7 +149,8 @@ typedef enum
 {
     SETTINGS_LOAD_OK = 0,    /* file found, CRC valid, values applied (possibly clamped) */
     SETTINGS_LOAD_MISSING,   /* no file -> defaults */
-    SETTINGS_LOAD_CORRUPT,   /* CRC/truncation/unsupported version -> defaults, .bak kept */
+    SETTINGS_LOAD_CORRUPT,   /* CRC/truncation/unsupported version, no validating .bak -> defaults, files kept */
+    SETTINGS_LOAD_RECOVERED, /* settings.cfg unreadable, but a validating .bak was adopted */
     SETTINGS_LOAD_SD_ERROR,  /* filesystem error (incl. absent card) -> defaults */
 } settings_load_status_t;
 
@@ -159,12 +160,15 @@ static S_M1_Settings_t g_m1_settings = SETTINGS_DEFAULTS_INIT;
 static bool g_settings_ready     = false;
 static bool g_settings_loaded_ok = false;
 /* True only when the boot load accounted for the card's content: a file
- * was read (SETTINGS_LOAD_OK) or the card provably held no settings file
- * (SETTINGS_LOAD_MISSING). Left false for SD errors and unreadable
- * files so settings_save() can refuse before a compiled-defaults RAM
- * image overwrites a live settings.cfg this boot never read (the
- * late-inserted-card guard: one load attempt per boot, so a card that
- * appears after init is invisible to the store until the next boot). */
+ * was read and validated (SETTINGS_LOAD_OK, or SETTINGS_LOAD_RECOVERED
+ * when an unreadable settings.cfg fell back to a validating .bak -- the
+ * RAM image then mirrors the card), or the card provably held no
+ * settings file (SETTINGS_LOAD_MISSING). Left false for SD errors and
+ * fully unreadable content so settings_save() can refuse before a
+ * compiled-defaults RAM image overwrites a live settings.cfg this boot
+ * never read (the late-inserted-card guard: one load attempt per boot,
+ * so a card that appears after init is invisible to the store until the
+ * next boot). */
 static bool g_settings_save_permitted = false;
 
 /* ====================== SETTINGS_PURE_CORE_END ====================== */
@@ -336,7 +340,25 @@ static void settings_apply_kv(const char *line, size_t line_len)
 
 	if (fd->type == SETTINGS_T_STR)
 	{
-		settings_store_string(fd, eq + 1, line_len - k - 1U);
+		size_t vlen = line_len - k - 1U;
+		size_t i;
+
+		/* The serializer refuses control characters (they would corrupt
+		 * the line format), so a value imported here with one would
+		 * poison every later save. A CRC-valid file can still carry one
+		 * (hand edit, foreign writer); the loader applies the same
+		 * policy at the door: any control byte in a string value resets
+		 * that field to its default. */
+		for (i = 0; i < vlen; i++)
+		{
+			unsigned char ch = (unsigned char)eq[1U + i];
+			if ((ch < 0x20U) || (ch == 0x7FU))
+			{
+				settings_store_field_default(fd);
+				return;
+			}
+		}
+		settings_store_string(fd, eq + 1, vlen);
 	}
 	else
 	{
@@ -524,18 +546,18 @@ static void settings_recover_replace(void)
 	}
 }
 
-/* Load settings.cfg into the live struct. Never writes, never retries.
- * Every non-OK return leaves the compiled defaults in the live struct. */
-static settings_load_status_t settings_load_file(void)
+/* Read one candidate settings file through the bounded read + CRC
+ * gate + parse and apply it to the live struct. Shared by the
+ * settings.cfg path and the corrupt-file .bak fallback below; returns
+ * the outcome for that path. Every non-OK return leaves the compiled
+ * defaults in the live struct. */
+static settings_load_status_t settings_read_and_validate(const TCHAR *path)
 {
 	FIL f;
 	FRESULT fr;
 	UINT br = 0;
 
-	settings_reset_defaults(); /* guaranteed defaults unless a valid file overlays them */
-	settings_recover_replace();
-
-	fr = f_open(&f, SETTINGS_PATH, FA_READ);
+	fr = f_open(&f, path, FA_READ);
 	if (fr != FR_OK)
 	{
 		if ((fr == FR_NO_FILE) || (fr == FR_NO_PATH)) { return SETTINGS_LOAD_MISSING; }
@@ -555,6 +577,31 @@ static settings_load_status_t settings_load_file(void)
 	if (!settings_buffer_crc_valid(s_settings_work, (size_t)br)) { return SETTINGS_LOAD_CORRUPT; }
 	if (!settings_parse_buffer(s_settings_work, (size_t)br)) { return SETTINGS_LOAD_CORRUPT; } /* unsupported version */
 	return SETTINGS_LOAD_OK;
+}
+
+/* Load settings.cfg into the live struct. Never writes, never retries.
+ * A settings.cfg that exists but is unreadable as ours (CRC mismatch,
+ * truncation, unsupported version, oversize) falls back to settings.bak:
+ * when the backup passes the same content gates it is adopted
+ * (SETTINGS_LOAD_RECOVERED) -- exactly the scenario the retained backup
+ * exists for -- and the boot again accounted for the card's content, so
+ * saving stays permitted and the next save heals settings.cfg. The
+ * fallback is strictly content-gated: a missing or failing .bak leaves
+ * the CORRUPT outcome with both files untouched on disk. */
+static settings_load_status_t settings_load_file(void)
+{
+	settings_load_status_t st;
+
+	settings_reset_defaults(); /* guaranteed defaults unless a valid file overlays them */
+	settings_recover_replace();
+
+	st = settings_read_and_validate(SETTINGS_PATH);
+	if ((st == SETTINGS_LOAD_CORRUPT)
+	    && (settings_read_and_validate(SETTINGS_BAK_PATH) == SETTINGS_LOAD_OK))
+	{
+		return SETTINGS_LOAD_RECOVERED;
+	}
+	return st;
 }
 
 /* Recoverable atomic promotion (same proven pattern as the Wi-Fi saved-
@@ -648,6 +695,11 @@ bool settings_init(void)
 		g_settings_save_permitted = true; /* card holds no file to clobber */
 		M1_LOG_I(M1_LOGDB_TAG, "No settings file, defaults in effect\r\n");
 		break;
+	case SETTINGS_LOAD_RECOVERED:
+		g_settings_loaded_ok = true;
+		g_settings_save_permitted = true; /* RAM image mirrors the card's .bak content */
+		M1_LOG_W(M1_LOGDB_TAG, "Settings corrupt, restored from .bak\r\n");
+		break;
 	case SETTINGS_LOAD_CORRUPT:
 		M1_LOG_W(M1_LOGDB_TAG, "Settings corrupt, defaults in effect (.bak kept)\r\n");
 		break;
@@ -740,13 +792,15 @@ bool settings_save(void)
 
 	/* Late-inserted-card guard: the boot load either read a file or
 	 * proved the card holds none (g_settings_save_permitted). Anything
-	 * else -- absent/failed SD, corrupt or unsupported-version file --
-	 * left compiled defaults in RAM; saving that image could overwrite a
-	 * live settings.cfg this boot never read (e.g. the card was inserted
-	 * after init). Refuse until a reboot loads with the card readable. */
+	 * else -- absent/failed SD, or a corrupt/unsupported-version file
+	 * with no validating .bak fallback -- left compiled defaults in RAM;
+	 * saving that image could overwrite a live settings.cfg this boot
+	 * never read (e.g. the card was inserted after init). Remedy depends
+	 * on the cause: reboot with the card readable, or (both files
+	 * unreadable) replace the settings file -- see the header contract. */
 	if (!g_settings_save_permitted)
 	{
-		M1_LOG_W(M1_LOGDB_TAG, "Save refused: settings not read at boot, reboot with SD\r\n");
+		M1_LOG_W(M1_LOGDB_TAG, "Save refused: settings unreadable at boot (reboot with SD or replace file)\r\n");
 		return false;
 	}
 

@@ -130,10 +130,16 @@ Semantics:
 
 - *Load* (once per boot, after SD init and before task creation): missing
   file → compiled defaults; CRC mismatch, truncation, unsupported version,
-  or a file larger than the loader's 1 KiB bound → compiled defaults, one
-  log line, and the retained `.bak` is left in place; unknown keys are
-  skipped; out-of-range values clamp to field bounds; malformed numerals
-  reset that field to its default. An interrupted save is reconciled at
+  or a file larger than the loader's 1 KiB bound makes `settings.cfg`
+  unreadable → the same bounded read + CRC + parse runs on `settings.bak`:
+  a validating backup is adopted (values loaded, saving re-enabled, one
+  log line, both files left in place — the next save heals
+  `settings.cfg` and rotates the corrupt copy to `.bak`), otherwise
+  compiled defaults, one log line, and the retained `.bak` is left in
+  place; unknown keys are skipped; out-of-range values clamp to field
+  bounds; malformed numerals or string values containing control
+  characters reset that field to its default. An interrupted save is
+  reconciled at
   load: an orphaned `settings.tmp` is promoted only when `settings.cfg`
   is missing (the CRC gate then has the final word on it); when
   `settings.cfg` exists, the orphaned `.tmp` is discarded, and the `.bak`
@@ -147,10 +153,16 @@ Semantics:
   (FatFs `f_rename` cannot overwrite an existing destination), so a
   failed rotation destroys the older backup while `settings.cfg`
   survives. Saving is refused while the boot load could not account for
-  the card (SD error, or a corrupt/unsupported-version file): the RAM
-  image is then compiled defaults, and writing it could clobber a live
-  `settings.cfg` after a late card insertion -- the store loads exactly
-  once per boot, so a reboot with the card readable re-enables saving.
+  the card's content (SD error, or `settings.cfg` and `.bak` both
+  unreadable): the RAM image is then compiled defaults, and writing it
+  could clobber a live `settings.cfg` after a late card insertion --
+  the store loads exactly
+  once per boot. A reboot with the card readable re-enables saving
+  whenever that load then accounts for the card (valid file, corrupt
+  file recovered from `.bak`, or a provably file-less card); when both
+  files stay unreadable, rebooting re-reads the same corrupt pair, so
+  the unreadable file must be removed or replaced before saving works
+  again.
 - *Ownership*: the UI task is the single writer (setters, save, reset);
   any task may read via `settings_get()`. Boot-time consumers run after
   `settings_init()` in `m1_system_init_task()`. SD-absent is safe: defaults,

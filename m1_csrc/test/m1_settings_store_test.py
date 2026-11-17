@@ -40,8 +40,28 @@ PURE_FUNCTIONS = [
     "settings_reset_defaults",
 ]
 
+# The typed setters and settings_get are defined outside the pure-core
+# markers (public API section) but are HAL/FatFs-free like the core, so
+# the pure-core harness extracts and exercises the REAL write path.
+SETTER_FUNCTIONS = [
+    "settings_get",
+    "settings_set_brightness_pct",
+    "settings_set_screen_timeout_s",
+    "settings_set_led_notifications",
+    "settings_set_device_name",
+    "settings_set_subghz_mod",
+    "settings_set_subghz_bw_khz",
+    "settings_set_subghz_dev_khz",
+    "settings_set_subghz_power_dbm",
+    "settings_set_subghz_freq_hz",
+    "settings_set_bt_adv_name",
+    "settings_set_bt_preset",
+    "settings_set_bt_interval_ms",
+]
+
 FILE_FUNCTIONS = [
     "settings_recover_replace",
+    "settings_read_and_validate",
     "settings_load_file",
     "settings_write_file",
     "settings_init",
@@ -177,7 +197,7 @@ def pure_core_tests(tmp):
     )
 
     core = region(mod, PURE_BEGIN, PURE_END) + "\n" + CHECK_MACROS
-    for fn in PURE_FUNCTIONS:
+    for fn in PURE_FUNCTIONS + SETTER_FUNCTIONS:
         core += "\n" + function(mod, fn)
     core += r"""
 static int settings_equal(const S_M1_Settings_t *a, const S_M1_Settings_t *b)
@@ -407,6 +427,21 @@ int main(void)
         len = build_file(buf, sizeof(buf), "#ver=1\r\ndevice_name=0123456789012345678901234567890123456789\r\n");
         CHECK(settings_parse_buffer(buf, len), "long name parses");
         CHECK(strlen(g_m1_settings.device_name) == 32, "overlong name truncated to 32 chars");
+
+        /* 11b: a CRC-valid file can still carry a control byte inside a
+         * string value (hand edit / foreign writer). The loader applies
+         * the serializer's policy at the door -- the field resets to its
+         * default, so one foreign value cannot make every later save
+         * fail at the serialize gate. */
+        len = build_file(buf, sizeof(buf),
+            "#ver=1\r\n"
+            "device_name=ab" "\x01" "X\r\n"
+            "bt_adv_name=p" "\x7f" "q\r\n"
+            "led_notifications=0\r\n");
+        CHECK(settings_parse_buffer(buf, len), "control-char file still parses (tolerant)");
+        CHECK(strcmp(g_m1_settings.device_name, "M1") == 0, "interior SOH byte -> field default");
+        CHECK(g_m1_settings.bt_adv_name[0] == '\0', "interior DEL byte -> field default");
+        CHECK(g_m1_settings.led_notifications == 0, "healthy fields unaffected by a sibling's control byte");
     }
 
     /* 12: version gate */
@@ -449,6 +484,80 @@ int main(void)
         CHECK(clean_tail, "bytes past the new length are all zeroed");
         settings_store_string(&s_settings_fields[SETTINGS_F_BT_ADV_NAME], "Grow", 4);
         CHECK(strcmp(g_m1_settings.bt_adv_name, "Grow") == 0, "empty-field update stores exactly");
+    }
+
+    /* 15: typed setters + settings_get -- the store's only runtime write
+     * path. Clamp checks reuse the file parser's bounds; the canary sets
+     * every same-width-confusable field (subghz_mod/subghz_dev_khz/
+     * subghz_freq_valid/bt_preset are all U8; subghz_bw_khz/bt_interval_ms
+     * are both U16) to a distinct sentinel and reads each back
+     * individually through settings_get(), so a swapped descriptor index
+     * -- which compiles clean and passes every other test -- fails here. */
+    {
+        const S_M1_Settings_t *view = settings_get();
+        size_t i;
+        int clean_tail = 1;
+
+        CHECK(view == &g_m1_settings, "settings_get exposes the live RAM image");
+
+        settings_reset_defaults();
+
+        /* numeric clamping through the setters */
+        settings_set_brightness_pct(150);
+        CHECK(view->brightness_pct == 100, "setter clamps brightness to 100");
+        settings_set_brightness_pct(0);
+        CHECK(view->brightness_pct == 0, "setter keeps brightness 0 (in-range)");
+        settings_set_screen_timeout_s(5);
+        CHECK(view->screen_timeout_s == 10, "setter clamps timeout up to 10 s");
+        settings_set_screen_timeout_s(0);
+        CHECK(view->screen_timeout_s == 0, "setter keeps timeout 0 (Off via zero_ok)");
+        settings_set_screen_timeout_s(500);
+        CHECK(view->screen_timeout_s == 120, "setter clamps timeout down to 120 s");
+        settings_set_led_notifications(7);
+        CHECK(view->led_notifications == 1, "setter coerces LED flag to 1");
+        settings_set_led_notifications(0);
+        CHECK(view->led_notifications == 0, "setter keeps LED flag 0");
+
+        /* string setters: NULL -> default, overlong -> bounded, shrink
+         * leaves no stale tail (final-state half of the contract) */
+        settings_set_device_name("Custom Remote");
+        CHECK(strcmp(view->device_name, "Custom Remote") == 0, "device name set");
+        settings_set_device_name(NULL);
+        CHECK(strcmp(view->device_name, "M1") == 0, "NULL device name -> default M1");
+        settings_set_bt_adv_name("FindMy-M1");
+        CHECK(strcmp(view->bt_adv_name, "FindMy-M1") == 0, "bt adv name set");
+        settings_set_bt_adv_name(NULL);
+        CHECK(view->bt_adv_name[0] == '\0', "NULL bt adv name -> default (empty)");
+        settings_set_device_name("0123456789012345678901234567890123456789");
+        CHECK(strlen(view->device_name) == 32, "setter bounds overlong name to 32 chars");
+        settings_set_device_name("Dim");
+        CHECK(strcmp(view->device_name, "Dim") == 0, "setter shrink stores exactly");
+        for (i = 3; i < sizeof(view->device_name); i++)
+        {
+            if (view->device_name[i] != '\0') { clean_tail = 0; }
+        }
+        CHECK(clean_tail, "setter shrink zeroes the stale tail");
+
+        /* swapped-index canary across same-width fields */
+        settings_reset_defaults();
+        settings_set_subghz_mod(1);
+        settings_set_subghz_dev_khz(2);
+        settings_set_bt_preset(4);
+        settings_set_subghz_freq_hz(433920000u, 1);
+        settings_set_subghz_bw_khz(200);
+        settings_set_bt_interval_ms(300);
+        settings_set_subghz_power_dbm(-12);
+        CHECK(view->subghz_mod == 1, "canary: subghz_mod hits its own field");
+        CHECK(view->subghz_dev_khz == 2, "canary: subghz_dev_khz hits its own field");
+        CHECK(view->bt_preset == 4, "canary: bt_preset hits its own field");
+        CHECK(view->subghz_freq_hz == 433920000u && view->subghz_freq_valid == 1,
+              "canary: freq pair hits its own fields");
+        CHECK(view->subghz_bw_khz == 200, "canary: subghz_bw_khz hits its own field");
+        CHECK(view->bt_interval_ms == 300, "canary: bt_interval_ms hits its own field");
+        CHECK(view->subghz_power_dbm == -12, "canary: signed power hits its own field");
+        CHECK(view->brightness_pct == 100 && view->screen_timeout_s == 45
+              && view->led_notifications == 1,
+              "canary leaves untouched neighbors at defaults");
     }
 
     printf("settings pure core: %d/%d checks passed\n", g_pass, g_pass + g_fail);
@@ -735,6 +844,8 @@ int main(void)
     CHECK(settings_load_file() == SETTINGS_LOAD_MISSING, "missing file -> MISSING");
     CHECK(g_m1_settings.brightness_pct == 100 && g_m1_settings.screen_timeout_s == 45,
           "missing file leaves compiled defaults");
+    CHECK(call_count("dir_ensure") == 0,
+          "load path never ensures 0:/System (lazy creation: a fresh card that never saves grows no folder)");
 
     /* 2: SD absent/unusable -> SD_ERROR, init returns false, exactly one warn, idempotent */
     vfs_reset(); fault_reset();
@@ -787,7 +898,7 @@ int main(void)
         CHECK(vfs_exists(SETTINGS_BAK_PATH), "load keeps the .bak (last known-good)");
     }
 
-    /* 4: corrupt final with .bak present -> CORRUPT, defaults, .bak kept */
+    /* 4: corrupt final AND corrupt .bak -> CORRUPT, defaults, files kept */
     vfs_reset(); fault_reset();
     g_settings_ready = false; g_settings_loaded_ok = false;
     {
@@ -800,14 +911,51 @@ int main(void)
         memcpy(big, vfs_get(SETTINGS_PATH), strlen(vfs_get(SETTINGS_PATH)) + 1);
         big[10] = (char)(big[10] ^ 0x01); /* flip a bit inside a value */
         vfs_put(SETTINGS_PATH, big);
+        memcpy(big, vfs_get(SETTINGS_BAK_PATH), strlen(vfs_get(SETTINGS_BAK_PATH)) + 1);
+        big[10] = (char)(big[10] ^ 0x01); /* corrupt the backup the same way */
+        vfs_put(SETTINGS_BAK_PATH, big);
     }
-    CHECK(settings_load_file() == SETTINGS_LOAD_CORRUPT, "tampered file -> CORRUPT");
-    CHECK(g_m1_settings.brightness_pct == 100, "corrupt file -> defaults in RAM");
+    CHECK(settings_load_file() == SETTINGS_LOAD_CORRUPT, "both files corrupt -> CORRUPT (no fallback)");
+    CHECK(g_m1_settings.brightness_pct == 100, "corrupt pair -> defaults in RAM");
     CHECK(vfs_exists(SETTINGS_BAK_PATH), "corrupt load keeps .bak for manual recovery");
     g_settings_ready = false;
     fault_reset();
     CHECK(settings_init() == false, "init reports defaults after corruption");
     CHECK(s_log_warn == 1, "corruption logged exactly once");
+
+    /* 4b: corrupt final with a VALID .bak -> RECOVERED: values adopted
+     *     from the backup, both files left in place (the boot load never
+     *     writes; the next save performs the heal via normal rotation) */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false;
+    vfs_put(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=17\r\ncrc=DEADBEEF\r\n"); /* stale trailer */
+    vfs_put_valid(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=16\r\ndevice_name=Rescued\r\n");
+    CHECK(settings_load_file() == SETTINGS_LOAD_RECOVERED, "corrupt cfg + valid .bak -> RECOVERED");
+    CHECK(g_m1_settings.brightness_pct == 16, "recovered values are the .bak content");
+    CHECK(strcmp(g_m1_settings.device_name, "Rescued") == 0, "recovered string from .bak");
+    CHECK(strcmp(vfs_get(SETTINGS_PATH), "#ver=1\r\nbrightness_pct=17\r\ncrc=DEADBEEF\r\n") == 0,
+          "recovery leaves the corrupt cfg untouched");
+    CHECK_FILE_EQ(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=16\r\ndevice_name=Rescued\r\n",
+                  "recovery reads the .bak in place (not consumed)");
+
+    /* 4c: corrupt final with NO .bak -> CORRUPT, defaults */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false;
+    vfs_put(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=17\r\ncrc=DEADBEEF\r\n");
+    CHECK(settings_load_file() == SETTINGS_LOAD_CORRUPT, "corrupt cfg without .bak -> CORRUPT");
+    CHECK(g_m1_settings.brightness_pct == 100, "no .bak to fall back on -> defaults");
+    CHECK(!vfs_exists(SETTINGS_BAK_PATH), "no .bak appears on disk");
+
+    /* 4d: unsupported version at the file-IO level: a CRC-valid #ver=2
+     *     file takes the parse_buffer==false -> CORRUPT branch (defaults,
+     *     one warn), not the CRC gate */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false;
+    vfs_put_valid(SETTINGS_PATH, "#ver=2\r\nbrightness_pct=41\r\n");
+    CHECK(settings_load_file() == SETTINGS_LOAD_CORRUPT, "unsupported version -> CORRUPT at file level");
+    CHECK(g_m1_settings.brightness_pct == 100, "unsupported version leaves defaults");
+    CHECK(settings_init() == false, "init reports defaults for unsupported version");
+    CHECK(s_log_warn == 1, "unsupported version logged exactly once");
 
     /* 5: truncated final (no trailer) -> CORRUPT */
     vfs_reset(); fault_reset();
@@ -1015,18 +1163,21 @@ int main(void)
     CHECK(s_calls_n == 0, "refused save makes no FatFs calls at all");
     CHECK(s_log_warn == 1, "refusal logged exactly once");
 
-    /* 11b: corrupt file at boot (CORRUPT) -> save refused, file and .bak
-     *      left for recovery/factory reset */
+    /* 11b: corrupt file AND corrupt .bak at boot (CORRUPT, fallback
+     *      exhausted) -> save refused, both files left for manual
+     *      recovery/factory reset -- rebooting alone re-reads the same
+     *      corrupt pair (docs: replace the file) */
     vfs_reset(); fault_reset();
     g_settings_ready = false; g_settings_loaded_ok = false; g_settings_save_permitted = false;
     vfs_put(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=17\r\ncrc=DEADBEEF\r\n"); /* stale trailer */
-    vfs_put_valid(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=16\r\n");
-    CHECK(settings_init() == false, "corrupt file at boot -> defaults in effect");
+    vfs_put(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=16\r\ncrc=DEADBEEF\r\n"); /* equally unreadable */
+    CHECK(settings_init() == false, "corrupt pair at boot -> defaults in effect");
     g_m1_settings.brightness_pct = 99;
-    CHECK(!settings_save(), "save after an unreadable boot load refused");
+    CHECK(!settings_save(), "save after a fully unreadable boot load refused");
     CHECK(strcmp(vfs_get(SETTINGS_PATH), "#ver=1\r\nbrightness_pct=17\r\ncrc=DEADBEEF\r\n") == 0,
           "unreadable file left in place (factory reset is the caller's policy)");
-    CHECK_FILE_EQ(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=16\r\n", ".bak preserved by the refusal");
+    CHECK(strcmp(vfs_get(SETTINGS_BAK_PATH), "#ver=1\r\nbrightness_pct=16\r\ncrc=DEADBEEF\r\n") == 0,
+          "unreadable .bak preserved by the refusal");
     CHECK(s_log_warn == 2, "corruption warn + refusal warn, nothing more");
 
     /* 11c: card present, no file at boot (MISSING) -> save permitted:
@@ -1058,6 +1209,28 @@ int main(void)
         fault_reset();
         CHECK(settings_load_file() == SETTINGS_LOAD_OK, "reload after gated save");
         CHECK(g_m1_settings.brightness_pct == 18, "edited value persisted");
+    }
+
+    /* 11e: corrupt cfg with a VALID .bak at boot (RECOVERED) -> saving
+     *      re-permitted (the boot load accounted for the card via the
+     *      backup), and the first save heals the corrupt settings.cfg */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false; g_settings_save_permitted = false;
+    vfs_put(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=17\r\ncrc=DEADBEEF\r\n");
+    vfs_put_valid(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=16\r\ndevice_name=Rescued\r\n");
+    CHECK(settings_init() == true, "recovered boot reports a validated persisted file");
+    CHECK(s_log_warn == 1, "recovery logged exactly once (corruption named)");
+    CHECK(g_m1_settings.brightness_pct == 16, "recovered values in effect after init");
+    g_m1_settings.brightness_pct = 18;
+    CHECK(settings_save(), "save permitted after .bak recovery (no dead-end)");
+    {
+        settings_reset_defaults();
+        g_settings_ready = false; g_settings_loaded_ok = false;
+        fault_reset();
+        CHECK(settings_load_file() == SETTINGS_LOAD_OK, "reboot-equivalent reload of the healed cfg");
+        CHECK(g_m1_settings.brightness_pct == 18, "post-recovery edit persisted");
+        CHECK(strcmp(g_m1_settings.device_name, "Rescued") == 0, "recovered string persisted through the heal");
+        CHECK(vfs_exists(SETTINGS_BAK_PATH), "healing save rotated the corrupt cfg to .bak");
     }
 
     printf("settings file IO: %d/%d checks passed\n", g_pass, g_pass + g_fail);
