@@ -171,7 +171,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `prvHelpCommand()` now NUL-terminates the help string it copies: `strncpy()`
   wrote no terminator when a help string filled the buffer, so the caller's
   `strlen()` ran past the 200-byte output buffer — a pre-existing defect the
-  289-byte `cdcstats` entry already triggered.
+  289-byte `cdcstats` entry already triggered. `cdcstats` itself was shortened
+  from 289 to 183 bytes at the same time, so every command's help line now fits
+  the slot in full and the suite asserts that rule without an exception.
   `cmd_m1_mtest_help()` now lists every implemented `mtest` ID by decade, marks
   9 and 61 DEV-ONLY and 22/23/24 legacy-equivalent, and no longer advertises 53
   and 54, which no handler implements (both are 52). The destructive corruption
@@ -187,8 +189,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the fork's addition (`legacy/v0.8.11`, fork commit `3b6c252`) is carried by
   merge patch #42 per `docs/merge/LEDGER.md` (`carried-by-patch`), so nothing is
   ported here and the acceptance criterion resolves as ledger-referenced rather
-  than "absent in both trees". ROM cost of the unit: **+4792 B flash /
-  +4128 B RAM** (FLASH 725680 -> 730472 B, RAM 326220 -> 330348 B, same
+  than "absent in both trees". ROM cost of the unit: **+4728 B flash /
+  +4128 B RAM** (FLASH 725680 -> 730408 B, RAM 326220 -> 330348 B, same
   toolchain, `./build.sh` on this tree versus `main` @ `598a803`; the RAM is
   the 2 KB window, the 2 KB snapshot and their bookkeeping). `_wCRC.bin` is
   still 1047576 bytes. New host targets `test_log_capture` (short, wrapped and
@@ -196,9 +198,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `test_cli_commands` (every table entry registered with a help string shorter
   than the response slot it is printed through, no orphan handlers, no unbounded
   write into the 200-byte buffer, the built-in `help` path's NUL terminator, the
-  `reboot`/`dfu` flush-before-reset order, and a walked scan of the project
-  trees and root build files proving neither dev-only guard — `M1_TEST_CMDS`
-  and `M1_SUBGHZ_CW_TEST_TX` — is defined) and `test_sdcard_usage` (the
+  `reboot`/`dfu` flush-before-reset order, and a walked scan proving neither
+  dev-only guard — `M1_TEST_CMDS` and `M1_SUBGHZ_CW_TEST_TX` — is defined by the
+  project sources or by any build/config file in the project trees, nested
+  `CMakeLists.txt`/`.cmake` included, in the forms this tree uses: `#define` and
+  `-D` in C, and the bare macro name that `target_compile_definitions()` /
+  `add_compile_definitions()` takes) and `test_sdcard_usage` (the
   used-percentage helper at 0/32/64/128 GB used and across the ~41 GiB frontier
   the old 32-bit expression wrapped at), all three in `make test`, so a CLI
   addition cannot land without test-visible registration and the arithmetic is

@@ -442,23 +442,21 @@ void cmd_m1_mtest_basic_system(char *pconsole, char *input_params[], uint8_t n_p
 	           * cycle plus a DFU re-flash as part of the test -- not as a failure
 	           * of it.
 	           *
-	           * Bank addressing (the assumption this test relies on): the erase
-	           * selects the ACTIVE physical bank -- bl_get_active_bank() decides
-	           * FLASH_BANK_1/FLASH_BANK_2, which the HAL writes into the
-	           * controller's bank-select field -- while HAL_FLASH_Program()
-	           * writes through the CPU-visible address FW_CRC_ADDRESS (the H5
-	           * programs by memory-mapped store). The option-byte bank swap maps
-	           * whichever bank is active to 0x08000000, which is exactly the
-	           * address bl_crc_validate_active_bank() reads the stored CRC word
-	           * from at boot (see its address reasoning in m1_fw_update_bl.c), so
-	           * on a swapped unit the erase and the program still hit the same
-	           * physical bank. The test is therefore not bank-agnostic by
-	           * construction: it is correct only while "active bank" means "the
-	           * bank mapped at 0x08000000". If a unit executed from the
-	           * +M1_FLASH_BANK_SIZE alias instead, that absolute address would
-	           * belong to the other physical bank and the two steps would
-	           * disagree -- so run this on both banks deliberately rather than
-	           * assuming it.
+	           * Bank addressing: erase and program address the same physical
+	           * bank while "active bank" means "the bank mapped at
+	           * 0x08000000", which is the invariant this image runs under. The
+	           * erase selects FLASH_BANK_1/FLASH_BANK_2 from
+	           * bl_get_active_bank(), and the HAL writes that into the
+	           * controller's bank-select field (FLASH_CR_BKSEL) -- a physical
+	           * bank select; HAL_FLASH_Program() writes through the CPU-visible
+	           * address FW_CRC_ADDRESS (the H5 programs by memory-mapped store),
+	           * which the option-byte bank swap maps to whichever bank is
+	           * active. That is the same mapping bl_crc_validate_active_bank()
+	           * relies on when it reads the stored CRC word from the fixed
+	           * FW_CRC_ADDRESS at boot (see its address reasoning in
+	           * m1_fw_update_bl.c). Run the test on both banks deliberately as
+	           * hardware validation rather than inferring it from this
+	           * reasoning alone.
 	           *
 	           * Compiled out of every shipped image: M1_TEST_CMDS is defined by
 	           * no build file and no source file (tools/m1cp_host_test/

@@ -41,10 +41,11 @@ Dispatch is table-driven: `xCommandList[]` is registered by
 `FreeRTOS_CLI.c`, not an entry in the table) walks that list and prints each
 `pcHelpString`. A help string is bounded by the same 200-byte slot:
 `prvHelpCommand()` copies it and then forces a terminator at the last byte of
-the buffer, so an entry longer than the slot is truncated instead of leaving
-the output buffer unterminated (which the caller's `strlen()` would run past).
-The pre-existing `cdcstats` help line (289 bytes) is the only entry over the
-slot; the part `help` cannot show — its counter wrap note — is in
+the buffer, so an over-long entry cannot leave the output buffer unterminated
+(which the caller's `strlen()` would run past). No entry is exempt from the
+slot: the host suite asserts that every `pcHelpString` in the table is shorter
+than `configCOMMAND_INT_MAX_OUTPUT_SIZE`, so a command's help line has to say
+its piece in under 200 bytes and leave the detail to this page and
 [USB CDC](usb-cdc.md). An unknown command answers "Command not recognized."
 Every table command but `mtest` declares `cExpectedNumberOfParameters = 0`, so a
 command typed with extra parameters fails the count check and the framework
@@ -123,10 +124,21 @@ full cannot wrap it, and is 0 when the total is 0.
 
 ### `battery`
 
-Performs three gauge reads (voltage, remaining capacity, full capacity) and
-requires all of them to succeed. A failed read is reported as "Battery: gauge
-read failed" rather than as a flat 0 mV battery; the level comes from
-`bq27421_soc(FILTERED)`.
+Performs four checked gauge reads — voltage, remaining capacity, full charge
+capacity and state of charge (the last through
+`bq27421_readStateOfCharge_percent()`) — and requires all four to succeed. Any
+failure prints exactly one line and nothing else:
+
+    Battery: gauge read failed
+
+so a partial success is not reported at all: valid voltage and capacity are
+withheld rather than shown beside a level that did not come off the gauge, and
+no field is ever printed as 0 for a read that failed. On success the output is
+`Battery status:` followed by `Level: N %`, `Voltage: N mV` and
+`Capacity: remaining/full mAh`. The CLI does not use `bq27421_soc()`: that
+accessor returns 0 when the I2C transfer fails, so it cannot tell a failed read
+from an empty battery — it still serves the periodic gauge update, where the
+value is refreshed on the next call.
 
 ### `reboot` and `dfu`
 
@@ -205,14 +217,16 @@ Two `mtest` paths are compiled out of shipped images:
   `<artifact>_wCRC.bin`. The CRC word is the target because the failsafe
   compares the computed image CRC against it; the config magic is untouched
   because `m1_boot_classify_fault()` prefers metadata faults over a CRC
-  mismatch and would mask the stage under test. Erase and program only hit the
+  mismatch and would mask the stage under test. Erase and program address the
   same physical bank while "active bank" means "the bank mapped at
-  `0x08000000`": the erase selects `FLASH_BANK_1/2` from
-  `bl_get_active_bank()` (a physical bank select), while `HAL_FLASH_Program()`
-  writes through the CPU-visible `FW_CRC_ADDRESS`, which the option-byte bank
-  swap remaps to whichever bank is active — the same address
-  `bl_crc_validate_active_bank()` reads at boot. The test is therefore not
-  bank-agnostic by construction; run it on both banks deliberately.
+  `0x08000000`", which is the invariant this image runs under: the erase
+  selects `FLASH_BANK_1/2` from `bl_get_active_bank()` (a physical bank select,
+  `FLASH_CR_BKSEL`), while `HAL_FLASH_Program()` writes through the
+  CPU-visible `FW_CRC_ADDRESS`, which the option-byte bank swap maps to
+  whichever bank is active — the same address
+  `bl_crc_validate_active_bank()` reads the stored word from at boot. Run the
+  test on both banks deliberately as hardware validation rather than inferring
+  it from that reasoning alone.
 - `M1_SUBGHZ_CW_TEST_TX` — `mtest 61`, raw continuous-wave transmit. It keys
   the transmitter directly and does not pass the regional TX-permission gate,
   so it is dev-only for a different reason (regulatory, not destructive).
@@ -227,24 +241,28 @@ build that defines one is a bench build. Without them `mtest 9` answers
 Registration, the help strings, the bound on every handler write, the
 terminator in the built-in `help` path and the absence of both dev-only guards
 are covered by the host suite (`tools/m1cp_host_test/test_cli_commands.c`):
-every `pcHelpString` is checked against the `configCOMMAND_INT_MAX_OUTPUT_SIZE`
-it is sent through (the pre-existing `cdcstats` line is the one documented
-exception, and it is truncated rather than overrun), and the guard check walks
-the project source trees (`Core/`, `m1_csrc/`, `USB/` and the other project
-directories) plus the root build files, asserting that none of them defines
-`M1_TEST_CMDS` or `M1_SUBGHZ_CW_TEST_TX` either with `#define` or with `-D`.
-That is a source and build-configuration statement, **not** an image check: no
-built ELF is inspected by the suite. Confirming a shipped image is free of both
-paths is a manual step — `arm-none-eabi-strings` on the ELF must show the two
-`#else` notices ("Firmware corruption test not available in this build",
-"CW test TX not available in this build") and none of the guarded strings. The
-log window itself is covered by `test_log_capture`, the `sdcard` percentage
-arithmetic by `test_sdcard_usage`, and `make test` also compiles the guarded
-`mtest 9` path (`-DM1_TEST_CMDS -fsyntax-only` on `m1_csrc/m1_cli.c`) so it
-cannot rot — that step needs `arm-none-eabi-gcc` on `PATH` and prints `SKIP`
-with the reason on a host without it. No on-device verification is claimed
-here: "CDC counters become non-zero during a real stress transfer" is
-hardware-gated by issue #63 (milestone "Post-merge stabilization"), and the
+every `pcHelpString` must be shorter than the
+`configCOMMAND_INT_MAX_OUTPUT_SIZE` it is sent through (no exceptions), and the
+guard check walks the project source trees (`Core/`, `m1_csrc/`, `USB/` and the
+other project directories — nested `CMakeLists.txt` and `.cmake` files
+included) plus the root build files, asserting that none of them defines
+`M1_TEST_CMDS` or `M1_SUBGHZ_CW_TEST_TX`. It knows the forms this project
+actually uses: `#define` and `-D` in C sources, and in build/config files the
+bare macro name that `target_compile_definitions()` /
+`add_compile_definitions()` takes (comments stripped first, so a mention in a
+comment does not trip it). That is a source and build-configuration statement,
+**not** an image check: no built ELF is inspected by the suite. Confirming a
+shipped image is free of both paths is a manual step — `arm-none-eabi-strings`
+on the ELF must show the two `#else` notices ("Firmware corruption test not
+available in this build", "CW test TX not available in this build") and none of
+the guarded strings. The log window itself is covered by `test_log_capture`,
+the `sdcard` percentage arithmetic by `test_sdcard_usage`, and `make test` also
+compiles the guarded `mtest 9` path (`-DM1_TEST_CMDS -fsyntax-only` on
+`m1_csrc/m1_cli.c`, with the include set taken from the firmware's own compile
+line) so it cannot rot — that step needs `arm-none-eabi-gcc` on `PATH` and
+prints `SKIP` with the reason on a host without it. No on-device verification
+is claimed here: "CDC counters become non-zero during a real stress transfer"
+is hardware-gated by issue #63 (milestone "Post-merge stabilization"), and the
 `mtest 9` boot recovery path — failsafe banner, bounded DFU offer, strap
 recovery — is hardware-gated with the rest of the boot-recovery milestone
 (issue #41).
