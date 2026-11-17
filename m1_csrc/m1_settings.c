@@ -18,7 +18,10 @@
 *     row's value toward its minimum/maximum, OK activates a row action
 *     (edit text, confirm), BACK exits;
 *   - edits update the live settings image (settings_set_*()) and apply
-*     to the consuming subsystem immediately (live preview); the exit
+*     to the consuming subsystem immediately (live preview); after each
+*     settings_set_*() re-sync the row local from settings_get() so a
+*     clamping setter can never make displayed, effective and persisted
+*     values diverge; the exit
 *     path calls settings_exit_save() so one atomic settings_save()
 *     persists the whole editing session, and a refused save is shown,
 *     not hidden;
@@ -95,7 +98,9 @@ static void settings_system_reset_confirm(void);
  * screen timeout 0 (Off) / 10..120 s, LED notifications 0/1. Steps are
  * +/-10 (the timeout's Off sits one Left-press below 10 s), clamped at
  * both ends; the store admits off-grid timeout values (its compiled
- * default is 45 s), so stepping is arithmetic, not table-walking. */
+ * default is 45 s), so stepping is arithmetic, not table-walking; a
+ * nonzero sub-10 step result snaps to 10 (the store clamps 1..9 to 10)
+ * so stepped values always stay inside the admitted domain. */
 
 uint8_t settings_scr_bright_step(uint8_t cur, int8_t dir)
 {
@@ -108,10 +113,23 @@ uint8_t settings_scr_bright_step(uint8_t cur, int8_t dir)
 
 uint16_t settings_scr_timeout_step(uint16_t cur, int8_t dir)
 {
+	uint16_t next;
+
 	if ( dir > 0 )
 		return (uint16_t)((cur > 120u - 10u) ? 120u : cur + 10u);
 	if ( dir < 0 )
-		return (uint16_t)((cur < 10u) ? 0u : cur - 10u); /* 10 -> 0 = Off */
+	{
+		next = (uint16_t)((cur < 10u) ? 0u : cur - 10u); /* 10 -> 0 = Off */
+		if ( (next!=0u) && (next<10u) )
+		{
+			/* Off-grid cur in 11..19 lands in 1..9, which the store
+			 * clamps to 10: snap so displayed, effective and persisted
+			 * values cannot diverge (off-grid values >=20, e.g. the
+			 * compiled 45 s default, keep stepping arithmetically). */
+			next = 10u;
+		}
+		return next;
+	}
 	return cur;
 } // uint16_t settings_scr_timeout_step(uint16_t cur, int8_t dir)
 
@@ -520,15 +538,18 @@ void settings_lcd_notifications(void)
 						case 0: // Brightness: live preview through the feedback manager
 							bright = settings_scr_bright_step(bright, dir);
 							settings_set_brightness_pct(bright);
+							bright = settings_get()->brightness_pct; // re-sync after the clamping setter
 							fb_set_brightness_pct(bright);
 							break;
 						case 1: // Screen timeout: consumer reads it on its next check
 							timeout_s = settings_scr_timeout_step(timeout_s, dir);
 							settings_set_screen_timeout_s(timeout_s);
+							timeout_s = settings_get()->screen_timeout_s; // re-sync after the clamping setter
 							break;
 						default: // LED notifications: Left = Off, Right = On (directional)
 							led_notify = (dir > 0) ? 1u : 0u;
 							settings_set_led_notifications(led_notify);
+							led_notify = settings_get()->led_notifications; // re-sync after the clamping setter
 							fb_set_led_notifications_enabled(led_notify != 0u);
 							break;
 					} // switch (sel_row)

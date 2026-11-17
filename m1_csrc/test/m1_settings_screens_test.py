@@ -136,7 +136,10 @@ int main(void) {
     ck_timeout(0, -1, 0); ck_timeout(0, 0, 0);
     /* Off-grid stored values step arithmetically (compiled default 45) */
     ck_timeout(45, +1, 55); ck_timeout(45, -1, 35);
-    ck_timeout(17, +1, 27); ck_timeout(17, -1, 7); /* mid-band still >=10 */
+    ck_timeout(17, +1, 27); ck_timeout(17, -1, 10); /* 11..19 Left snaps to 10, never 1..9 */
+    /* Regression (defect fix): 45 -> 35 -> 25 -> 15 -> 10, never 5 */
+    ck_timeout(35, -1, 25); ck_timeout(25, -1, 15); ck_timeout(15, -1, 10);
+    ck_timeout(11, -1, 10); ck_timeout(19, -1, 10);
 
     /* Labels */
     assert(strcmp(settings_scr_timeout_label(0, buf, sizeof(buf)), "Off") == 0);
