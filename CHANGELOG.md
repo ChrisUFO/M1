@@ -30,15 +30,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to `settings.bak` → tmp renamed over final) that can never destroy the
   last good file. The `.bak` is deliberately retained as the last
   known-good copy. Boot applies the loaded brightness via
-  `fb_set_brightness_pct()` (default 100 is behavior-identical to the
-  compiled-in value). Settings are SD-only: no writes to flash sector 127
+  `fb_set_brightness_pct()` after task creation — `fb_manager_init()`
+  (reached through `m1_tasks_init()` → `m1_feedback_task_init()`)
+  resets user brightness to the compiled-in default and would clobber an
+  earlier apply (default 100 is behavior-identical). Settings are SD-only:
+  no writes to flash sector 127
   or `S_M1_FW_CONFIG_t` anywhere in the module. Ownership: UI task is the
   single writer, any task may read. Host coverage in
   `m1_csrc/test/m1_settings_store_test.py` (pure-core parse/serialize/
   CRC/clamp tests on the extracted real code plus FatFs-stand-in
   fault-injection for atomic-save/recovery behavior), wired into the new
   `scripts/run_host_tests.sh` aggregator and
-  `.github/workflows/host-tests.yml` CI entry point. `0:/System` added to
+  `.github/workflows/host-tests.yml` CI entry point. The aggregator's
+  wired set is the settings-store suite today; later units append their
+  host tests by design, so a green CI run covers exactly the listed
+  tests. `0:/System` added to
   the canonical path constants (`m1_sdcard_provision.h`), created lazily
   on first save
 - Fork: automatic boot-time firmware integrity failsafe on the adopted base

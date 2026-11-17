@@ -1,6 +1,11 @@
 #!/bin/sh
-# Host-test aggregator: one entry point that runs every host-runnable test
-# in the repository (python+gcc extraction harnesses under m1_csrc/test/).
+# Host-test aggregator: one entry point for the host-runnable tests wired
+# into it (python+gcc extraction harnesses under m1_csrc/test/).
+#
+# Current wired set: the settings-store suite. The pre-existing host tests
+# under m1_csrc/test/ and m1_csrc/tests/ are NOT run by this script yet;
+# later units append their tests to the list below by design, so a green
+# run means exactly the listed tests passed -- nothing more.
 #
 # CI runs this script (see .github/workflows/host-tests.yml). Append new
 # tests to the list below as they land -- keep one line per test so a
@@ -32,4 +37,4 @@ for t in $PYTHON_TESTS; do
     "$PYTHON" "$t"
 done
 
-echo "=== All host tests passed ==="
+echo "=== All wired host tests passed (see list above for coverage) ==="

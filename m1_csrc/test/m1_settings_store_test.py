@@ -887,8 +887,10 @@ def boot_wiring_checks_source_text():
         ("settings_init() runs after SD init", i_sd < i_set),
         ("settings_init() runs before task creation", i_set < i_tasks),
         (
-            "brightness applied at boot from the loaded store",
-            i_set < i_bright < i_tasks,
+            "brightness applied after task creation, so fb_manager_init()'s "
+            "default reset (reached via m1_tasks_init -> m1_feedback_task_init) "
+            "cannot clobber the persisted value",
+            i_set < i_tasks < i_bright,
         ),
         (
             "settings store never touches flash config metadata",
