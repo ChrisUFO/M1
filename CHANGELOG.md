@@ -11,6 +11,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: durable user-settings store foundation for the Merge 3 feature set
+  (issues #3/#4/#7/#11 substrate) — new `m1_csrc/m1_settings_store.c/.h`
+  keeps a RAM settings image (`S_M1_Settings_t`: LCD brightness, screen
+  timeout, LED notifications, device name, plus round-trip-only Sub-GHz
+  radio and Bluetooth advertisement fields their future screens will
+  define) loaded once at boot from `0:/System/settings.cfg` after SD init
+  and before any consumer task starts. The file format is `#ver=1` +
+  `key=value` lines + a trailing `crc=<8 hex>` CRC-32C (Castagnoli,
+  0x1EDC6F41, the shared `m1_crc32c.c`) over all preceding bytes. Loading
+  is tolerant and bounded (missing file → compiled defaults; CRC
+  mismatch/truncation/unsupported version makes the file unreadable →
+  the retained `.bak` is validated with the same checks and adopted
+  when it passes — values loaded, saving re-enabled, one log line,
+  both files left in place — otherwise defaults with `.bak` still in
+  place; unknown keys skipped; out-of-range values clamped; malformed
+  numerals and string values containing control characters reset to
+  per-field defaults, with one extra log line naming how many fields
+  were reset). An interrupted save is
+  reconciled at load: an orphaned `settings.tmp` is promoted only when
+  `settings.cfg` is missing (the CRC gate has the final word on it);
+  when `settings.cfg` exists and passes a CRC probe the orphaned
+  `.tmp` is discarded (when the cfg fails the probe beside a
+  validating `.tmp`, the `.tmp` is promoted over the corrupt cfg),
+  and the `.bak` is restored only when neither cfg nor tmp survives.
+  Saving is
+  a recoverable atomic promotion (`settings.tmp` fully written+closed →
+  superseded `.bak` unlinked → previous `settings.cfg` rotated to
+  `settings.bak` → tmp renamed over final) that can never destroy the
+  last good file; while it exists, the retained `.bak` is the last
+  known-good copy. The first save after a `.bak` recovery heals
+  instead of rotating: it displaces the known-corrupt `settings.cfg`
+  directly and keeps `.bak` — then the only good copy — untouched
+  until the next save's rotation, so a failure or power cut always
+  leaves either the validating `.bak` or the complete promotable
+  `settings.tmp` and a retry or reboot recovers. A save is refused
+  when the boot load could not
+  account for the card (absent/failed SD, or `settings.cfg` and `.bak`
+  both unreadable), so a defaults image can never overwrite a live
+  `settings.cfg`
+  after a late card insertion; the shared serialization work buffer is
+  file-scope, leaving the caller's transient stack need at the FatFs
+  file object and call depth. Boot applies the loaded brightness via
+  `fb_set_brightness_pct()` after task creation — `fb_manager_init()`
+  (reached through `m1_tasks_init()` → `m1_feedback_task_init()`)
+  resets user brightness to the compiled-in default and would clobber an
+  earlier apply (default 100 is behavior-identical). Settings are SD-only:
+  no writes to flash sector 127
+  or `S_M1_FW_CONFIG_t` anywhere in the module. Ownership: UI task is the
+  single writer, any task may read. Host coverage in
+  `m1_csrc/test/m1_settings_store_test.py` (pure-core parse/serialize/
+  CRC/clamp tests on the extracted real code plus FatFs-stand-in
+  fault-injection for atomic-save/recovery behavior), wired into the new
+  `scripts/run_host_tests.sh` aggregator and
+  `.github/workflows/host-tests.yml` CI entry point. The aggregator's
+  wired set is the settings-store suite today; later units append their
+  host tests by design, so a green CI run covers exactly the listed
+  tests. `0:/System` added to
+  the canonical path constants (`m1_sdcard_provision.h`), created lazily
+  on first save
 - Fork: automatic boot-time firmware integrity failsafe on the adopted base
   (issue #41, part A) — every boot validates the running bank's fixed
   `[0x08000000, 0x080FFC14)` span against the CRC the build embedded at

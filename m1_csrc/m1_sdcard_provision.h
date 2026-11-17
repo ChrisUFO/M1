@@ -33,6 +33,11 @@
 #define M1_SD_DIR_BLE            "0:/ble"
 #define M1_SD_DIR_INFRARED       "0:/infrared"
 #define M1_SD_DIR_INFRARED_DB    "0:/infrared/db"
+/* Device-owned configuration (settings store). Deliberately NOT in the
+ * mount-time provisioning table below: it is ensured lazily by its user
+ * (the settings store creates it on first save) so a fresh card that
+ * never changes a setting does not grow an empty folder. */
+#define M1_SD_DIR_SYSTEM         "0:/System"
 
 /* Per-folder outcome, exposed for callers/tests that want more than a
  * single pass/fail bit. */

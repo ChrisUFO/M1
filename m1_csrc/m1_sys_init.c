@@ -24,6 +24,8 @@
 #include "m1_rf_spi.h"
 #include "m1_sdcard.h"
 #include "m1_esp32_hal.h"
+#include "m1_settings_store.h"
+#include "m1_feedback_manager.h"
 #include "battery.h"
 #include "m1_gpio.h"
 #include "m1_log_debug.h"
@@ -180,6 +182,14 @@ void m1_system_init_task(void *param)
 			m1_lcd_init(&hspi1);
 
 			m1_sdcard_init(&hsd1);
+
+			/* Load durable user settings once the filesystem is up and before
+			 * any consumer task starts (m1_tasks_init below creates the UI
+			 * task, the store's only writer). Missing file, corruption with
+			 * no recoverable .bak, or an absent SD card all leave the
+			 * compiled defaults active. */
+			(void)settings_init();
+
 			//m1_esp32_init();
 #if defined M1_DEBUG_CLI_ENABLE
 			/* USART1 default config */
@@ -192,6 +202,19 @@ void m1_system_init_task(void *param)
 			battery_service_init();
 			m1_wdt_init();
 			m1_tasks_init();
+
+			/* Apply the persisted brightness only after task creation:
+			 * m1_tasks_init() -> m1_feedback_task_init() ->
+			 * fb_manager_init() resets feedback state, including the
+			 * user brightness, to its compiled-in defaults, which would
+			 * clobber an earlier apply. fb_set_brightness_pct() is
+			 * critical-sectioned and safe to call once tasks run, and
+			 * it re-marks a live user-brightness output dirty so the
+			 * next feedback tick re-applies this value. The default
+			 * (100) equals the feedback manager's own initial value,
+			 * so default settings boot behavior-identical. */
+			fb_set_brightness_pct(settings_get()->brightness_pct);
+
 			startup_config_handler();
 			M1_LOG_I(M1_LOGDB_TAG, "Power-up init done!\r\n");
 			vTaskDelete(NULL); // Delete this task

@@ -104,9 +104,87 @@ supports application data, captured protocol data, and firmware images. USB MSC
 also exposes storage, which means firmware and USB code must coordinate media
 ownership and card-change events.
 
-**Needs validation:** Document the SD-card directory layout, filename limits,
-concurrent USB/device access policy, and recovery behavior after removal or I/O
-failure.
+Canonical firmware-owned folders (`m1_sdcard_provision.h` is the single source
+of truth for their paths) are provisioned at mount time: `0:/nfc`,
+`0:/nfc/system`, `0:/nfc/recover`, `0:/rfid`, `0:/subghz`, `0:/wifi`,
+`0:/ble`, `0:/infrared`, `0:/infrared/db`. `0:/System` is also canonical but
+created lazily by its first user (the settings store creates it on first save)
+so a fresh card without user changes does not grow an empty folder.
+
+### User settings (`0:/System/settings.cfg`)
+
+Durable user settings live in `0:/System/settings.cfg`
+(`m1_csrc/m1_settings_store.c/.h`) — never in flash: the boot-signed metadata
+span (`S_M1_FW_CONFIG_t`, sector 127) is off-limits to application settings.
+
+File format (version 1):
+
+- first line `#ver=1`;
+- one `key=value` line per field, CRLF endings, keys in the module's field
+  table (`brightness_pct`, `screen_timeout_s`, `led_notifications`,
+  `device_name`, `subghz_*`, `bt_*`);
+- final line `crc=XXXXXXXX`: CRC-32C (Castagnoli, polynomial 0x1EDC6F41,
+  the shared `m1_crc32c.c` helper) over every byte preceding that line.
+
+Semantics:
+
+- *Load* (once per boot, after SD init and before task creation): missing
+  file → compiled defaults; CRC mismatch, truncation, unsupported version,
+  or a file larger than the loader's 1 KiB bound makes `settings.cfg`
+  unreadable → the same bounded read + CRC + parse runs on `settings.bak`:
+  a validating backup is adopted (values loaded, saving re-enabled, one
+  log line, both files left in place — the next save heals
+  `settings.cfg` without unlinking the backup until the heal succeeds),
+  otherwise compiled defaults, one log line, and the retained `.bak` is
+  left in place; unknown keys are skipped; out-of-range values clamp to
+  field bounds; malformed numerals or string values containing control
+  characters reset that field to its default, and one additional log
+  line names how many fields were reset (the values silently revert and
+  the next save makes that permanent). An interrupted save is
+  reconciled at
+  load: an orphaned `settings.tmp` is promoted only when `settings.cfg`
+  is missing (the CRC gate then has the final word on it); when
+  `settings.cfg` exists and passes a CRC probe, the orphaned `.tmp` is
+  discarded — but when the cfg fails the probe beside a *validating*
+  `.tmp` (e.g. a heal save interrupted after its tmp write), the `.tmp`
+  is promoted over the corrupt cfg — and the `.bak`
+  is restored only when neither cfg nor tmp survives.
+- *Save*: write `settings.tmp` fully and close it, unlink the superseded
+  `.bak`, rotate the previous `settings.cfg` to `settings.bak`, then
+  rename `settings.tmp` to `settings.cfg`. Any failure leaves the
+  previous good `settings.cfg` in place (or restores it), so a save can
+  never destroy the newest good copy. While it exists, `.bak` is the
+  last known-good copy -- but it is unlinked during every save attempt
+  (FatFs `f_rename` cannot overwrite an existing destination), so a
+  failed rotation destroys the older backup while `settings.cfg`
+  survives. The first save after a `.bak` recovery is the exception:
+  `settings.cfg` is then the known-corrupt file and `.bak` the *only*
+  good copy, so it is never unlinked -- the corrupt cfg is displaced
+  directly and the tmp renamed over it, keeping `.bak` untouched until
+  the next save's rotation. Every failure path in that heal mode
+  leaves either the validating `.bak` or the complete promotable
+  `settings.tmp` on the card (a failed promotion deliberately retains
+  the tmp; the next boot's reconciliation promotes it), so a retry or
+  a reboot always recovers instead of dead-ending the store. Saving is
+  refused while the boot load could not account for
+  the card's content (SD error, or `settings.cfg` and `.bak` both
+  unreadable): the RAM image is then compiled defaults, and writing it
+  could clobber a live `settings.cfg` after a late card insertion --
+  the store loads exactly
+  once per boot. A reboot with the card readable re-enables saving
+  whenever that load then accounts for the card (valid file, corrupt
+  file recovered from `.bak`, or a provably file-less card); when both
+  files stay unreadable, rebooting re-reads the same corrupt pair, so
+  the unreadable file must be removed or replaced before saving works
+  again.
+- *Ownership*: the UI task is the single writer (setters, save, reset);
+  any task may read via `settings_get()`. Boot-time consumers run after
+  `settings_init()` in `m1_system_init_task()`. SD-absent is safe: defaults,
+  no retries, no error spam.
+
+**Needs validation:** Document the remaining SD-card directory layout details,
+filename limits, concurrent USB/device access policy, and recovery behavior
+after removal or I/O failure.
 
 ## Firmware update
 
@@ -142,3 +220,8 @@ See [Firmware image and update](protocols/firmware-update.md).
 
 Update this page when a change adds a task, queue, shared peripheral, subsystem,
 startup dependency, persistent format, or inter-processor interface.
+
+Persistent formats documented here: `0:/System/settings.cfg` (user settings,
+see "Storage model"); Wi-Fi saved networks (`m1_csrc/m1_wifi.c`, versioned CSV).
+New persistent formats must document their file layout, integrity mechanism,
+failure/recovery behavior, and writer ownership.

@@ -1,0 +1,30 @@
+name: Host tests
+
+# Runs the host tests wired into scripts/run_host_tests.sh (python+gcc
+# extraction harnesses) on every push and pull request. The wired set is
+# the settings-store suite today; later units append their tests there by
+# design, so a green run here covers exactly those listed tests -- not the
+# repository's full host-test corpus. Firmware/hardware-coupled
+# verification stays outside CI by design; see docs/testing.md for the
+# full qualification model.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    # Least privilege: this job only needs to read the repository.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain presence
+        run: |
+          python3 --version
+          cc --version
+
+      - name: Run host tests
+        run: sh scripts/run_host_tests.sh
