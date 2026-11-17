@@ -27,16 +27,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both files left in place — otherwise defaults with `.bak` still in
   place; unknown keys skipped; out-of-range values clamped; malformed
   numerals and string values containing control characters reset to
-  per-field defaults). An interrupted save is
+  per-field defaults, with one extra log line naming how many fields
+  were reset). An interrupted save is
   reconciled at load: an orphaned `settings.tmp` is promoted only when
   `settings.cfg` is missing (the CRC gate has the final word on it);
-  when `settings.cfg` exists the orphaned `.tmp` is discarded, and the
-  `.bak` is restored only when neither cfg nor tmp survives. Saving is
+  when `settings.cfg` exists and passes a CRC probe the orphaned
+  `.tmp` is discarded (when the cfg fails the probe beside a
+  validating `.tmp`, the `.tmp` is promoted over the corrupt cfg),
+  and the `.bak` is restored only when neither cfg nor tmp survives.
+  Saving is
   a recoverable atomic promotion (`settings.tmp` fully written+closed →
   superseded `.bak` unlinked → previous `settings.cfg` rotated to
   `settings.bak` → tmp renamed over final) that can never destroy the
   last good file; while it exists, the retained `.bak` is the last
-  known-good copy. A save is refused when the boot load could not
+  known-good copy. The first save after a `.bak` recovery heals
+  instead of rotating: it displaces the known-corrupt `settings.cfg`
+  directly and keeps `.bak` — then the only good copy — untouched
+  until the next save's rotation, so a failure or power cut always
+  leaves either the validating `.bak` or the complete promotable
+  `settings.tmp` and a retry or reboot recovers. A save is refused
+  when the boot load could not
   account for the card (absent/failed SD, or `settings.cfg` and `.bak`
   both unreadable), so a defaults image can never overwrite a live
   `settings.cfg`

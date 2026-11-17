@@ -134,15 +134,20 @@ Semantics:
   unreadable → the same bounded read + CRC + parse runs on `settings.bak`:
   a validating backup is adopted (values loaded, saving re-enabled, one
   log line, both files left in place — the next save heals
-  `settings.cfg` and rotates the corrupt copy to `.bak`), otherwise
-  compiled defaults, one log line, and the retained `.bak` is left in
-  place; unknown keys are skipped; out-of-range values clamp to field
-  bounds; malformed numerals or string values containing control
-  characters reset that field to its default. An interrupted save is
+  `settings.cfg` without unlinking the backup until the heal succeeds),
+  otherwise compiled defaults, one log line, and the retained `.bak` is
+  left in place; unknown keys are skipped; out-of-range values clamp to
+  field bounds; malformed numerals or string values containing control
+  characters reset that field to its default, and one additional log
+  line names how many fields were reset (the values silently revert and
+  the next save makes that permanent). An interrupted save is
   reconciled at
   load: an orphaned `settings.tmp` is promoted only when `settings.cfg`
   is missing (the CRC gate then has the final word on it); when
-  `settings.cfg` exists, the orphaned `.tmp` is discarded, and the `.bak`
+  `settings.cfg` exists and passes a CRC probe, the orphaned `.tmp` is
+  discarded — but when the cfg fails the probe beside a *validating*
+  `.tmp` (e.g. a heal save interrupted after its tmp write), the `.tmp`
+  is promoted over the corrupt cfg — and the `.bak`
   is restored only when neither cfg nor tmp survives.
 - *Save*: write `settings.tmp` fully and close it, unlink the superseded
   `.bak`, rotate the previous `settings.cfg` to `settings.bak`, then
@@ -152,7 +157,16 @@ Semantics:
   last known-good copy -- but it is unlinked during every save attempt
   (FatFs `f_rename` cannot overwrite an existing destination), so a
   failed rotation destroys the older backup while `settings.cfg`
-  survives. Saving is refused while the boot load could not account for
+  survives. The first save after a `.bak` recovery is the exception:
+  `settings.cfg` is then the known-corrupt file and `.bak` the *only*
+  good copy, so it is never unlinked -- the corrupt cfg is displaced
+  directly and the tmp renamed over it, keeping `.bak` untouched until
+  the next save's rotation. Every failure path in that heal mode
+  leaves either the validating `.bak` or the complete promotable
+  `settings.tmp` on the card (a failed promotion deliberately retains
+  the tmp; the next boot's reconciliation promotes it), so a retry or
+  a reboot always recovers instead of dead-ending the store. Saving is
+  refused while the boot load could not account for
   the card's content (SD error, or `settings.cfg` and `.bak` both
   unreadable): the RAM image is then compiled defaults, and writing it
   could clobber a live `settings.cfg` after a late card insertion --

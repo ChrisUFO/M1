@@ -75,7 +75,12 @@ typedef struct
  *  fallback is absent or equally unreadable leaves the compiled
  *  defaults in effect (logged once each). When settings.cfg is
  *  unreadable but settings.bak passes the same checks, the .bak content
- *  is adopted (logged once, both files left in place). Returns true
+ *  is adopted (logged once, both files left in place; the first save
+ *  afterwards heals settings.cfg while keeping .bak -- then the only
+ *  good copy -- untouched until the heal succeeds). A CRC-valid file
+ *  whose values needed per-field resets (malformed numeral, control
+ *  byte in a string value) loads normally with one additional warning
+ *  naming how many fields reverted to their default. Returns true
  *  iff a persisted file was found and CRC-validated -- directly or via
  *  the .bak fallback (individual out-of-range values may still have
  *  been clamped); false when defaults are in effect. Never blocks or
@@ -92,7 +97,8 @@ const S_M1_Settings_t *settings_get(void);
  *  field, settings_save() refuses and warns rather than emit a
  *  corruptible line format. The file parser cannot introduce one: a
  *  loaded value containing a control byte resets that field to its
- *  default. Setters update RAM only; persistence is
+ *  default (and settings_init() logs one warning naming how many
+ *  fields were reset). Setters update RAM only; persistence is
  *  settings_save(). */
 void settings_set_brightness_pct(uint8_t pct);
 void settings_set_screen_timeout_s(uint16_t seconds);
@@ -117,6 +123,17 @@ void settings_set_bt_interval_ms(uint16_t interval_ms);
  *  .bak is the last known-good copy -- it is unlinked during every
  *  save attempt, so a failed rotation destroys the older backup while
  *  settings.cfg survives.
+ *
+ *  Heal save: the FIRST save after settings_init() adopted settings.bak
+ *  (settings.cfg corrupt on disk) uses a protective ordering instead --
+ *  settings.bak is then the only good copy, so it is never unlinked:
+ *  the known-corrupt settings.cfg is displaced directly and the
+ *  complete settings.tmp is renamed over it, keeping .bak untouched
+ *  until the next save's rotation. Every failure path in this mode
+ *  leaves either the validating .bak or the complete promotable
+ *  settings.tmp on the card (a failed promotion deliberately retains
+ *  the tmp; the next boot's reconciliation promotes it), so a retry
+ *  or a reboot always recovers and the store can never dead-end.
  *
  *  Refused (false, one warning) when settings_init() could not account
  *  for the card's content: absent/failed SD, or a settings.cfg that is

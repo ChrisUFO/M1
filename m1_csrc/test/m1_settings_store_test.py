@@ -60,6 +60,7 @@ SETTER_FUNCTIONS = [
 ]
 
 FILE_FUNCTIONS = [
+    "settings_file_crc_ok",
     "settings_recover_replace",
     "settings_read_and_validate",
     "settings_load_file",
@@ -291,6 +292,7 @@ int main(void)
         CHECK(strstr(buf, "device_name=M1\r\n") != NULL, "default name serialized");
         CHECK(settings_parse_buffer(buf, len), "parse defaults file succeeds");
         CHECK(settings_equal(&g_m1_settings, &ref), "defaults round-trip identical");
+        CHECK(g_settings_field_resets == 0u, "clean parse resets no field");
     }
 
     /* 4: CRC tamper detection */
@@ -412,6 +414,7 @@ int main(void)
         CHECK(g_m1_settings.screen_timeout_s == 45, "trailing garbage -> default");
         CHECK(g_m1_settings.subghz_power_dbm == 0, "double sign -> default");
         CHECK(g_m1_settings.subghz_freq_hz == 0, "i64 overflow -> default");
+        CHECK(g_settings_field_resets == 5u, "malformed numerals counted: 5 fields reset");
     }
 
     /* 11: string fields */
@@ -442,6 +445,7 @@ int main(void)
         CHECK(strcmp(g_m1_settings.device_name, "M1") == 0, "interior SOH byte -> field default");
         CHECK(g_m1_settings.bt_adv_name[0] == '\0', "interior DEL byte -> field default");
         CHECK(g_m1_settings.led_notifications == 0, "healthy fields unaffected by a sibling's control byte");
+        CHECK(g_settings_field_resets == 2u, "control-byte strings counted: 2 fields reset");
     }
 
     /* 12: version gate */
@@ -1058,7 +1062,48 @@ int main(void)
     CHECK(vfs_exists(SETTINGS_PATH) && !vfs_exists(SETTINGS_TMP_PATH), "garbage tmp was promoted to final");
     CHECK(g_m1_settings.brightness_pct == 100, "defaults after CRC rejection of promoted tmp");
 
-    /* 8: save failure modes never destroy the previous good file */
+    /* 7g: corrupt final + VALIDATING tmp (a heal save interrupted after
+    *     its tmp write -- power cut before the corrupt cfg was
+    *     displaced): the tmp is the newer good candidate and is
+    *     promoted over the corrupt cfg; .bak (older good copy) kept */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false;
+    {
+        size_t tl;
+        settings_reset_defaults();
+        g_m1_settings.brightness_pct = 18;
+        strcpy(g_m1_settings.device_name, "Rescued");
+        CHECK(settings_serialize(s_settings_work, sizeof(s_settings_work), &tl),
+              "serialize the interrupted heal-save image");
+        vfs_put(SETTINGS_TMP_PATH, s_settings_work);
+    }
+    vfs_put(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=17\r\ncrc=DEADBEEF\r\n");
+    vfs_put_valid(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=16\r\n");
+    settings_reset_defaults();
+    CHECK(settings_load_file() == SETTINGS_LOAD_OK, "interrupted heal save: validating tmp promoted over corrupt cfg");
+    CHECK(g_m1_settings.brightness_pct == 18 && strcmp(g_m1_settings.device_name, "Rescued") == 0,
+          "promoted tmp is the newer content");
+    CHECK(!vfs_exists(SETTINGS_TMP_PATH) && vfs_exists(SETTINGS_BAK_PATH),
+          "tmp consumed by the promotion, .bak kept");
+    CHECK(!g_settings_cfg_unreadable, "boot promotion leaves no heal state (cfg is good)");
+
+    /* 7h: corrupt final + garbage tmp + validating .bak -> the garbage
+     *     tmp fails the same CRC probe and is discarded; the .bak
+     *     fallback still recovers */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false;
+    vfs_put(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=17\r\ncrc=DEADBEEF\r\n");
+    vfs_put(SETTINGS_TMP_PATH, "garbage, not a settings file");
+    vfs_put_valid(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=16\r\ndevice_name=Rescued\r\n");
+    CHECK(settings_load_file() == SETTINGS_LOAD_RECOVERED, "corrupt cfg + garbage tmp falls back to .bak");
+    CHECK(!vfs_exists(SETTINGS_TMP_PATH), "garbage tmp discarded beside the corrupt cfg");
+    CHECK(g_m1_settings.brightness_pct == 16, "recovered values come from the .bak");
+    CHECK(g_settings_cfg_unreadable, "recovery arms the heal ordering for the next save");
+
+    /* 8: save failure modes never destroy the previous good file
+     *    (these exercise the NORMAL rotation: the heal-ordering switch
+     *    is explicitly disarmed so intermediate tests cannot leak it) */
+    g_settings_cfg_unreadable = false;
     /* 8a: tmp open failure */
     vfs_reset(); fault_reset();
     vfs_put_valid(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=90\r\n");
@@ -1223,6 +1268,9 @@ int main(void)
     CHECK(g_m1_settings.brightness_pct == 16, "recovered values in effect after init");
     g_m1_settings.brightness_pct = 18;
     CHECK(settings_save(), "save permitted after .bak recovery (no dead-end)");
+    CHECK(!g_settings_cfg_unreadable, "successful heal clears the corrupt-cfg state");
+    CHECK_FILE_EQ(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=16\r\ndevice_name=Rescued\r\n",
+                  "heal keeps the recovered .bak (the corrupt cfg is NOT rotated into it)");
     {
         settings_reset_defaults();
         g_settings_ready = false; g_settings_loaded_ok = false;
@@ -1230,8 +1278,114 @@ int main(void)
         CHECK(settings_load_file() == SETTINGS_LOAD_OK, "reboot-equivalent reload of the healed cfg");
         CHECK(g_m1_settings.brightness_pct == 18, "post-recovery edit persisted");
         CHECK(strcmp(g_m1_settings.device_name, "Rescued") == 0, "recovered string persisted through the heal");
-        CHECK(vfs_exists(SETTINGS_BAK_PATH), "healing save rotated the corrupt cfg to .bak");
+        CHECK(vfs_exists(SETTINGS_BAK_PATH), "heal leaves the recovered .bak in place for the next rotation");
     }
+
+    /* 11e2: the save AFTER a heal rotates normally again (the corrupt
+     *       cfg is gone; the healed cfg is the rotation's subject) */
+    {
+        const char *cfg = vfs_get(SETTINGS_PATH);
+        CHECK(cfg != NULL, "healed cfg present before the post-heal save");
+        if (cfg != NULL) { strncpy(prev_content, cfg, VFS_CAP - 1); prev_content[VFS_CAP - 1] = '\0'; }
+        g_settings_ready = true; /* the reload block above disarmed init state */
+        g_m1_settings.brightness_pct = 19;
+        CHECK(settings_save(), "post-heal save rotates normally");
+        CHECK(strcmp(vfs_get(SETTINGS_BAK_PATH), prev_content) == 0,
+              "rotation after the heal archives the healed cfg as .bak");
+    }
+
+    /* 11f: heal-save fault injection (RECOVERED state) -- the corrupt
+     *      cfg cannot be displaced (e.g. write-protected card): the
+     *      abort keeps the .bak (the ONLY good copy) and the corrupt
+     *      cfg for a retry; the dead-end of iteration 4 cannot occur */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false; g_settings_save_permitted = false;
+    vfs_put(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=17\r\ncrc=DEADBEEF\r\n");
+    vfs_put_valid(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=16\r\ndevice_name=Rescued\r\n");
+    CHECK(settings_init() == true, "recovered boot for the heal fault tests");
+    g_m1_settings.brightness_pct = 18;
+    strcpy(g_fail_unlink_path, SETTINGS_PATH);
+    CHECK(!settings_save(), "heal save aborts when the corrupt cfg cannot be displaced");
+    CHECK(strcmp(vfs_get(SETTINGS_PATH), "#ver=1\r\nbrightness_pct=17\r\ncrc=DEADBEEF\r\n") == 0,
+          "corrupt cfg still in place after the aborted heal");
+    CHECK_FILE_EQ(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=16\r\ndevice_name=Rescued\r\n",
+                  "the .bak -- the only good copy -- survives the aborted heal save");
+    CHECK(!vfs_exists(SETTINGS_TMP_PATH), "tmp cleaned up by the abort");
+    CHECK(s_log_warn == 3, "recovery warn + distinct abort warn + save-failed warn");
+    CHECK(g_settings_cfg_unreadable, "abort keeps the heal state armed for a retry");
+    fault_reset();
+    CHECK(settings_save(), "heal save succeeds once the fault clears");
+    CHECK(!g_settings_cfg_unreadable, "retry clears the corrupt-cfg state");
+    {
+        settings_reset_defaults();
+        g_settings_ready = false; g_settings_loaded_ok = false;
+        fault_reset();
+        CHECK(settings_load_file() == SETTINGS_LOAD_OK, "reboot-equivalent reload after the retried heal");
+        CHECK(g_m1_settings.brightness_pct == 18, "healed edit persisted by the retry");
+        CHECK(strcmp(g_m1_settings.device_name, "Rescued") == 0, "recovered string persisted by the retry");
+    }
+
+    /* 11g: heal-save promotion failure (RECOVERED state) -- the corrupt
+     *      cfg was displaced but the tmp could not be renamed over it:
+     *      the COMPLETE tmp is deliberately retained (the next boot
+     *      promotes it) and the .bak stays the good copy, so a reboot
+     *      recovers instead of dead-ending */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false; g_settings_save_permitted = false;
+    vfs_put(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=17\r\ncrc=DEADBEEF\r\n");
+    vfs_put_valid(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=16\r\ndevice_name=Rescued\r\n");
+    CHECK(settings_init() == true, "recovered boot for the promotion fault test");
+    g_m1_settings.brightness_pct = 18;
+    strcpy(g_fail_rename_old, SETTINGS_TMP_PATH); strcpy(g_fail_rename_new, SETTINGS_PATH);
+    g_fail_rename_code = FR_DISK_ERR;
+    CHECK(!settings_save(), "heal promotion failure reported");
+    CHECK(!vfs_exists(SETTINGS_PATH), "corrupt cfg was displaced before the failed promotion");
+    CHECK_FILE_EQ(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=16\r\ndevice_name=Rescued\r\n",
+                  ".bak remains the good copy after the failed promotion");
+    {
+        const char *tm = vfs_get(SETTINGS_TMP_PATH);
+        CHECK(tm != NULL, "complete tmp retained after the failed promotion (not cleaned up)");
+        if (tm != NULL)
+        {
+            CHECK(strstr(tm, "brightness_pct=18\r\n") != NULL, "retained tmp carries the pending edit");
+            CHECK(strstr(tm, "device_name=Rescued\r\n") != NULL, "retained tmp carries the recovered string");
+        }
+    }
+    /* reboot: cfg gone + validating tmp -> promoted, store healthy again */
+    settings_reset_defaults();
+    g_settings_ready = false; g_settings_loaded_ok = false; g_settings_save_permitted = false;
+    fault_reset();
+    CHECK(settings_init() == true, "reboot after the failed promotion loads the retained tmp");
+    CHECK(g_m1_settings.brightness_pct == 18, "pending edit recovered by the boot promotion");
+    CHECK(strcmp(g_m1_settings.device_name, "Rescued") == 0, "recovered string survives the failed promotion");
+    CHECK(!g_settings_cfg_unreadable, "boot promotion clears the heal state (cfg is good)");
+    {
+        const char *cfg = vfs_get(SETTINGS_PATH);
+        CHECK(cfg != NULL, "promoted cfg present before the post-reboot save");
+        if (cfg != NULL) { strncpy(prev_content, cfg, VFS_CAP - 1); prev_content[VFS_CAP - 1] = '\0'; }
+        g_m1_settings.brightness_pct = 19;
+        CHECK(settings_save(), "save after the boot promotion rotates normally");
+        CHECK(strcmp(vfs_get(SETTINGS_BAK_PATH), prev_content) == 0,
+              "rotation archives the promoted cfg as .bak");
+    }
+
+    /* 12: a CRC-valid file with foreign values (control byte, malformed
+     *     numeral) loads OK but logs ONE warn naming the reset count --
+     *     the only in-band clue that a user-visible field silently
+     *     reverted before the next save makes it permanent */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false; g_settings_save_permitted = false;
+    vfs_put_valid(SETTINGS_PATH,
+                  "#ver=1\r\n"
+                  "brightness_pct=abc\r\n"
+                  "device_name=ab" "\x01" "X\r\n"
+                  "screen_timeout_s=30\r\n");
+    CHECK(settings_init() == true, "file with foreign values still loads (tolerant)");
+    CHECK(s_log_info == 1, "loaded info line emitted");
+    CHECK(s_log_warn == 1, "exactly one warn names the silent field resets");
+    CHECK(g_m1_settings.brightness_pct == 100, "malformed numeral reset to default");
+    CHECK(strcmp(g_m1_settings.device_name, "M1") == 0, "control-byte string reset to default");
+    CHECK(g_m1_settings.screen_timeout_s == 30, "healthy fields unaffected");
 
     printf("settings file IO: %d/%d checks passed\n", g_pass, g_pass + g_fail);
     return g_fail ? 1 : 0;

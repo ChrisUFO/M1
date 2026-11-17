@@ -171,6 +171,25 @@ static bool g_settings_loaded_ok = false;
  * next boot). */
 static bool g_settings_save_permitted = false;
 
+/* True while the on-disk settings.cfg is known corrupt from the boot
+ * load that recovered from settings.bak (SETTINGS_LOAD_RECOVERED):
+ * settings.bak is then the ONLY good copy on the card, so
+ * settings_write_file() displaces the corrupt settings.cfg directly
+ * instead of unlinking .bak to make room for the rotation -- a failure
+ * or power cut inside that heal save must always leave either the
+ * validating .bak or the complete promotable settings.tmp, never zero
+ * good copies. Cleared by the first successful (healing) write. */
+static bool g_settings_cfg_unreadable = false;
+
+/* Fields reset to their compiled default by the LAST
+ * settings_parse_buffer() run (malformed numeral, or a control byte
+ * inside a string value). Pure-core bookkeeping so the extraction
+ * harnesses see it; settings_init() turns a nonzero count after a
+ * successful load into one warn -- without it a CRC-valid foreign
+ * value silently reverts a user-visible field and the next save makes
+ * the loss permanent with no in-band diagnostic. */
+static uint32_t g_settings_field_resets = 0u;
+
 /* ====================== SETTINGS_PURE_CORE_END ====================== */
 
 /* Shared file-IO work buffer for settings_load_file()/settings_write_file().
@@ -354,6 +373,7 @@ static void settings_apply_kv(const char *line, size_t line_len)
 			unsigned char ch = (unsigned char)eq[1U + i];
 			if ((ch < 0x20U) || (ch == 0x7FU))
 			{
+				g_settings_field_resets++;
 				settings_store_field_default(fd);
 				return;
 			}
@@ -365,6 +385,7 @@ static void settings_apply_kv(const char *line, size_t line_len)
 		int64_t v;
 		if (!settings_parse_i64(eq + 1, line_len - k - 1U, &v))
 		{
+			g_settings_field_resets++;
 			settings_store_field_default(fd);
 			return;
 		}
@@ -384,6 +405,7 @@ static bool settings_parse_buffer(const char *buf, size_t len)
 	if (len == 0U) { return false; }
 
 	g_m1_settings = s_settings_defaults;
+	g_settings_field_resets = 0u; /* counts only this parse's per-field resets */
 
 	while (i < len)
 	{
@@ -507,16 +529,41 @@ static bool settings_serialize(char *out, size_t cap, size_t *out_len)
 	return true;
 }
 
+/* Content probe for reconciliation: bounded read + CRC gate only, no
+ * parse and no application to the live struct (the loader keeps the
+ * final word). Shared by settings_recover_replace() to decide whether
+ * an existing settings.cfg is one of ours before discarding a
+ * settings.tmp beside it. */
+static bool settings_file_crc_ok(const TCHAR *path)
+{
+	FIL f;
+	FRESULT fr;
+	UINT br = 0;
+
+	fr = f_open(&f, path, FA_READ);
+	if (fr != FR_OK) { return false; }
+
+	fr = f_read(&f, s_settings_work, (UINT)sizeof(s_settings_work), &br);
+	if (fr != FR_OK) { (void)f_close(&f); return false; }
+	if (!f_eof(&f)) { (void)f_close(&f); return false; } /* oversize: not ours */
+	if (f_close(&f) != FR_OK) { return false; }
+
+	return settings_buffer_crc_valid(s_settings_work, (size_t)br);
+}
+
 /* Deterministically reconcile settings.cfg/.tmp/.bak left behind by a
  * save interrupted at any point (power loss, SD removal). Must run before
  * settings.cfg is opened for reading.
  *
  * An orphaned settings.tmp is promoted ONLY when settings.cfg is absent;
- * when settings.cfg exists the tmp is discarded -- it may be an
- * incomplete write whose cleanup path never ran. The .bak is consumed
- * only when neither cfg nor tmp survives. Nothing here validates
- * content: the CRC gate in settings_load_file() has the final word on
- * whatever reconciliation promotes. */
+ * when settings.cfg exists AND passes the CRC probe the tmp is discarded
+ * -- it may be an incomplete write whose cleanup path never ran. The one
+ * exception is a settings.cfg that FAILS the probe beside a tmp that
+ * PASSES it (e.g. a heal save interrupted after its tmp write): the tmp
+ * is then the newer good candidate and displaces the corrupt cfg. The
+ * .bak is consumed only when neither cfg nor tmp survives. Content
+ * decisions use the CRC probe above; the full CRC + parse gate in
+ * settings_load_file() has the final word on whatever this promotes. */
 static void settings_recover_replace(void)
 {
 	bool final_exists = (f_stat(SETTINGS_PATH, NULL) == FR_OK);
@@ -538,7 +585,20 @@ static void settings_recover_replace(void)
 	}
 	else if (final_exists && tmp_exists)
 	{
-		(void)f_unlink(SETTINGS_TMP_PATH); /* orphan from an abandoned attempt */
+		if (!settings_file_crc_ok(SETTINGS_PATH) && settings_file_crc_ok(SETTINGS_TMP_PATH))
+		{
+			/* Corrupt cfg + validating tmp: displace the corrupt cfg so
+			 * the newer good candidate can be promoted. A failed unlink
+			 * or rename leaves the pair for the load's .bak fallback. */
+			if (f_unlink(SETTINGS_PATH) == FR_OK)
+			{
+				(void)f_rename(SETTINGS_TMP_PATH, SETTINGS_PATH);
+			}
+		}
+		else
+		{
+			(void)f_unlink(SETTINGS_TMP_PATH); /* orphan from an abandoned attempt */
+		}
 	}
 	else
 	{
@@ -585,13 +645,16 @@ static settings_load_status_t settings_read_and_validate(const TCHAR *path)
  * when the backup passes the same content gates it is adopted
  * (SETTINGS_LOAD_RECOVERED) -- exactly the scenario the retained backup
  * exists for -- and the boot again accounted for the card's content, so
- * saving stays permitted and the next save heals settings.cfg. The
- * fallback is strictly content-gated: a missing or failing .bak leaves
- * the CORRUPT outcome with both files untouched on disk. */
+ * saving stays permitted and the next save heals settings.cfg (marked
+ * by g_settings_cfg_unreadable, which arms the heal ordering in
+ * settings_write_file()). The fallback is strictly content-gated: a
+ * missing or failing .bak leaves the CORRUPT outcome with both files
+ * untouched on disk. */
 static settings_load_status_t settings_load_file(void)
 {
 	settings_load_status_t st;
 
+	g_settings_cfg_unreadable = false;
 	settings_reset_defaults(); /* guaranteed defaults unless a valid file overlays them */
 	settings_recover_replace();
 
@@ -599,6 +662,7 @@ static settings_load_status_t settings_load_file(void)
 	if ((st == SETTINGS_LOAD_CORRUPT)
 	    && (settings_read_and_validate(SETTINGS_BAK_PATH) == SETTINGS_LOAD_OK))
 	{
+		g_settings_cfg_unreadable = true; /* cfg on the card is known corrupt */
 		return SETTINGS_LOAD_RECOVERED;
 	}
 	return st;
@@ -610,7 +674,16 @@ static settings_load_status_t settings_load_file(void)
  * rotate the previous settings.cfg to settings.bak, then rename
  * settings.tmp to settings.cfg. A failure at any step leaves the previous
  * good settings.cfg in place (or restores it); while it exists, the
- * retained .bak is the last known-good copy. Returns true on success. */
+ * retained .bak is the last known-good copy. Returns true on success.
+ *
+ * Heal mode (g_settings_cfg_unreadable, set by the SETTINGS_LOAD_RECOVERED
+ * boot): the current settings.cfg is KNOWN corrupt and settings.bak is
+ * the only good copy, so the rotation's first step (unlinking .bak)
+ * would destroy it. Instead the corrupt cfg is displaced directly and
+ * .bak stays untouched until the next save's rotation: every failure
+ * path then leaves either the validating .bak or the complete promotable
+ * settings.tmp on the card, so a retry (or the next boot's
+ * reconciliation) can always recover. */
 static bool settings_write_file(void)
 {
 	size_t len = 0;
@@ -637,6 +710,36 @@ static bool settings_write_file(void)
 	{
 		(void)f_unlink(SETTINGS_TMP_PATH);
 		return false;
+	}
+
+	if (g_settings_cfg_unreadable)
+	{
+		/* Heal save after a .bak recovery: settings.cfg is the known-
+		 * corrupt file and settings.bak the only good copy. Displace the
+		 * corrupt cfg (FatFs renames cannot overwrite) and promote the
+		 * tmp over it, keeping .bak for the next save's rotation. A
+		 * missing cfg is fine (e.g. a previous heal attempt's failed
+		 * promotion left only the tmp); any other unlink failure (e.g. a
+		 * write-protected card) aborts with the tmp cleaned up and the
+		 * actual cause named -- .bak is untouched either way. */
+		fr = f_unlink(SETTINGS_PATH);
+		if ((fr != FR_OK) && (fr != FR_NO_FILE) && (fr != FR_NO_PATH))
+		{
+			(void)f_unlink(SETTINGS_TMP_PATH);
+			M1_LOG_W(M1_LOGDB_TAG, "Settings corrupt cfg not removable, save aborted\r\n");
+			return false;
+		}
+
+		if (f_rename(SETTINGS_TMP_PATH, SETTINGS_PATH) != FR_OK)
+		{
+			/* Deliberately NOT unlinking the tmp: it is complete, and
+			 * with the corrupt cfg gone the next boot's reconciliation
+			 * promotes it. .bak also survives as the older good copy. */
+			return false;
+		}
+
+		g_settings_cfg_unreadable = false; /* healed: cfg is good again, .bak kept */
+		return true;
 	}
 
 	/* Clear the superseded backup so the rotation rename cannot hit
@@ -706,6 +809,18 @@ bool settings_init(void)
 	case SETTINGS_LOAD_SD_ERROR:
 		M1_LOG_W(M1_LOGDB_TAG, "SD unavailable, settings defaults in effect\r\n");
 		break;
+	}
+
+	/* A file that passed the CRC gate can still have needed per-field
+	 * resets (malformed numeral, control byte in a string value): the
+	 * field(s) silently reverted to defaults and the next save makes
+	 * that permanent, so name the count once -- the only in-band clue
+	 * the operator gets. */
+	if (((st == SETTINGS_LOAD_OK) || (st == SETTINGS_LOAD_RECOVERED))
+	    && (g_settings_field_resets != 0u))
+	{
+		M1_LOG_W(M1_LOGDB_TAG, "Settings load: %lu field(s) reset to default\r\n",
+		         (unsigned long)g_settings_field_resets);
 	}
 	return g_settings_loaded_ok;
 }
