@@ -25,8 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   readout, and Reset defaults — restores compiled defaults, persists them
   over the settings file, and reboots; the boot-signed flash metadata sector
   is never touched. Both screens apply edits immediately and persist the
-  whole editing session with one atomic save on exit; a refused save is
-  displayed rather than hidden. Screen value logic (stepping, bounds,
+  whole editing session with one atomic save on exit, skipped when the
+  session edited nothing (a browse-only visit never writes the card and
+  never sees a failure notice); a refused save of real edits is
+  displayed rather than hidden, and modal button loops never act on an
+  empty button-event receive (virtual-keyboard seam guard). Screen
+  value logic (stepping, bounds,
   labels) lives in a host-testable pure-core region of `m1_csrc/m1_settings.c`
   that future settings screens (Sub-GHz, Bluetooth) are expected to copy.
   Host coverage: new settings-screens suite; the backlight/saver suite now

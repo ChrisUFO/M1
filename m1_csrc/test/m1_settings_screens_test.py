@@ -11,7 +11,10 @@ mocks of the code under test):
 2. Static layer: reads the actual source files and verifies the wiring
    seams -- menu records and parent array, live-apply calls
    (fb_set_brightness_pct / fb_set_led_notifications_enabled), the
-   exit-save path, the runtime screen-timeout consumer (and that no
+   exit-save path (session-dirty gate: unchanged sessions skip the save
+   and its failure notice), the button-event receive guards of every
+   modal loop (an empty receive is never acted on, like the vkb seam),
+   the runtime screen-timeout consumer (and that no
    compile-time LCD_SAVER_PERIOD remains anywhere in the app sources),
    the LED-notification gate placement (success/notify gated, error and
    power never gated, no lp5814_* bypass), the boot application order,
@@ -183,6 +186,41 @@ def static_seam_tests():
     def contains(hay, needle):
         return needle in hay
 
+    def fn_body(marker, endmarker):
+        fn = settings_c[settings_c.index(marker) :]
+        return fn[: fn.index(endmarker)]
+
+    # --- Button-event receive guard in every modal loop (vkb seam) ---
+    guard = "if ( ret!=pdTRUE )"
+    for name, marker, endmarker in (
+        (
+            "settings_about",
+            "void settings_about(void)\n{",
+            "} // void settings_about(void)",
+        ),
+        (
+            "settings_lcd_notifications",
+            "void settings_lcd_notifications(void)\n{",
+            "} // void settings_lcd_notifications(void)",
+        ),
+        (
+            "settings_system",
+            "void settings_system(void)\n{",
+            "} // void settings_system(void)",
+        ),
+        (
+            "settings_system_reset_confirm",
+            "static void settings_system_reset_confirm(void)\n{",
+            "} // static void settings_system_reset_confirm(void)",
+        ),
+    ):
+        fn = fn_body(marker, endmarker)
+        i_recv = fn.index("xQueueReceive(button_events_q_hdl, &this_button_status, 0);")
+        CHECK(
+            i_recv < fn.index(guard) < fn.index("this_button_status.event["),
+            f"{name} guards the button-event read before any event use (empty receive skipped)",
+        )
+
     # --- Menu wiring: two new leaves, parent count 7, new screens first ---
     CHECK(
         contains(
@@ -253,13 +291,25 @@ def static_seam_tests():
         "LED toggle updates the store image AND applies live",
     )
     CHECK(
-        contains(lcd_fn, "settings_exit_save(); // Persist this session atomically"),
+        contains(
+            lcd_fn,
+            "settings_exit_save(session_dirty); // Persist this session atomically",
+        ),
         "BACK persists through the shared exit-save path",
     )
     CHECK(
-        contains(settings_c, "if ( !settings_save() )")
+        contains(settings_c, "if ( session_dirty && !settings_save() )")
         and contains(settings_c, "Save failed"),
-        "exit path surfaces a refused/failed save to the user",
+        "exit path saves only an edited session, and surfaces a refused/failed save",
+    )
+    CHECK(
+        contains(lcd_fn, "session_dirty = 0u;")
+        and contains(lcd_fn, "session_dirty = 1u;"),
+        "LCD screen tracks whether the session edited any value",
+    )
+    CHECK(
+        lcd_fn.index("session_dirty = 0u;") < lcd_fn.index("while (1 )"),
+        "LCD session-dirty flag starts clean, so a browse-only exit saves nothing",
     )
     CHECK(not contains(settings_c, "lp5814_"), "screens never drive lp5814_* directly")
 
@@ -278,6 +328,30 @@ def static_seam_tests():
     CHECK(
         contains(settings_c, "fs_get_free_space(&free_b)"),
         "storage free space read via fs_get_free_space()",
+    )
+    CHECK(
+        contains(
+            settings_c,
+            "session_dirty |= settings_system_edit_name(name_buf, sizeof(name_buf));",
+        ),
+        "System screen marks the session dirty only when the name edit reports a change",
+    )
+    edit_fn = fn_body(
+        "static uint8_t settings_system_edit_name(char *name_buf, size_t buf_size)\n{",
+        "} // static uint8_t settings_system_edit_name(...)",
+    )
+    CHECK(
+        edit_fn.index("strcmp(new_name, name_buf)!=0")
+        < edit_fn.index("settings_set_device_name(new_name);"),
+        "confirming an unchanged name never reaches the store setter (no dirty, no save)",
+    )
+    sys_fn = fn_body("void settings_system(void)\n{", "} // void settings_system(void)")
+    CHECK(
+        contains(
+            sys_fn,
+            "settings_exit_save(session_dirty); // Persist this session atomically",
+        ),
+        "System screen BACK persists through the shared exit-save path",
     )
     reset_fn = settings_c[
         settings_c.index("static void settings_system_reset_confirm(void)\n{") :

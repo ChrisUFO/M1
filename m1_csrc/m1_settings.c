@@ -23,10 +23,14 @@
 *     clamping setter can never make displayed, effective and persisted
 *     values diverge; the exit
 *     path calls settings_exit_save() so one atomic settings_save()
-*     persists the whole editing session, and a refused save is shown,
-*     not hidden;
+*     persists the editing session -- skipped entirely when the session
+*     changed nothing, so a browse-only visit never touches the card --
+*     and a refused save of real edits is shown, not hidden;
 *   - the button loop is the standard xQueueReceive(main_q_hdl) +
-*     xQueueReceive(button_events_q_hdl, 0) pattern of settings_about().
+*     xQueueReceive(button_events_q_hdl, 0) pattern of settings_about(),
+*     with the event-receive result checked (pdFALSE skips the event,
+*     like m1_vkb_get_filename()) so a stale or uninitialized button
+*     struct is never acted on.
 *  Value stepping/formatting logic lives in the host-testable
 *  M1_SETTINGS_SCREENS_PURE_CORE region below.
 *
@@ -81,11 +85,11 @@ void settings_about(void);
 static void settings_about_display_choice(uint8_t choice);
 void settings_lcd_notifications(void);
 static void settings_lcd_gui_update(uint8_t sel_row, uint8_t bright, uint16_t timeout_s, uint8_t led_notify);
-static void settings_exit_save(void);
+static void settings_exit_save(uint8_t session_dirty);
 void settings_str_clip(char *dst, size_t dst_size, const char *src);
 void settings_system(void);
 static void settings_system_gui_update(uint8_t sel_row, const char *dev_name, uint8_t storage_ok, uint64_t free_b, uint32_t total_kb);
-static void settings_system_edit_name(char *name_buf, size_t buf_size);
+static uint8_t settings_system_edit_name(char *name_buf, size_t buf_size);
 static void settings_system_reset_confirm(void);
 
 /* ================= M1_SETTINGS_SCREENS_PURE_CORE BEGIN ================= */
@@ -268,6 +272,10 @@ void settings_about(void)
 				// Notification is only sent to this task when there's any button activity,
 				// so it doesn't need to wait when reading the event from the queue
 				ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+				if ( ret!=pdTRUE )
+				{
+					continue; // No event behind the notification: never act on a stale struct
+				} // if ( ret!=pdTRUE )
 				if ( this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK ) // user wants to exit?
 				{
 					; // Do extra tasks here if needed
@@ -380,18 +388,23 @@ static void settings_about_display_choice(uint8_t choice)
 /*============================================================================*/
 /**
   * @brief Shared exit path for settings screens: persist the editing
-  *        session, then reset the queue for the return to the menu.
+  *        session when it changed something, then reset the queue for
+  *        the return to the menu.
   *
-  * One atomic settings_save() per screen exit (the store's single writer
-  * is this UI task; save runs alone, never concurrent with another FatFs
-  * user). A refused/failed save is already logged by the store -- here it
-  * is also shown to the user for ~1.5 s, never silently swallowed, and
-  * the in-RAM/live-applied edits stay in effect for this power cycle.
+  * One atomic settings_save() per edited screen exit (the store's single
+  * writer is this UI task; save runs alone, never concurrent with another
+  * FatFs user). A session that edited nothing skips the save entirely:
+  * no SD churn for a browse-only visit, and no misleading "Save failed"
+  * notice when the boot load was refused but nothing was changed. A
+  * refused/failed save of real edits is already logged by the store --
+  * here it is also shown to the user for ~1.5 s, never silently
+  * swallowed, and the in-RAM/live-applied edits stay in effect for this
+  * power cycle.
   */
 /*============================================================================*/
-static void settings_exit_save(void)
+static void settings_exit_save(uint8_t session_dirty)
 {
-	if ( !settings_save() )
+	if ( session_dirty && !settings_save() )
 	{
 		u8g2_FirstPage(&m1_u8g2);
 		u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
@@ -400,10 +413,10 @@ static void settings_exit_save(void)
 		u8g2_DrawStr(&m1_u8g2, 13, 38, "apply until reboot");
 		m1_u8g2_nextpage(); // Update display RAM
 		vTaskDelay(pdMS_TO_TICKS(1500));
-	} // if ( !settings_save() )
+	} // if ( session_dirty && !settings_save() )
 
 	xQueueReset(main_q_hdl); // Reset main q before return
-} // static void settings_exit_save(void)
+} // static void settings_exit_save(uint8_t session_dirty)
 
 
 
@@ -481,7 +494,8 @@ static void settings_lcd_gui_update(uint8_t sel_row, uint8_t bright, uint16_t ti
   * fb_set_brightness_pct() so the change is visible immediately; the LED
   * gate through fb_set_led_notifications_enabled(); the timeout is read
   * by lcd_saver_update() on its next periodic check) and are persisted by
-  * one atomic settings_save() when the user leaves the screen with BACK.
+  * one atomic settings_save() when the user leaves the screen with BACK,
+  * skipped entirely when the session edited nothing.
   */
 /*============================================================================*/
 void settings_lcd_notifications(void)
@@ -489,7 +503,7 @@ void settings_lcd_notifications(void)
 	S_M1_Buttons_Status this_button_status;
 	S_M1_Main_Q_t q_item;
 	BaseType_t ret;
-	uint8_t sel_row, bright, led_notify;
+	uint8_t sel_row, bright, led_notify, session_dirty;
 	uint16_t timeout_s;
 	int8_t dir;
 
@@ -498,6 +512,7 @@ void settings_lcd_notifications(void)
 	led_notify = settings_get()->led_notifications;
 
 	sel_row = 0;
+	session_dirty = 0u; // Set by any value edit; BACK saves only when set
 	settings_lcd_gui_update(sel_row, bright, timeout_s, led_notify);
 
 	while (1 ) // Main loop of this task
@@ -514,9 +529,13 @@ void settings_lcd_notifications(void)
 				// Notification is only sent to this task when there's any button activity,
 				// so it doesn't need to wait when reading the event from the queue
 				ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+				if ( ret!=pdTRUE )
+				{
+					continue; // No event behind the notification: never act on a stale struct
+				} // if ( ret!=pdTRUE )
 				if ( this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK ) // user wants to exit?
 				{
-					settings_exit_save(); // Persist this session atomically
+					settings_exit_save(session_dirty); // Persist this session atomically
 					break; // Exit and return to the calling task (subfunc_handler_task)
 				} // if ( this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK )
 				else if ( this_button_status.event[BUTTON_UP_KP_ID]==BUTTON_EVENT_CLICK ) // Previous row?
@@ -533,6 +552,7 @@ void settings_lcd_notifications(void)
 					this_button_status.event[BUTTON_RIGHT_KP_ID]==BUTTON_EVENT_CLICK ) // Adjust value?
 				{
 					dir = (this_button_status.event[BUTTON_RIGHT_KP_ID]==BUTTON_EVENT_CLICK) ? 1 : -1;
+					session_dirty = 1u; // A value edit happened: persist it on exit
 					switch (sel_row)
 					{
 						case 0: // Brightness: live preview through the feedback manager
@@ -588,7 +608,7 @@ void settings_system(void)
 	S_M1_Buttons_Status this_button_status;
 	S_M1_Main_Q_t q_item;
 	BaseType_t ret;
-	uint8_t sel_row, storage_ok;
+	uint8_t sel_row, storage_ok, session_dirty;
 	uint64_t free_b;
 	uint32_t total_kb;
 	char name_buf[33]; // store bound (32) + NUL
@@ -613,6 +633,7 @@ void settings_system(void)
 	} // if ( m1_sdcard_get_status()==SD_access_OK )
 
 	sel_row = 0; // Only the Name and Reset rows are actionable
+	session_dirty = 0u; // Set when the name edit changes it; BACK saves only when set
 	settings_system_gui_update(sel_row, name_buf, storage_ok, free_b, total_kb);
 
 	while (1 ) // Main loop of this task
@@ -629,9 +650,13 @@ void settings_system(void)
 				// Notification is only sent to this task when there's any button activity,
 				// so it doesn't need to wait when reading the event from the queue
 				ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+				if ( ret!=pdTRUE )
+				{
+					continue; // No event behind the notification: never act on a stale struct
+				} // if ( ret!=pdTRUE )
 				if ( this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK ) // user wants to exit?
 				{
-					settings_exit_save(); // Persist this session atomically
+					settings_exit_save(session_dirty); // Persist this session atomically
 					break; // Exit and return to the calling task (subfunc_handler_task)
 				} // if ( this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK )
 				else if ( this_button_status.event[BUTTON_UP_KP_ID]==BUTTON_EVENT_CLICK ||
@@ -644,7 +669,7 @@ void settings_system(void)
 				{
 					if ( sel_row==0 ) // Name: open the virtual keyboard
 					{
-						settings_system_edit_name(name_buf, sizeof(name_buf));
+						session_dirty |= settings_system_edit_name(name_buf, sizeof(name_buf));
 						settings_system_gui_update(sel_row, name_buf, storage_ok, free_b, total_kb);
 					} // if ( sel_row==0 )
 					else // Reset: ask for confirmation
@@ -757,12 +782,14 @@ static void settings_system_gui_update(uint8_t sel_row, const char *dev_name, ui
   * The keyboard seeds from the current name (the compiled default "M1"
   * is passed as generated text, so the first typed character replaces
   * it wholesale) and writes back through the shared buffer on Enter.
-  * Cancellation (BACK) leaves the current name untouched. The store
-  * setter enforces the 32-char field bound; the keyboard's own editor
-  * is 20 chars, so every reachable result already fits both.
+  * Cancellation (BACK) leaves the current name untouched, and so does
+  * confirming an unchanged name. The store setter enforces the 32-char
+  * field bound; the keyboard's own editor is 20 chars, so every
+  * reachable result already fits both. Returns 1 only when the store
+  * image was actually changed (the session has something to persist).
   */
 /*============================================================================*/
-static void settings_system_edit_name(char *name_buf, size_t buf_size)
+static uint8_t settings_system_edit_name(char *name_buf, size_t buf_size)
 {
 	char new_name[33]; // store bound (32) + NUL
 	uint8_t generated;
@@ -772,10 +799,15 @@ static void settings_system_edit_name(char *name_buf, size_t buf_size)
 
 	if ( m1_vkb_get_filename("Device name", new_name, new_name, generated) )
 	{
-		settings_set_device_name(new_name); // clamps to the store bound
-		settings_str_clip(name_buf, buf_size, settings_get()->device_name);
+		if ( strcmp(new_name, name_buf)!=0 ) // Enter on an unchanged name edits nothing
+		{
+			settings_set_device_name(new_name); // clamps to the store bound
+			settings_str_clip(name_buf, buf_size, settings_get()->device_name);
+			return 1u; // Name changed: mark the editing session
+		} // if ( strcmp(new_name, name_buf)!=0 )
 	} // if ( m1_vkb_get_filename(...) )
-} // static void settings_system_edit_name(...)
+	return 0u;
+} // static uint8_t settings_system_edit_name(...)
 
 
 
@@ -828,6 +860,10 @@ static void settings_system_reset_confirm(void)
 				// Notification is only sent to this task when there's any button activity,
 				// so it doesn't need to wait when reading the event from the queue
 				ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+				if ( ret!=pdTRUE )
+				{
+					continue; // No event behind the notification: never act on a stale struct
+				} // if ( ret!=pdTRUE )
 				if ( this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK ||
 					this_button_status.event[BUTTON_LEFT_KP_ID]==BUTTON_EVENT_CLICK ) // Cancel?
 				{

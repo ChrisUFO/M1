@@ -218,8 +218,12 @@ Consumers (PR-2 screens and their apply points):
 Settings screens share one modal idiom (documented at the top of
 `m1_csrc/m1_settings.c`): UP/DOWN select a row, LEFT/RIGHT move the
 value toward its minimum/maximum, OK activates a row action, BACK exits
-through one atomic `settings_save()` for the whole session (a refused
-save is displayed, not hidden). Future settings screens (Sub-GHz radio,
+through one atomic `settings_save()` for the whole session, skipped
+entirely when the session edited nothing (a refused save of real edits
+is displayed, not hidden). Modal button loops check the button-event
+receive result and never act on an empty receive (same guard as the
+virtual keyboard), so a stale or uninitialized event struct cannot
+trigger an action. Future settings screens (Sub-GHz radio,
 Bluetooth) copy this pattern.
 
 **Needs validation:** Document the remaining SD-card directory layout details,
