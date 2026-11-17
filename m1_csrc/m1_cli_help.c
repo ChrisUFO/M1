@@ -48,19 +48,52 @@ void cmd_m1_mtest_help_gpio(void);
 /*============================================================================*/
 BaseType_t cmd_m1_mtest_help(void)
 {
-	M1_LOG_N(M1_LOGDB_TAG, "\r\nCommand syntax: cmd_type param1 param2... \r\n");
+	/* The ID map: every mtest ID this branch actually implements, by decade.
+	 * It is the index only -- parameters and per-ID detail stay on the decade
+	 * pages ("mtest <decade>" with no parameter prints one). Emitted through
+	 * M1_LOG_N because the 200-byte CLI response buffer cannot hold it. IDs
+	 * that no handler implements are deliberately absent: the legacy pages
+	 * advertised 53/54 (folded into 52) and nothing else is claimed here. */
+	M1_LOG_N(M1_LOGDB_TAG, "\r\nCommand syntax: mtest <cmd_type> [param1] [param2]...\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "ID map by decade; \"mtest <decade>\" shows that decade's page.\r\n");
+	vTaskDelay(1); // Give the log task some time to do its job
 
-	M1_LOG_N(M1_LOGDB_TAG, "\r\n- cmd_type 0-9: basic system test\r\n");
-	M1_LOG_N(M1_LOGDB_TAG, "\r\n- cmd_type 10-19: SD card test\r\n");
-	M1_LOG_N(M1_LOGDB_TAG, "\r\n- cmd_type 20-29: LED test\r\n");
-	M1_LOG_N(M1_LOGDB_TAG, "\r\n- cmd_type 30-39: LCD test\r\n");
-	M1_LOG_N(M1_LOGDB_TAG, "\r\n- cmd_type 40-49: Infrared test\r\n");
-	M1_LOG_N(M1_LOGDB_TAG, "\r\n- cmd_type 50-59: Power test\r\n");
-	M1_LOG_N(M1_LOGDB_TAG, "\r\n- cmd_type 60-69: Sub-GHz test\r\n");
-	M1_LOG_N(M1_LOGDB_TAG, "\r\n- cmd_type 70-79: ESP32 test\r\n");
-	M1_LOG_N(M1_LOGDB_TAG, "\r\n- cmd_type 80-89: GPIO test\r\n");
-	M1_LOG_N(M1_LOGDB_TAG, "\r\n- cmd_type 90-99: NFC test\r\n");
-	
+	M1_LOG_N(M1_LOGDB_TAG, "\r\n0-9 basic system\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "  0 virtual keyboard (not enabled)   1 buzzer play\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "  2 set font (fixed at build time)  3 write text\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "  4 clear display  5 heap/stack telemetry\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "  6 reset file-browser perf counters\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "  9 firmware CRC corruption test (DEV-ONLY, not in shipped images)\r\n");
+	vTaskDelay(1); // Give the log task some time to do its job
+
+	M1_LOG_N(M1_LOGDB_TAG, "\r\n10-19 SD card\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "  10 create file  11 close file  12 open file  13 write file\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "  14 read file  17 delete file/folder  18 format drive  19 list\r\n");
+	vTaskDelay(1); // Give the log task some time to do its job
+
+	M1_LOG_N(M1_LOGDB_TAG, "\r\n20-29 LED\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "  20 fast blink RGB  21 RGB off\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "  22/23/24 direct R/G/B (legacy-equivalent)\r\n");
+	vTaskDelay(1); // Give the log task some time to do its job
+
+	M1_LOG_N(M1_LOGDB_TAG, "\r\n30-39 LCD\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "  30 backlight  31 pwr save  32 clear  33 contrast  34 ratio  35 init retry\r\n");
+	vTaskDelay(1); // Give the log task some time to do its job
+
+	M1_LOG_N(M1_LOGDB_TAG, "\r\n40-49 infrared: 40 transmit\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "50-59 power: 50 off  51 reboot  52 bc|pd [reg] read/status  59 battery info\r\n");
+	vTaskDelay(1); // Give the log task some time to do its job
+
+	M1_LOG_N(M1_LOGDB_TAG, "\r\n60-69 Sub-GHz\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "  60 init  61 CW TX (DEV-ONLY)  62 TX power\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "  63 RX  64 frontend network  68 RSSI  69 radio state\r\n");
+	vTaskDelay(1); // Give the log task some time to do its job
+
+	M1_LOG_N(M1_LOGDB_TAG, "\r\n70-79 ESP32: 70 init  71 AP list  72 AT cmd  78 reset  79 deinit\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "80-89 GPIO: 80 ext 3V3 on/off  81 ext 5V on/off\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "90-99 NFC: 90 placeholder  91 mock .m1h to SD (debug)\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "  92 live nonce harvest (debug)\r\n");
+
 	vTaskDelay(1); // Give the log task some time to do its job
 
 	M1_LOG_N(M1_LOGDB_TAG, "\r\n");
@@ -249,16 +282,12 @@ void cmd_m1_mtest_help_power(void)
 	M1_LOG_N(M1_LOGDB_TAG, "Syntax: mtest 51 ref(0-255)\r\n");
 	vTaskDelay(1); // Give the log task some time to do its job
 
-	M1_LOG_N(M1_LOGDB_TAG, "\r\n- cmd_type 52: read charger register\r\n");
-	M1_LOG_N(M1_LOGDB_TAG, "Syntax: mtest 52 reg_no(0h ~ 14h)\r\n");
-	vTaskDelay(1); // Give the log task some time to do its job
-
-	M1_LOG_N(M1_LOGDB_TAG, "\r\n- cmd_type 53: read fuel gauge register\r\n");
-	M1_LOG_N(M1_LOGDB_TAG, "Syntax: mtest 53 reg_no(0 ~ 63)\r\n");
-	vTaskDelay(1); // Give the log task some time to do its job
-
-	M1_LOG_N(M1_LOGDB_TAG, "\r\n- cmd_type 54: read usb-pd register\r\n");
-	M1_LOG_N(M1_LOGDB_TAG, "Syntax: mtest 54 reg_no(1 ~ 10h, 3Ch ~ 43h)\r\n");
+	/* One ID, three targets: "bc" (battery charger), "pd" (USB-PD), optional
+	 * register number; without it the full status is printed. The legacy page
+	 * advertised 53 (fuel gauge) and 54 (USB-PD) as separate IDs, but no
+	 * handler implements them -- both are this case. */
+	M1_LOG_N(M1_LOGDB_TAG, "\r\n- cmd_type 52: read a charger (bc) or USB-PD (pd) register, or print its status\r\n");
+	M1_LOG_N(M1_LOGDB_TAG, "Syntax: mtest 52 bc|pd [reg_no]\r\n");
 	vTaskDelay(1); // Give the log task some time to do its job
 
 	M1_LOG_N(M1_LOGDB_TAG, "\r\n- cmd_type 59: get battery information\r\n");

@@ -27,6 +27,13 @@
  *      `dfu` calls firmware_update_enter_usb_dfu() as its last statement -- the
  *      fork raced both resets against the CLI output buffer, which the CLI only
  *      writes after the handler returns.
+ *   7. `mtest 9` is the fork's destructive firmware-corruption test, re-homed
+ *      to a free ID, and is compiled out of shipped images: the flash
+ *      unlock/erase/program/lock path sits inside `#if defined(M1_TEST_CMDS)`,
+ *      the `#else` branch explains the disabled build, and no build file or
+ *      source defines that guard. The published ID map (cmd_m1_mtest_help())
+ *      lists 9 as dev-only and marks 22/23/24 legacy-equivalent; IDs 7/8 stay
+ *      free and nothing is renumbered.
  *
  * Run either from the repository root or from this directory:
  *   ./tools/m1cp_host_test/test_cli_commands
@@ -104,6 +111,21 @@ static int ends_with_call(const char *body, const char *call) {
     p += strlen(call);
     while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
     return (*p == '}');
+}
+
+/* Copy [from, to) into a fresh NUL-terminated buffer; NULL on bad args. Used to
+ * bound the region between two preprocessor lines. */
+static char *copy_span(const char *from, const char *to) {
+    size_t len;
+    char *s;
+
+    if (from == NULL || to == NULL || to < from) return NULL;
+    len = (size_t)(to - from);
+    s = malloc(len + 1U);
+    if (s == NULL) return NULL;
+    memcpy(s, from, len);
+    s[len] = '\0';
+    return s;
 }
 
 int main(void) {
@@ -329,6 +351,109 @@ int main(void) {
                "no code follows the noreturn DFU call (no bogus return status)");
         }
         free(dfu);
+    }
+
+    /* ---- 7. mtest ID allocation: 9 is the dev-only corruption test --------- */
+    printf("mtest command IDs\n");
+    {
+        char *cli_raw = seam_read_repo("m1_csrc/m1_cli.c");
+        char *cli = (cli_raw != NULL) ? seam_strip_comments(cli_raw) : NULL;
+        char *help_raw = seam_read_repo("m1_csrc/m1_cli_help.c");
+        char *help = (help_raw != NULL) ? seam_strip_comments(help_raw) : NULL;
+
+        ok(cli != NULL, "read m1_csrc/m1_cli.c (cwd-independent)");
+        ok(help != NULL, "read m1_csrc/m1_cli_help.c (cwd-independent)");
+
+        if (cli != NULL) {
+            char *body = seam_bound_block(cli, "void cmd_m1_mtest_basic_system(char *pconsole, char *input_params[], uint8_t n_params, uint8_t cmd_type)");
+            ok(body != NULL, "cmd_m1_mtest_basic_system() is defined");
+            if (body != NULL) {
+                const char *guard_in = strstr(body, "#if defined(M1_TEST_CMDS)");
+                const char *guard_else = (guard_in != NULL) ? strstr(guard_in, "#else") : NULL;
+                const char *guard_end = (guard_else != NULL) ? strstr(guard_else, "#endif") : NULL;
+                char *guarded = copy_span(guard_in, guard_else);
+                char *fallback = copy_span(guard_else, guard_end);
+
+                ok(strstr(body, "case 9:") != NULL,
+                   "mtest 9 is a case in the basic-system switch");
+                ok(guard_in != NULL && guard_else != NULL && guard_end != NULL,
+                   "the destructive path is #if defined(M1_TEST_CMDS) / #else / #endif");
+                if (guarded != NULL) {
+                    ok(strstr(guarded, "HAL_FLASH_Unlock()") != NULL,
+                       "  HAL_FLASH_Unlock() sits inside the guard");
+                    ok(strstr(guarded, "HAL_FLASHEx_Erase(") != NULL,
+                       "  the config sector erase sits inside the guard");
+                    ok(strstr(guarded, "HAL_FLASH_Program(FLASH_TYPEPROGRAM_QUADWORD") != NULL,
+                       "  the programming call sits inside the guard");
+                    ok(strstr(guarded, "HAL_FLASH_Lock()") != NULL,
+                       "  HAL_FLASH_Lock() sits inside the guard");
+                    ok(strstr(guarded, "FW_CRC_ADDRESS") != NULL && strstr(guarded, "FW_CONFIG_RESERVED_ADDRESS") != NULL,
+                       "  it corrupts the stored CRC word and restores the metadata");
+                    ok(strstr(guarded, "HAL_OK") != NULL,
+                       "  the HAL results are checked, not ignored");
+                }
+                ok(fallback != NULL &&
+                   strstr(fallback, "Firmware corruption test not available in this build") != NULL,
+                   "the #else branch explains the disabled build");
+                ok(strstr(body, "case 7:") == NULL && strstr(body, "case 8:") == NULL,
+                   "IDs 7 and 8 stay unused (nothing was renumbered)");
+                free(guarded);
+                free(fallback);
+                free(body);
+            }
+            ok(strstr(cli, "(cmd_type != 9)") != NULL,
+               "mtest 9 needs no parameter (dispatch exception, like mtest 5)");
+            ok(strstr(cli, "#define M1_TEST_CMDS") == NULL,
+               "m1_cli.c never defines M1_TEST_CMDS itself");
+        }
+
+        /* The guard must be off in every shipped build: no build file and no
+         * source file may define it. (Using it in `#if defined(...)` is fine --
+         * that is what makes it off.) */
+        {
+            static const char *const guard_scan[] = {
+                "CMakeLists.txt", "build.sh", "CMakePresets.json",
+                "cmake/gcc-arm-none-eabi.cmake", "Makefile",
+                "tools/m1cp_host_test/Makefile", "Core/Src/cli_app.c",
+                "m1_csrc/m1_cli.h", "m1_csrc/m1_cli_help.c"
+            };
+            size_t i;
+            int defined = 0, missing = 0;
+
+            for (i = 0; i < sizeof(guard_scan) / sizeof(guard_scan[0]); i++) {
+                char *src = seam_read_repo(guard_scan[i]);
+
+                if (src == NULL) {
+                    printf("       (missing: %s)\n", guard_scan[i]);
+                    missing++;
+                    continue;
+                }
+                if (strstr(src, "#define M1_TEST_CMDS") != NULL ||
+                    strstr(src, "-DM1_TEST_CMDS") != NULL) {
+                    printf("       (defines the guard: %s)\n", guard_scan[i]);
+                    defined++;
+                }
+                free(src);
+            }
+            ok(missing == 0, "every file in the guard scan exists");
+            ok(defined == 0, "no build file or source defines M1_TEST_CMDS (off by default)");
+        }
+
+        if (help != NULL) {
+            ok(strstr(help, "9 firmware CRC corruption test (DEV-ONLY") != NULL,
+               "the published ID map lists 9 as the dev-only corruption test");
+            ok(strstr(help, "22/23/24") != NULL && strstr(help, "legacy-equivalent") != NULL,
+               "the ID map marks 22/23/24 as legacy-equivalent");
+            ok(strstr(help, "cmd_type 53:") == NULL && strstr(help, "cmd_type 54:") == NULL,
+               "the help advertises no ID that no handler implements (53/54 are case 52)");
+            ok(strstr(help, "cmd_type 52:") != NULL && strstr(help, "bc|pd") != NULL,
+               "the power page documents 52 bc|pd");
+        }
+
+        free(help);
+        free(help_raw);
+        free(cli);
+        free(cli_raw);
     }
 
     free(code);
