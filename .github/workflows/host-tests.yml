@@ -1,0 +1,24 @@
+name: Host tests
+
+# Runs the repository's host-runnable test suite (python+gcc extraction
+# harnesses, see scripts/run_host_tests.sh) on every push and pull request.
+# Firmware/hardware-coupled verification stays outside CI by design; see
+# docs/testing.md for the full qualification model.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain presence
+        run: |
+          python3 --version
+          cc --version
+
+      - name: Run host tests
+        run: sh scripts/run_host_tests.sh
