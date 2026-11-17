@@ -549,6 +549,7 @@ set(M1_APP_SOURCES
     ../../m1_csrc/m1_sdcard_man.c
     ../../m1_csrc/m1_sdcard_provision.c
     ../../m1_csrc/m1_settings.c
+    ../../m1_csrc/m1_settings_store.c
     ../../m1_csrc/m1_sound.c
     ../../m1_csrc/m1_sound_policy.c
     ../../m1_csrc/m1_storage.c
