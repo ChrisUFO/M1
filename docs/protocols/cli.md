@@ -39,8 +39,14 @@ same text as the log stream), because one page is far longer than 200 bytes.
 Dispatch is table-driven: `xCommandList[]` is registered by
 `vRegisterCLICommands()` at task start, and `help` (built into
 `FreeRTOS_CLI.c`, not an entry in the table) walks that list and prints each
-`pcHelpString`. An unknown command answers "Command not recognized." Every
-table command but `mtest` declares `cExpectedNumberOfParameters = 0`, so a
+`pcHelpString`. A help string is bounded by the same 200-byte slot:
+`prvHelpCommand()` copies it and then forces a terminator at the last byte of
+the buffer, so an entry longer than the slot is truncated instead of leaving
+the output buffer unterminated (which the caller's `strlen()` would run past).
+The pre-existing `cdcstats` help line (289 bytes) is the only entry over the
+slot; the part `help` cannot show — its counter wrap note — is in
+[USB CDC](usb-cdc.md). An unknown command answers "Command not recognized."
+Every table command but `mtest` declares `cExpectedNumberOfParameters = 0`, so a
 command typed with extra parameters fails the count check and the framework
 calls its registered `cmd_*_help()` helper instead of the handler. For these
 zero-parameter commands the helper only returns `pdFALSE` and writes nothing,
@@ -106,8 +112,14 @@ wrap behaviour and their `cdcreset` window are defined once in
 Reads `m1_sdcard_get_status()` first and calls `m1_sdcard_get_info()` (which
 runs `f_getfree()`) only when the cached status is `SD_access_OK`, so an absent
 or unmounted card reports the status text from `m1_sd_error_msg()` instead of
-generating a probe error. MB figures are derived from the KB the accessor
-returns; the used percentage is 0 when the total is 0.
+generating a probe error. A probe that fails anyway — the card is pulled, or an
+I/O error hits between the cached read and the probe — returns NULL without
+updating that cached status, so the two cases are reported separately: the
+command prints `Status: capacity probe failed (FatFs error N)` rather than
+reusing the stale `OK` text. MB figures are derived from the KB the accessor
+returns; the used percentage comes from `m1_sdcard_used_percent()`
+(`m1_csrc/m1_sdcard_capacity.h`), which is 64-bit so a card more than ~41 GiB
+full cannot wrap it, and is 0 when the total is 0.
 
 ### `battery`
 
@@ -179,16 +191,28 @@ must come from the gaps above.
 Two `mtest` paths are compiled out of shipped images:
 
 - `M1_TEST_CMDS` — `mtest 9`. Destructive by design: it erases sector 127 of
-  the active bank (8 KiB, shared by the firmware configuration and the tail of
-  the running image), writes the metadata quadwords back with only the stored
+  the active bank (8 KiB, shared by the firmware configuration and the padding
+  after the image), writes the metadata quadwords back with only the stored
   CRC word at `FW_CRC_ADDRESS` (`0x080FFC14` in bank 1) inverted, and makes the
-  next boot fail its image-CRC check. Recovery is the shipped failsafe path:
+  next boot fail its image-CRC check. No code or rodata is lost by the erase —
+  the loaded image ends far below the sector (`0x080B2590` in the 0.9.0.0
+  build) and the sector holds only the 20-byte configuration section plus the
+  CRC word, the rest being `0x00` padding that the erase turns into `0xFF` —
+  but the image no longer validates, so **the device will not boot until it is
+  re-flashed**. Recovery is the shipped failsafe path:
   `FW CORRUPT!` plus the bounded DFU offer (OK within 5 s), or a power cycle
   while holding UP for the DFU strap followed by re-flashing
   `<artifact>_wCRC.bin`. The CRC word is the target because the failsafe
   compares the computed image CRC against it; the config magic is untouched
   because `m1_boot_classify_fault()` prefers metadata faults over a CRC
-  mismatch and would mask the stage under test.
+  mismatch and would mask the stage under test. Erase and program only hit the
+  same physical bank while "active bank" means "the bank mapped at
+  `0x08000000`": the erase selects `FLASH_BANK_1/2` from
+  `bl_get_active_bank()` (a physical bank select), while `HAL_FLASH_Program()`
+  writes through the CPU-visible `FW_CRC_ADDRESS`, which the option-byte bank
+  swap remaps to whichever bank is active — the same address
+  `bl_crc_validate_active_bank()` reads at boot. The test is therefore not
+  bank-agnostic by construction; run it on both banks deliberately.
 - `M1_SUBGHZ_CW_TEST_TX` — `mtest 61`, raw continuous-wave transmit. It keys
   the transmitter directly and does not pass the regional TX-permission gate,
   so it is dev-only for a different reason (regulatory, not destructive).
@@ -200,14 +224,30 @@ build that defines one is a bench build. Without them `mtest 9` answers
 
 ## Verification status
 
-Registration, help strings, the 200-byte buffer bound and the absence of both
-dev-only guards from shipped builds are covered by the host suite
-(`tools/m1cp_host_test/test_cli_commands.c`); the log window itself is covered
-by `test_log_capture`. No on-device verification is claimed here: "CDC
-counters become non-zero during a real stress transfer" is hardware-gated by
-issue #63 (milestone "Post-merge stabilization"), and the `mtest 9` boot
-recovery path — failsafe banner, bounded DFU offer, strap recovery — is
-hardware-gated with the rest of the boot-recovery milestone (issue #41).
+Registration, the help strings, the bound on every handler write, the
+terminator in the built-in `help` path and the absence of both dev-only guards
+are covered by the host suite (`tools/m1cp_host_test/test_cli_commands.c`):
+every `pcHelpString` is checked against the `configCOMMAND_INT_MAX_OUTPUT_SIZE`
+it is sent through (the pre-existing `cdcstats` line is the one documented
+exception, and it is truncated rather than overrun), and the guard check walks
+the project source trees (`Core/`, `m1_csrc/`, `USB/` and the other project
+directories) plus the root build files, asserting that none of them defines
+`M1_TEST_CMDS` or `M1_SUBGHZ_CW_TEST_TX` either with `#define` or with `-D`.
+That is a source and build-configuration statement, **not** an image check: no
+built ELF is inspected by the suite. Confirming a shipped image is free of both
+paths is a manual step — `arm-none-eabi-strings` on the ELF must show the two
+`#else` notices ("Firmware corruption test not available in this build",
+"CW test TX not available in this build") and none of the guarded strings. The
+log window itself is covered by `test_log_capture`, the `sdcard` percentage
+arithmetic by `test_sdcard_usage`, and `make test` also compiles the guarded
+`mtest 9` path (`-DM1_TEST_CMDS -fsyntax-only` on `m1_csrc/m1_cli.c`) so it
+cannot rot — that step needs `arm-none-eabi-gcc` on `PATH` and prints `SKIP`
+with the reason on a host without it. No on-device verification is claimed
+here: "CDC counters become non-zero during a real stress transfer" is
+hardware-gated by issue #63 (milestone "Post-merge stabilization"), and the
+`mtest 9` boot recovery path — failsafe banner, bounded DFU offer, strap
+recovery — is hardware-gated with the rest of the boot-recovery milestone
+(issue #41).
 
 ## Related
 
@@ -221,7 +261,9 @@ hardware-gated with the rest of the boot-recovery milestone (issue #41).
 
 `Core/Src/cli_app.c`, `Core/Src/FreeRTOS_CLI.c`, `m1_csrc/m1_cli.c`,
 `m1_csrc/m1_cli_help.c`, `m1_csrc/m1_log_debug.c`, `m1_csrc/m1_log_capture.h`,
-`m1_csrc/m1_cdc_rx_stats.h`. Behaviour is code-defined: the handlers are the
+`m1_csrc/m1_sdcard_capacity.h`, `m1_csrc/m1_bq27421.c` (the checked
+state-of-charge accessor `battery` uses), `m1_csrc/m1_cdc_rx_stats.h`.
+Behaviour is code-defined: the handlers are the
 specification, and this page only describes what they do at this commit. The
 `help` listing and the `mtest` pages are generated from the same table and
 functions, so where this page and the console disagree, the console is right.

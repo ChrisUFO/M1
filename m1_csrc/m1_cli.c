@@ -429,17 +429,41 @@ void cmd_m1_mtest_basic_system(char *pconsole, char *input_params[], uint8_t n_p
 	           * written back unchanged (bar that one word) to keep the fault
 	           * class on the CRC stage.
 	           *
-	           * THIS BRICKS THE RUNNING IMAGE ON PURPOSE. The config shares the
-	           * last 8 KiB sector (sector 127) with the tail of the application
-	           * image, and the H5 can only program erased flash, so the sector is
-	           * erased first: the last ~7 KiB of the running image is destroyed
-	           * along with the metadata. Expect the next boot to stop at the
-	           * failsafe, and treat a power cycle plus a DFU re-flash as part of
-	           * the test -- not as a failure of it.
+	           * THIS IMAGE WILL NOT BOOT UNTIL IT IS RE-FLASHED. The config
+	           * shares the last 8 KiB sector (sector 127) with the padding after
+	           * the image, and the H5 can only program erased flash, so the
+	           * sector is erased first. No code or rodata is lost by that: the
+	           * loaded image ends at 0x080B2590 in this build while the sector
+	           * starts at 0x080FE000, and the sector holds only the 20-byte
+	           * config section at 0x080FFC00 and the CRC word -- the rest is
+	           * 0x00 padding, which the erase turns into 0xFF. What the erase
+	           * does break is validation: the stored CRC word no longer matches
+	           * the image, so the next boot stops at the failsafe. Treat a power
+	           * cycle plus a DFU re-flash as part of the test -- not as a failure
+	           * of it.
+	           *
+	           * Bank addressing (the assumption this test relies on): the erase
+	           * selects the ACTIVE physical bank -- bl_get_active_bank() decides
+	           * FLASH_BANK_1/FLASH_BANK_2, which the HAL writes into the
+	           * controller's bank-select field -- while HAL_FLASH_Program()
+	           * writes through the CPU-visible address FW_CRC_ADDRESS (the H5
+	           * programs by memory-mapped store). The option-byte bank swap maps
+	           * whichever bank is active to 0x08000000, which is exactly the
+	           * address bl_crc_validate_active_bank() reads the stored CRC word
+	           * from at boot (see its address reasoning in m1_fw_update_bl.c), so
+	           * on a swapped unit the erase and the program still hit the same
+	           * physical bank. The test is therefore not bank-agnostic by
+	           * construction: it is correct only while "active bank" means "the
+	           * bank mapped at 0x08000000". If a unit executed from the
+	           * +M1_FLASH_BANK_SIZE alias instead, that absolute address would
+	           * belong to the other physical bank and the two steps would
+	           * disagree -- so run this on both banks deliberately rather than
+	           * assuming it.
 	           *
 	           * Compiled out of every shipped image: M1_TEST_CMDS is defined by
 	           * no build file and no source file (tools/m1cp_host_test/
-	           * test_cli_commands.c asserts that), so a build defining it is a
+	           * test_cli_commands.c scans the tree for both dev macros), so a
+	           * build defining it is a
 	           * bench build. The legacy fork shipped the same capability
 	           * unconditionally, where "mtest 9" could destroy a customer unit;
 	           * "mtest 61" (raw CW TX) is gated the same way. */

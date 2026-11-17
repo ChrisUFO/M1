@@ -158,8 +158,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the window never freezes, and the newest bytes come back oldest-first.
   `reboot` and `dfu` acknowledge before they reset or jump (the response buffer
   is only sent after a handler returns, so the fork's message raced its reset);
-  `battery` reports a failed gauge read instead of a 0 mV battery, and `sdcard`
-  probes capacity only when the cached status says the card is mounted.
+  `battery` reports a failed gauge read instead of a 0 mV battery — including
+  the state-of-charge register, which now goes through the checked
+  `bq27421_readStateofCharge_percent()` rather than `bq27421_soc()` (the latter
+  discards the I2C result and returns 0, so a NAK on that register alone printed
+  "Level: 0 %" beside a valid voltage) — and `sdcard` probes capacity only when
+  the cached status says the card is mounted, reports a failed probe with its
+  own line instead of reusing the stale "OK" status, and takes the used
+  percentage from a 64-bit helper (`m1_csrc/m1_sdcard_capacity.h`) because
+  `used_kb * 100` in 32-bit arithmetic wrapped on any card more than ~41 GiB
+  full. The `log` help string was shortened to fit the 200-byte help slot, and
+  `prvHelpCommand()` now NUL-terminates the help string it copies: `strncpy()`
+  wrote no terminator when a help string filled the buffer, so the caller's
+  `strlen()` ran past the 200-byte output buffer — a pre-existing defect the
+  289-byte `cdcstats` entry already triggered.
   `cmd_m1_mtest_help()` now lists every implemented `mtest` ID by decade, marks
   9 and 61 DEV-ONLY and 22/23/24 legacy-equivalent, and no longer advertises 53
   and 54, which no handler implements (both are 52). The destructive corruption
@@ -171,20 +183,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to the issue: 22-24 needed no change, since the adopted base already
   implements direct R/G/B PWM under those IDs with the same calls and the same
   missing-parameter error, so only 9 actually collided; 5, 6, 61, 64, 68, 69,
-  78 and 79 stay upstream-owned. ROM cost of the unit: **+4792 B flash /
+  78 and 79 stay upstream-owned. `m1_vkb_get_password` is absent from `main`;
+  the fork's addition (`legacy/v0.8.11`, fork commit `3b6c252`) is carried by
+  merge patch #42 per `docs/merge/LEDGER.md` (`carried-by-patch`), so nothing is
+  ported here and the acceptance criterion resolves as ledger-referenced rather
+  than "absent in both trees". ROM cost of the unit: **+4792 B flash /
   +4128 B RAM** (FLASH 725680 -> 730472 B, RAM 326220 -> 330348 B, same
   toolchain, `./build.sh` on this tree versus `main` @ `598a803`; the RAM is
   the 2 KB window, the 2 KB snapshot and their bookkeeping). `_wCRC.bin` is
   still 1047576 bytes. New host targets `test_log_capture` (short, wrapped and
-  oversized writes, the 2^32 cursor wrap, the no-init empty state) and
-  `test_cli_commands` (every table entry registered with a help string, no
-  orphan handlers, no unbounded write into the 200-byte buffer, both guarded
-  paths compiled out, and the `reboot`/`dfu` flush-before-reset order), both in
-  `make test`, so a CLI addition cannot land without test-visible
-  registration; the reference page is `docs/protocols/cli.md`. No on-device
-  behaviour is claimed: counter non-zero proof stays hardware-gated by issue
-  #63, and the `mtest 9` recovery path belongs to the boot-recovery hardware
-  gate (issue #41)
+  oversized writes, the 2^32 cursor wrap, the no-init empty state),
+  `test_cli_commands` (every table entry registered with a help string shorter
+  than the response slot it is printed through, no orphan handlers, no unbounded
+  write into the 200-byte buffer, the built-in `help` path's NUL terminator, the
+  `reboot`/`dfu` flush-before-reset order, and a walked scan of the project
+  trees and root build files proving neither dev-only guard — `M1_TEST_CMDS`
+  and `M1_SUBGHZ_CW_TEST_TX` — is defined) and `test_sdcard_usage` (the
+  used-percentage helper at 0/32/64/128 GB used and across the ~41 GiB frontier
+  the old 32-bit expression wrapped at), all three in `make test`, so a CLI
+  addition cannot land without test-visible registration and the arithmetic is
+  executed rather than merely read; `make test` also compiles the guarded
+  `mtest 9` path (`arm-none-eabi-gcc -fsyntax-only -DM1_TEST_CMDS`) and prints
+  `SKIP` with the reason when that compiler is not on `PATH`, so the dev path
+  cannot rot silently; the reference page is `docs/protocols/cli.md`. No
+  on-device behaviour is claimed: counter non-zero proof stays hardware-gated by
+  issue #63, and the `mtest 9` recovery path belongs to the boot-recovery
+  hardware gate (issue #41)
 - Fork: CRC emitter parity harness (issue #40) — `scripts/verify_crc_parity.sh`
   generates four deterministic full-size (`0xFFC14`-byte) images from the
   committed spec in `tools/crc_test_vectors.py` (so no ~1 MiB binaries live in
