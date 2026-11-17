@@ -1025,7 +1025,6 @@ void settings_date_time(void)
 					if ( m1_rtc_set_datetime(&edit) ) // Validates before any register is touched
 					{
 						(void)m1_rtc_get_datetime(&edit); // Post-setter re-sync from the timebase
-						settings_dt_gui_update(sel_field, &edit);
 						settings_dt_notice(check_10x10, "Set", 700u);
 					} // if ( m1_rtc_set_datetime(&edit) )
 					else
