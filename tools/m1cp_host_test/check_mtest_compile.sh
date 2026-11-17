@@ -8,14 +8,20 @@
 # output (-fsyntax-only): same compiler, same include set and same warning
 # flags as the firmware build, no link, no artifact.
 #
+# The INCLUDE SET IS DERIVED, not maintained by hand: when the build tree
+# exists, build/compile_commands.json is the source (the exact -I list CMake
+# used for m1_csrc/m1_cli.c), so this check cannot drift from the firmware
+# build when an include directory is added or moved. Only without a build tree
+# (e.g. a fresh checkout where `make test` runs before `./build.sh`) does it
+# fall back to the list below, which mirrors the target_include_directories()
+# of cmake/m1_01/CMakeLists.txt. The -D set comes from that same CMake
+# INTERFACE list and is spelled out here because the compile database escapes
+# the quotes in M1_GIT_COMMIT.
+#
 # Needs the ARM cross compiler the firmware itself is built with
 # (arm-none-eabi-gcc on PATH, "arm-none-eabi-" prefix from
 # cmake/gcc-arm-none-eabi.cmake). On a host without it the step prints SKIP with
 # the reason and exits 0 -- `make test` must stay runnable on a plain host.
-#
-# The include directories mirror the CMake target. If a header moves to a new
-# directory, this step fails with the compiler's own message; add the directory
-# here (it is one list, not a second build system).
 
 set -u
 
@@ -33,29 +39,56 @@ here=$(dirname "$0")
 root=$(cd "$here/../.." && pwd) || exit 1
 cd "$root" || exit 1
 
-INC="
+# --- include set ----------------------------------------------------------
+inc_src="build/compile_commands.json (the m1_cli.c compile line)"
+INC=""
+if [ -f build/compile_commands.json ]; then
+    # The generator writes one `"command"` line per entry; the one for
+    # m1_csrc/m1_cli.c ends with '-c .../m1_cli.c'.
+    cli_cmd=$(grep -E '"command":.*-c .*m1_cli\.c"' build/compile_commands.json | head -1)
+    if [ -n "$cli_cmd" ]; then
+        INC=$(printf '%s\n' "$cli_cmd" | tr ' ' '\n' | grep '^-I' | tr '\n' ' ')
+    fi
+fi
+
+if [ -z "$INC" ]; then
+    inc_src="the fallback list in this script (mirrors cmake/m1_01/CMakeLists.txt)"
+    INC="
 -I Core/Inc
--I Core/ThreadSafe
--I m1_csrc
 -I Drivers/STM32H5xx_HAL_Driver/Inc
 -I Drivers/STM32H5xx_HAL_Driver/Inc/Legacy
 -I Drivers/CMSIS/Device/ST/STM32H5xx/Include
 -I Drivers/CMSIS/Include
--I Drivers/u8g2_csrc
--I Drivers/u8g2_cppsrc
--I Drivers/BSP/Components/ST25R3916
+-I Core/ThreadSafe
 -I Middlewares/Third_Party/FreeRTOS/Source/include
 -I Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM33_NTZ/non_secure
 -I Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2
 -I Middlewares/Third_Party/CMSIS/RTOS2/Include
--I FatFs/R015
+-I Drivers/u8g2_csrc
+-I Drivers/u8g2_cppsrc
+-I m1_csrc
 -I Infrared
 -I Infrared/irmp-irsnd
+-I FatFs/R015
 -I Sub_Ghz
 -I Sub_Ghz/protocols
 -I Sub_Ghz/modules
+-I Esp32_serial_flasher/include
+-I Esp32_serial_flasher/port
+-I Esp32_serial_flasher/app/common
+-I Esp32_serial_flasher/private_include
+-I m1_csrc/esp_stub
+-I Esp_spi_at/esp-idf/components/esp_common/include
+-I Esp_spi_at/esp-idf/components/esp_driver_spi/include/driver
+-I Esp_spi_at/esp-idf/components/hal/include/hal
+-I Esp_spi_at/esp-idf/components/log/include/hal
+-I Esp_spi_at/esp-idf/components/soc/esp32c6/include/soc
+-I Esp_spi_at/esp-idf/components/soc/esp32c6/register/soc
+-I Esp_spi_at/examples/at_spi_master/spi/stm32/main
+-I Drivers/BSP/Components/ST25R3916
 -I NFC
 -I NFC/Middlewares/ST/rfal/Inc
+-I NFC/Middlewares/ST/rfal/Src
 -I NFC/NFC_drv
 -I NFC/NFC_drv/common
 -I NFC/NFC_drv/legacy
@@ -71,32 +104,22 @@ INC="
 -I USB/Class/HID/Inc
 -I USB/Core/Inc
 -I USB/Core/Scr
--I Esp32_serial_flasher/include
--I Esp32_serial_flasher/port
--I Esp32_serial_flasher/app/common
--I Esp32_serial_flasher/private_include
--I Esp_spi_at/esp-idf/components/esp_common/include
--I Esp_spi_at/esp-idf/components/esp_driver_spi/include/driver
--I Esp_spi_at/esp-idf/components/hal/include/hal
--I Esp_spi_at/esp-idf/components/log/include/hal
--I Esp_spi_at/esp-idf/components/soc/esp32c6/include/soc
--I Esp_spi_at/esp-idf/components/soc/esp32c6/register/soc
--I Esp_spi_at/examples/at_spi_master/spi/stm32/main
 "
+fi
 
-echo "guarded path: $CC_ARM -fsyntax-only -DM1_TEST_CMDS m1_csrc/m1_cli.c"
+# The CMake INTERFACE compile definitions (cmake/m1_01/CMakeLists.txt).
+DEFS="-DLFRFID_NEXWATCH_ENABLED -DLFRFID_PSK_PASS_ENABLED \
+-DM1_MFC_DMA_AT -DM1_MFC_RAW_EMULATION \
+-DSTM32H573xx -DSTM32_THREAD_SAFE_STRATEGY=4 -DUSE_HAL_DRIVER -DNDEBUG \
+-DM1_GIT_COMMIT=\"local\" -DM1_GIT_DIRTY=1"
 
-# shellcheck disable=SC2086  # INC is a deliberately word-split flag list
-"$CC_ARM" \
-    -DM1_TEST_CMDS \
-    -DLFRFID_NEXWATCH_ENABLED -DLFRFID_PSK_PASS_ENABLED \
-    -DM1_MFC_DMA_AT -DM1_MFC_RAW_EMULATION \
-    -DSTM32H573xx -DSTM32_THREAD_SAFE_STRATEGY=4 -DUSE_HAL_DRIVER \
-    -DM1_GIT_COMMIT='"local"' -DM1_GIT_DIRTY=1 \
-    -std=gnu11 -mcpu=cortex-m33 -mfpu=fpv5-sp-d16 -mfloat-abi=hard \
-    -Wall -Wextra -Werror \
-    $INC \
-    -fsyntax-only m1_csrc/m1_cli.c
+TARGET_FLAGS="-std=gnu11 -mcpu=cortex-m33 -mfpu=fpv5-sp-d16 -mfloat-abi=hard -Wall -Wextra -Werror"
+
+n_inc=$(printf '%s\n' $INC | grep -c '^-I')
+echo "guarded path: $CC_ARM -fsyntax-only m1_csrc/m1_cli.c ($n_inc include dirs from $inc_src)"
+
+# shellcheck disable=SC2086  # INC/DEFS/TARGET_FLAGS are deliberately word-split flag lists
+"$CC_ARM" -DM1_TEST_CMDS $DEFS $TARGET_FLAGS $INC -fsyntax-only m1_csrc/m1_cli.c
 rc=$?
 
 if [ "$rc" -ne 0 ]; then
@@ -107,15 +130,7 @@ fi
 # Also prove the guard is what makes it compile-out-able: the same file must
 # compile without the macro (that is the shipped configuration).
 # shellcheck disable=SC2086
-"$CC_ARM" \
-    -DLFRFID_NEXWATCH_ENABLED -DLFRFID_PSK_PASS_ENABLED \
-    -DM1_MFC_DMA_AT -DM1_MFC_RAW_EMULATION \
-    -DSTM32H573xx -DSTM32_THREAD_SAFE_STRATEGY=4 -DUSE_HAL_DRIVER \
-    -DM1_GIT_COMMIT='"local"' -DM1_GIT_DIRTY=1 \
-    -std=gnu11 -mcpu=cortex-m33 -mfpu=fpv5-sp-d16 -mfloat-abi=hard \
-    -Wall -Wextra -Werror \
-    $INC \
-    -fsyntax-only m1_csrc/m1_cli.c
+"$CC_ARM" $DEFS $TARGET_FLAGS $INC -fsyntax-only m1_csrc/m1_cli.c
 rc=$?
 
 if [ "$rc" -ne 0 ]; then
