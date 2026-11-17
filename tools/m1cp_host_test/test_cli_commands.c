@@ -68,24 +68,15 @@ static const char *const commands[] = {
 #define NUM_COMMANDS (sizeof(commands) / sizeof(commands[0]))
 
 /* Every pcHelpString must fit the CLI response slot: `help` sends one help
- * string per response, so a longer one is truncated (and, before the
- * prvHelpCommand() terminator below, left unterminated). One entry predates
- * that rule and is deliberately kept word-for-word: `cdcstats` (289 B, already
- * on main). It is truncated at the slot, not overrun, and its counter
- * semantics are documented in docs/protocols/usb-cdc.md. */
-static const char *const help_over_slot_known[] = { "cdcstats" };
-
-static int help_over_slot_allowed(const char *command) {
-    size_t i;
-
-    for (i = 0; i < sizeof(help_over_slot_known) / sizeof(help_over_slot_known[0]); i++) {
-        if (strcmp(command, help_over_slot_known[i]) == 0) return 1;
-    }
-    return 0;
-}
+ * string per response through prvHelpCommand(), so a longer entry would be
+ * truncated. No entry is exempt -- a command whose help cannot be said in
+ * fewer than configCOMMAND_INT_MAX_OUTPUT_SIZE bytes has to say less here and
+ * put the rest in docs/protocols/cli.md (which is where `cdcstats`' counter
+ * semantics live). */
 
 /* Non-empty string literal: the opening quote is followed by something other
- * than the closing quote. `""` is not a help string. */static int nonempty_string_literal_at(const char *p) {
+ * than the closing quote. `""` is not a help string. */
+static int nonempty_string_literal_at(const char *p) {
     while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
     if (*p != '"') return 0;
     p++;
@@ -157,7 +148,6 @@ static char *copy_span(const char *from, const char *to) {
  * prototype, e.g. static functions like prvHelpCommand()). Caller frees. */
 static char *bound_last_block(const char *src, const char *sig) {
     const char *p = src, *last = NULL;
-    char *body;
 
     while ((p = strstr(p, sig)) != NULL) { last = p; p++; }
     if (last == NULL) return NULL;
@@ -213,11 +203,25 @@ static int macro_value(const char *src, const char *name) {
 
 /* ---- dev-guard scan -------------------------------------------------------
  * The guards must be off in every shipped build, so no build definition and no
- * project source file may define either macro. The source set is WALKED from
- * the project trees instead of being a fixed list of paths: a new file cannot
- * hide from the scan. `tools/` is deliberately not walked -- this test and
- * check_mtest_compile.sh name the macros on purpose (the compile check passes
- * -DM1_TEST_CMDS to prove the guarded code still builds).
+ * project source file may define either macro. Two file classes, because a
+ * definition looks different in each:
+ *
+ *   - project sources (.c/.h): a definition is `#define <macro>` or
+ *     `-D<macro>`; `#if defined(<macro>)` in live code is legitimate and must
+ *     stay green, so the needles stay narrow here.
+ *   - build/config files (CMakeLists.txt by basename, plus .cmake/.txt/.sh/
+ *     .json/.mk/.yml/.yaml/.bat): this project defines every compile-time macro
+ *     as a BARE name inside target_compile_definitions() /
+ *     add_compile_definitions() (cmake/m1_01/CMakeLists.txt: USE_HAL_DRIVER,
+ *     STM32H573xx, M1_MFC_*...), so ANY mention of the macro name counts.
+ *     `#`-to-EOL comments are stripped first (the CMake/shell/Makefile/preset
+ *     comment form); no build or config file names either guard today, so the
+ *     scan starts green.
+ *
+ * The source set is WALKED from the project trees instead of being a fixed list
+ * of paths: a new file cannot hide from the scan. `tools/` is deliberately not
+ * walked -- this test and check_mtest_compile.sh name the macros on purpose
+ * (the compile check passes -DM1_TEST_CMDS to prove the guarded code builds).
  */
 static const char *const guard_macros[] = { "M1_TEST_CMDS", "M1_SUBGHZ_CW_TEST_TX" };
 #define NUM_GUARD_MACROS (sizeof(guard_macros) / sizeof(guard_macros[0]))
@@ -242,16 +246,89 @@ static const char *repo_root_prefix(void) {
     return prefix;
 }
 
-/* Files whose text can carry a build definition. */
-static int guard_scan_wants(const char *path) {
-    static const char *const exts[] = { ".c", ".h", ".cmake", ".sh" };
-    size_t n = strlen(path), i;
+static int path_has_ext(const char *path, const char *ext) {
+    size_t n = strlen(path), e = strlen(ext);
 
+    return (n >= e && strcmp(path + n - e, ext) == 0);
+}
+
+static int path_basename_is(const char *path, const char *name) {
+    const char *slash = strrchr(path, '/');
+
+    return strcmp((slash != NULL) ? slash + 1 : path, name) == 0;
+}
+
+/* Source text, where a definition is a `#define` or a `-D`. */
+static int guard_scan_is_source(const char *path) {
+    return path_has_ext(path, ".c") || path_has_ext(path, ".h");
+}
+
+/* Build/config text, where the macro name itself is the definition. `.txt`
+ * covers CMakeLists.txt; the basename check is kept explicit because that is
+ * the file this repository actually defines its macros in. */
+static int guard_scan_is_build(const char *path) {
+    static const char *const exts[] = {
+        ".cmake", ".txt", ".sh", ".json", ".mk", ".yml", ".yaml", ".bat"
+    };
+    size_t i;
+
+    if (path_basename_is(path, "CMakeLists.txt") ||
+        path_basename_is(path, "Makefile") ||
+        path_basename_is(path, "makefile")) {
+        return 1;
+    }
     for (i = 0; i < sizeof(exts) / sizeof(exts[0]); i++) {
-        size_t e = strlen(exts[i]);
-        if (n >= e && strcmp(path + n - e, exts[i]) == 0) return 1;
+        if (path_has_ext(path, exts[i])) return 1;
     }
     return 0;
+}
+
+static int guard_scan_wants(const char *path) {
+    return guard_scan_is_source(path) || guard_scan_is_build(path);
+}
+
+/* `#`-to-EOL comments removed, newlines kept: the comment form used by CMake,
+ * shell, Makefiles and presets. A `#` inside a quoted string is not modelled --
+ * no such line carries a guard, and the scan looks for definitions, not text. */
+static char *strip_hash_comments(const char *src) {
+    size_t n = strlen(src);
+    char *out = malloc(n + 1U);
+    size_t i, o = 0U;
+    int in_comment = 0;
+
+    if (out == NULL) return NULL;
+    for (i = 0U; i < n; i++) {
+        char c = src[i];
+        if (in_comment) {
+            if (c == '\n') { in_comment = 0; out[o++] = c; }
+            continue;
+        }
+        if (c == '#') { in_comment = 1; continue; }
+        out[o++] = c;
+    }
+    out[o] = '\0';
+    return out;
+}
+
+/* First whole-word occurrence of `tok` in `hay`, or NULL, so M1_TEST_CMDS does
+ * not match M1_TEST_CMDS_DEV. */
+static const char *find_token(const char *hay, const char *tok) {
+    size_t len = strlen(tok);
+    const char *p = hay;
+
+    while ((p = strstr(p, tok)) != NULL) {
+        char before = (p > hay) ? p[-1] : ' ';
+        char after = p[len];
+        int before_ident = (before == '_' || (before >= 'a' && before <= 'z') ||
+                            (before >= 'A' && before <= 'Z') ||
+                            (before >= '0' && before <= '9'));
+        int after_ident = (after == '_' || (after >= 'a' && after <= 'z') ||
+                           (after >= 'A' && after <= 'Z') ||
+                           (after >= '0' && after <= '9'));
+        if (!before_ident && !after_ident) return p;
+        p += len;
+    }
+    return NULL;
 }
 
 static void guard_scan_file(const char *path) {
@@ -264,16 +341,26 @@ static void guard_scan_file(const char *path) {
         guard_files_missing++;
         return;
     }
-    code = seam_strip_comments(raw);   /* a commented-out define is not a build */
+    /* Comments first: a commented-out define is not a definition, in either
+     * class of file. */
+    code = guard_scan_is_source(path) ? seam_strip_comments(raw)
+                                      : strip_hash_comments(raw);
     free(raw);
     if (code == NULL) return;
     guard_files_scanned++;
     for (i = 0; i < NUM_GUARD_MACROS; i++) {
-        char define_tok[96], dash_tok[96];
+        int hit;
 
-        snprintf(define_tok, sizeof(define_tok), "#define %s", guard_macros[i]);
-        snprintf(dash_tok, sizeof(dash_tok), "-D%s", guard_macros[i]);
-        if (strstr(code, define_tok) != NULL || strstr(code, dash_tok) != NULL) {
+        if (guard_scan_is_source(path)) {
+            char define_tok[96], dash_tok[96];
+
+            snprintf(define_tok, sizeof(define_tok), "#define %s", guard_macros[i]);
+            snprintf(dash_tok, sizeof(dash_tok), "-D%s", guard_macros[i]);
+            hit = (strstr(code, define_tok) != NULL) || (strstr(code, dash_tok) != NULL);
+        } else {
+            hit = (find_token(code, guard_macros[i]) != NULL);
+        }
+        if (hit) {
             printf("       (defines %s: %s)\n", guard_macros[i], path);
             guard_definitions++;
         }
@@ -296,7 +383,11 @@ static void guard_scan_tree(const char *dir) {
 
         if (e->d_name[0] == '.') continue;      /* "." ".." and dot-entries */
         if (snprintf(path, sizeof(path), "%s/%s", dir, e->d_name) >= (int)sizeof(path)) continue;
-        if (stat(path, &st) != 0) continue;
+        if (stat(path, &st) != 0) {
+            printf("       (cannot stat: %s)\n", path);
+            guard_files_missing++;
+            continue;
+        }
         if ((st.st_mode & S_IFMT) == S_IFDIR) guard_scan_tree(path);
         else if (guard_scan_wants(path)) guard_scan_file(path);
     }
@@ -312,7 +403,6 @@ int main(void) {
     /* Help-string slot accounting (from FreeRTOSConfig.h + the table). */
     int help_ceiling = 0;
     int longest_help = 0;
-    int help_over_slot = 0;
     const char *longest_help_name = "";
 
     ok(raw != NULL, "read Core/Src/cli_app.c (cwd-independent)");
@@ -369,21 +459,16 @@ int main(void) {
                  * truncated, and used to leave the buffer unterminated. */
                 {
                     int help_len = (help != NULL) ? literal_length(help + strlen(".pcHelpString =")) : -1;
-                    int allowed = help_over_slot_allowed(commands[i]);
                     if (help_len > longest_help) {
                         longest_help = help_len;
                         longest_help_name = commands[i];
                     }
                     if (help_len < 0 || help_len >= help_ceiling) {
-                        if (allowed) {
-                            help_over_slot++;
-                        }
-                        printf("       (%s help string is %d bytes, ceiling %d%s)\n",
-                               commands[i], help_len, help_ceiling,
-                               allowed ? ", documented pre-existing exception" : "");
+                        printf("       (%s help string is %d bytes, ceiling %d)\n",
+                               commands[i], help_len, help_ceiling);
                     }
-                    ok(help_len > 0 && (help_len < help_ceiling || allowed),
-                       "  help string fits configCOMMAND_INT_MAX_OUTPUT_SIZE");
+                    ok(help_len > 0 && help_len < help_ceiling,
+                       "  help string is shorter than configCOMMAND_INT_MAX_OUTPUT_SIZE");
                 }
                 ok(interp != NULL, "  is registered with a .pxCommandInterpreter");
                 ok(helper != NULL, "  has a .pxCommandHelper");
@@ -405,11 +490,8 @@ int main(void) {
            "the table stays NULL-terminated");
         printf("       (longest help string: %s, %d bytes; ceiling %d)\n",
                longest_help_name, longest_help, help_ceiling);
-        ok(longest_help > 0 && (longest_help < help_ceiling ||
-                                help_over_slot_allowed(longest_help_name)),
-           "no table entry overflows the help response beyond the known exception");
-        ok(help_over_slot <= 1,
-           "at most the pre-existing cdcstats help line is over the slot (it is truncated, not overrun)");
+        ok(longest_help > 0 && longest_help < help_ceiling,
+           "no table entry overflows the help response");
     }
     free(table);
 
