@@ -247,11 +247,15 @@ guard check walks the project source trees (`Core/`, `m1_csrc/`, `USB/` and the
 other project directories — nested `CMakeLists.txt` and `.cmake` files
 included) plus the root build files, asserting that none of them defines
 `M1_TEST_CMDS` or `M1_SUBGHZ_CW_TEST_TX`. It knows the forms this project
-actually uses: `#define` and `-D` in C sources, and in build/config files the
-bare macro name that `target_compile_definitions()` /
-`add_compile_definitions()` takes (comments stripped first, so a mention in a
-comment does not trip it). That is a source and build-configuration statement,
-**not** an image check: no built ELF is inspected by the suite. Confirming a
+actually uses: in C sources only `#define` and `-D` count, so
+`#if defined(...)` in live code stays legal; in build/config files a whole-word
+occurrence of the macro name counts — the bare name that
+`target_compile_definitions()` / `add_compile_definitions()` /
+`add_definitions()` takes — **and** the dashed `-D<macro>` form that shell
+`CFLAGS`, Makefiles and `add_definitions(-D...)` use (comments stripped first,
+so a mention in a comment does not trip it). That is a source and
+build-configuration statement, **not** an image check: no built ELF is
+inspected by the suite. Confirming a
 shipped image is free of both paths is a manual step — `arm-none-eabi-strings`
 on the ELF must show the two `#else` notices ("Firmware corruption test not
 available in this build", "CW test TX not available in this build") and none of

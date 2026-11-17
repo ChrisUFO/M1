@@ -201,9 +201,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `reboot`/`dfu` flush-before-reset order, and a walked scan proving neither
   dev-only guard — `M1_TEST_CMDS` and `M1_SUBGHZ_CW_TEST_TX` — is defined by the
   project sources or by any build/config file in the project trees, nested
-  `CMakeLists.txt`/`.cmake` included, in the forms this tree uses: `#define` and
-  `-D` in C, and the bare macro name that `target_compile_definitions()` /
-  `add_compile_definitions()` takes) and `test_sdcard_usage` (the
+  `CMakeLists.txt`/`.cmake` included, in the forms this tree uses: in C only
+  `#define` and `-D`, so `#if defined(...)` stays legal; in build/config files a
+  whole-word macro name (the bare form `target_compile_definitions()` /
+  `add_compile_definitions()` / `add_definitions()` takes) or the dashed
+  `-D<macro>` form that shell `CFLAGS`, Makefiles and `add_definitions(-D...)`
+  use) and `test_sdcard_usage` (the
   used-percentage helper at 0/32/64/128 GB used and across the ~41 GiB frontier
   the old 32-bit expression wrapped at), all three in `make test`, so a CLI
   addition cannot land without test-visible registration and the arithmetic is

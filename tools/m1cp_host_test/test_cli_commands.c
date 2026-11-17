@@ -290,8 +290,13 @@ static int guard_scan_wants(const char *path) {
 }
 
 /* `#`-to-EOL comments removed, newlines kept: the comment form used by CMake,
- * shell, Makefiles and presets. A `#` inside a quoted string is not modelled --
- * no such line carries a guard, and the scan looks for definitions, not text. */
+ * shell, Makefiles and presets. A `#` only starts a comment at the start of a
+ * token -- line start or after whitespace/`;` -- which is where a CMake/shell/
+ * Makefile comment actually begins, so an embedded `#` such as PROBE="x#y"
+ * keeps the rest of its line. That matters in one direction: stripping at an
+ * embedded `#` could hide a definition that follows it on the same line. This
+ * is a token rule, not a shell parser (a `#` inside a quoted *word* still ends
+ * the line only when a space precedes it). */
 static char *strip_hash_comments(const char *src) {
     size_t n = strlen(src);
     char *out = malloc(n + 1U);
@@ -305,7 +310,14 @@ static char *strip_hash_comments(const char *src) {
             if (c == '\n') { in_comment = 0; out[o++] = c; }
             continue;
         }
-        if (c == '#') { in_comment = 1; continue; }
+        if (c == '#') {
+            char prev = (i > 0U) ? src[i - 1U] : '\n';
+
+            if (prev == '\n' || prev == '\r' || prev == ' ' || prev == '\t' || prev == ';') {
+                in_comment = 1;
+                continue;
+            }
+        }
         out[o++] = c;
     }
     out[o] = '\0';
