@@ -35,6 +35,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "stdlib.h"
 #include "m1_log_debug.h"
 #include "m1_log_capture.h"        /* M1_LOG_CAPTURE_SIZE: the `log` window */
+#include "m1_sdcard_capacity.h"    /* m1_sdcard_used_percent(): 64-bit capacity math */
 #include "m1_cli.h"
 #include "m1_system.h"             /* m1_device_stat (status/version) */
 #include "m1_fw_update_bl.h"       /* BANK1_ACTIVE, FW_VERSION_FORK_TAG */
@@ -129,7 +130,7 @@ const CLI_Command_Definition_t xCommandList[] = {
     },
     {
         .pcCommand = "log", /* The command string to type. */
-        .pcHelpString = "log:\r\n Shows a snapshot of the last 2 KB of log output captured at the time the command runs. Best effort: messages may be dropped while the log write path is contended, and output produced before the log transport became ready is not included.\r\n\r\n",
+        .pcHelpString = "log:\r\n Shows the last 2 KB of log output at command time. Best effort: output from before the log transport was ready is missing.\r\n\r\n",
         .pxCommandInterpreter = cmd_log, /* The function to run. */
         .pxCommandHelper = cmd_log_help, /* Help for the function. */
         .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
@@ -605,7 +606,9 @@ BaseType_t cmd_version_help(void)
  * in m1_sdcard.c statics, so this uses the public m1_sdcard_get_info() accessor
  * instead (it performs the same f_getfree() and pre-divides to KB), and only
  * asks it when the cached access status says the card is mounted -- otherwise
- * the probe just logs an error. MB are derived from the KB figures.
+ * the probe just logs an error. MB are derived from the KB figures; the used
+ * percentage comes from m1_sdcard_used_percent() (m1_sdcard_capacity.h) because
+ * `used_kb * 100` overflows 32 bits on any card more than ~41 GiB full.
  */
 /*============================================================================*/
 BaseType_t cmd_sdcard(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
@@ -623,11 +626,29 @@ BaseType_t cmd_sdcard(char *pcWriteBuffer, size_t xWriteBufferLen, const char *p
         info = m1_sdcard_get_info();
     }
 
-    if ((status != SD_access_OK) || (info == NULL))
+    if (status != SD_access_OK)
     {
+        /* Cached status only: the card is absent, not mounted or holds no
+         * filesystem, so no probe was attempted. This is the text
+         * m1_sd_error_msg() has always given. */
         (void)snprintf(pcWriteBuffer, xWriteBufferLen,
                        "SD card:\r\n  Status: %s\r\n",
                        m1_sd_error_msg(status));
+        return pdFALSE;
+    }
+
+    if (info == NULL)
+    {
+        /* The cached status said mounted, but the probe's f_getfree()/
+         * f_getlabel() failed (card pulled mid-command, I/O error) and
+         * m1_sdcard_get_info() returned NULL without touching the cached
+         * status. Printing that cached status here would say "Status: OK"
+         * exactly when the probe failed, so report only what is known: the
+         * probe failed, and the FatFs result that made it fail. */
+        (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                       "SD card:\r\n"
+                       "  Status: capacity probe failed (FatFs error %d)\r\n",
+                       (int)m1_sdcard_get_error_code());
         return pdFALSE;
     }
 
@@ -643,8 +664,7 @@ BaseType_t cmd_sdcard(char *pcWriteBuffer, size_t xWriteBufferLen, const char *p
                    (unsigned long)(total_kb / 1024U),
                    (unsigned long)(free_kb / 1024U),
                    (unsigned long)((total_kb - free_kb) / 1024U),
-                   (unsigned long)((total_kb != 0U) ?
-                                   (((total_kb - free_kb) * 100U) / total_kb) : 0U));
+                   (unsigned long)m1_sdcard_used_percent(total_kb, free_kb));
     return pdFALSE;
 } // BaseType_t cmd_sdcard(...)
 
@@ -701,7 +721,11 @@ BaseType_t cmd_wifi_help(void)
  * CLI command: battery status (fork cmd_battery ~:566)
  *
  * Adapted: the fork ignored every gauge read result, so a failed I2C read
- * looked like a flat battery at 0 mV. A failed read is now reported as such.
+ * looked like a flat battery at 0 mV. A failed read is now reported as such --
+ * including the state-of-charge read, which goes through the checked
+ * bq27421_readStateofCharge_percent() rather than bq27421_soc(): the latter
+ * discards the I2C result and returns 0, so a NAK on the SoC register alone
+ * would print "Level: 0 %" beside a valid voltage and capacity.
  */
 /*============================================================================*/
 BaseType_t cmd_battery(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
@@ -709,7 +733,7 @@ BaseType_t cmd_battery(char *pcWriteBuffer, size_t xWriteBufferLen, const char *
     uint16_t voltage_mV = 0U;
     uint16_t remaining_mAh = 0U;
     uint16_t full_mAh = 0U;
-    uint8_t soc_percent;
+    uint16_t soc_percent = 0U;
     bool read_ok;
 
     (void)pcCommandString;
@@ -718,6 +742,7 @@ BaseType_t cmd_battery(char *pcWriteBuffer, size_t xWriteBufferLen, const char *
     read_ok = bq27421_readVoltage_mV(&voltage_mV);
     read_ok = bq27421_readRemainingCapacity_mAh(&remaining_mAh) && read_ok;
     read_ok = bq27421_readFullChargeCapacity_mAh(&full_mAh) && read_ok;
+    read_ok = bq27421_readStateofCharge_percent(&soc_percent) && read_ok;
 
     if (!read_ok)
     {
@@ -725,8 +750,6 @@ BaseType_t cmd_battery(char *pcWriteBuffer, size_t xWriteBufferLen, const char *
                        "Battery: gauge read failed\r\n");
         return pdFALSE;
     }
-
-    soc_percent = (uint8_t)(bq27421_soc(FILTERED) & 0xFFU);
 
     (void)snprintf(pcWriteBuffer, xWriteBufferLen,
                    "Battery status:\r\n"
