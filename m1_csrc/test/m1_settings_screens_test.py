@@ -238,22 +238,22 @@ def static_seam_tests():
     CHECK(
         contains(
             menu,
-            '"Settings", menu_settings_init, NULL, NULL, 7, 0, menu_m1_icon_setting, NULL,',
+            '"Settings", menu_settings_init, NULL, NULL, 8, 0, menu_m1_icon_setting, NULL,',
         ),
-        "menu_Settings parent declares 7 items",
+        "menu_Settings parent declares 8 items",
     )
     CHECK(
         contains(
             menu,
-            "{&menu_Settings_LCD_Notifications, &menu_Settings_System, &menu_Settings_Storage,",
+            "{&menu_Settings_LCD_Notifications, &menu_Settings_System, &menu_Settings_Date_Time, &menu_Settings_Storage,",
         ),
-        "parent array leads with the two new screens",
+        "parent array leads with the settings screens (Date & Time third)",
     )
     arr = menu[menu.index("S_M1_Menu_t menu_Settings =") :]
     arr = arr[: arr.index("};")]
     CHECK(
-        arr.count("&menu_") == 7,
-        f"parent array holds exactly 7 submenu pointers (got {arr.count('&menu_')})",
+        arr.count("&menu_") == 8,
+        f"parent array holds exactly 8 submenu pointers (got {arr.count('&menu_')})",
     )
 
     # --- Screen functions declared and defined ---

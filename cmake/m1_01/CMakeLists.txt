@@ -545,6 +545,8 @@ set(M1_APP_SOURCES
     ../../m1_csrc/m1_rf_spi.c
     ../../m1_csrc/m1_rfid.c
     ../../m1_csrc/m1_ring_buffer.c
+    ../../m1_csrc/m1_rtc.c
+    ../../m1_csrc/m1_rtc_date.c
     ../../m1_csrc/m1_sdcard.c
     ../../m1_csrc/m1_sdcard_man.c
     ../../m1_csrc/m1_sdcard_provision.c
