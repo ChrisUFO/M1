@@ -47,48 +47,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include "m1_cdc_rx_stats.h"
+#include "seam_util.h"      /* shared comment-stripping source seam helpers */
 
 static int count = 0, fails = 0;
 static void ok(int cond, const char *what) {
     count++;
     if (cond) { printf("  ok   %s\n", what); }
     else       { printf("  FAIL %s\n", what); fails++; }
-}
-
-/* strstr() that ignores `//` comments and block comments (which may span
- * lines): the RX callback keeps commented-out debug calls, which must not be
- * mistaken for live code. */
-static int has_code_token(const char *src, const char *tok) {
-    size_t src_len = strlen(src);
-    char *code = malloc(src_len + 1U);
-    size_t i, out = 0U;
-    int in_block = 0, in_line = 0, hit = 0;
-
-    if (code == NULL) return 0;
-
-    for (i = 0U; i < src_len; i++) {
-        char c = src[i];
-        if (in_line) {
-            if (c == '\n') { in_line = 0; code[out++] = c; }
-            continue;
-        }
-        if (in_block) {
-            if (c == '*' && (i + 1U) < src_len && src[i + 1U] == '/') {
-                in_block = 0; i++;
-            } else if (c == '\n') {
-                code[out++] = c;   /* keep line separation */
-            }
-            continue;
-        }
-        if (c == '/' && (i + 1U) < src_len && src[i + 1U] == '/') { in_line = 1; i++; continue; }
-        if (c == '/' && (i + 1U) < src_len && src[i + 1U] == '*') { in_block = 1; i++; continue; }
-        code[out++] = c;
-    }
-    code[out] = '\0';
-
-    hit = (strstr(code, tok) != NULL);
-    free(code);
-    return hit;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -434,7 +399,7 @@ int main(void) {
                    "no blocking stream-buffer API in the RX callback");
                 ok(strstr(body, "taskENTER_CRITICAL") == NULL,
                    "no critical section inside the RX interrupt callback");
-                ok(has_code_token(body, "printf(") == 0, "no printf in the RX callback");
+                ok(seam_has_code_token(body, "printf(") == 0, "no printf in the RX callback");
             }
         }
         free(body);

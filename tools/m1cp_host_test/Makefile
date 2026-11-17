@@ -16,7 +16,7 @@ DEPS    := m1cp_test_stubs.h FreeRTOS.h $(SRC_DIR)/m1_manager_protocol.h \
            $(SRC_DIR)/m1_manager_fs.h $(SRC_DIR)/m1_manager_fw.h $(SRC_DIR)/m1_manager_update_coordinator.h \
            $(SRC_DIR)/m1_manager_fwupdate.h $(SRC_DIR)/m1_manager_espupdate.h $(SRC_DIR)/m1_esp_version.h
 
-test: test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test test_m1cp_failsafe test_m1cp_dfu test_update_intake_size test_cdc_rx_stats
+test: test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test test_m1cp_failsafe test_m1cp_dfu test_update_intake_size test_cdc_rx_stats test_log_capture test_cli_commands
 	./test_m1cp
 	./test_m1cp_fs
 	./test_m1cp_fw
@@ -30,6 +30,8 @@ test: test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp
 	./test_m1cp_dfu
 	./test_update_intake_size
 	./test_cdc_rx_stats
+	./test_log_capture
+	./test_cli_commands
 	sh test_no_raw_bkp_writes.sh
 
 test_m1cp: test_m1cp.c $(CORE) $(DEPS)
@@ -77,6 +79,21 @@ test_update_intake_size: test_update_intake_size.c $(SRC_DIR)/m1_boot_failsafe.h
 test_cdc_rx_stats: test_cdc_rx_stats.c $(SRC_DIR)/m1_cdc_rx_stats.h
 	$(CC) $(CFLAGS) $(INCS) test_cdc_rx_stats.c -o $@
 
+# Log history window (issue #44, part B): the pure, HAL-free capture window
+# behind the CLI `log` command (m1_csrc/m1_log_capture.h), exercised natively --
+# short content, wrapped content in order, oversized puts, wr wrap-around,
+# the no-init empty state, non-destructive peeks and max_len handling.
+test_log_capture: test_log_capture.c $(SRC_DIR)/m1_log_capture.h
+	$(CC) $(CFLAGS) $(INCS) test_log_capture.c -o $@
+
+# CLI command table + log capture wiring (issue #44, part B): source seams on
+# Core/Src/cli_app.c and m1_csrc/m1_log_debug.c (registration, mandatory help
+# strings, no orphan handlers, bounded writes, the enqueue funnel using the
+# clamped count, reboot/dfu flushing before the reset). Uses seam_util.h, the
+# same comment-stripping helpers test_cdc_rx_stats.c uses.
+test_cli_commands: test_cli_commands.c seam_util.h
+	$(CC) $(CFLAGS) $(INCS) test_cli_commands.c -o $@
+
 test_m1cp_espver: test_m1cp_espver.c $(CORE) $(DEPS)
 	$(CC) $(CFLAGS) $(INCS) test_m1cp_espver.c $(CORE) -o $@
 
@@ -97,7 +114,7 @@ validate_file: validate_file.c $(CORE) $(DEPS)
 	$(CC) $(CFLAGS) $(INCS) validate_file.c $(CORE) -o $@
 
 clean:
-	rm -f test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate test_m1cp_failsafe test_m1cp_dfu test_update_intake_size test_cdc_rx_stats validate_file m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test
+	rm -f test_m1cp test_m1cp_fs test_m1cp_fw test_m1cp_update_coordinator test_m1cp_fwupdate test_m1cp_espver test_m1cp_espupdate test_m1cp_failsafe test_m1cp_dfu test_update_intake_size test_cdc_rx_stats test_log_capture test_cli_commands validate_file m1_manager_espupdate_seam_test m1_manager_fwupdate_seam_test
 	rm -rf fs_sandbox
 
 .PHONY: test clean
