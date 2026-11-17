@@ -182,6 +182,50 @@ Semantics:
   `settings_init()` in `m1_system_init_task()`. SD-absent is safe: defaults,
   no retries, no error spam.
 
+Consumers (PR-2 screens and their apply points):
+
+- *LCD brightness* (`brightness_pct`): applied at boot after
+  `m1_tasks_init()` (the feedback manager's init would clobber an earlier
+  apply) via `fb_set_brightness_pct()`; edited live in Settings > LCD &
+  Notifications with immediate preview. Default 100 is behavior-identical.
+- *Screen timeout* (`screen_timeout_s`): `lcd_saver_update()`
+  (m1_system.c) derives its inactivity window from the stored value at
+  every periodic check — `0` means Off (the display never sleeps; a
+  session already asleep when Off takes effect wakes on the next check),
+  otherwise 10–120 s apply without a reboot. The compile-time
+  `LCD_SAVER_PERIOD` constant is gone; the compiled default (45 s) lives
+  only in the store's defaults table.
+- *LED notifications* (`led_notifications`): applied at boot alongside
+  brightness via `fb_set_led_notifications_enabled()`. The gate
+  suppresses only the LED legs of the notification-class composite
+  alerts (`fb_alert_success()`/`fb_alert_notify()` in
+  m1_feedback_orchestration.c). Never gated: error alerts, power/boot/
+  battery lifecycle cues, radio/USB/payload state indications, and
+  firmware-update feedback (critical or state feedback, not user
+  notifications). Sound keeps its own Sound gate; backlight behavior is
+  unaffected. Default (on) is behavior-identical.
+- *Device name* (`device_name`): edited via the virtual keyboard in
+  Settings > System (bounded by the store's 32-char field; the keyboard
+  editor itself caps entry at 20), shown in the System screen and on the
+  About page.
+- *Reset to defaults* (Settings > System): restores the compiled
+  defaults in RAM, re-applies the live feedback settings, persists the
+  defaults over `settings.cfg` through the normal atomic save (this is
+  the entire "clear the core config" story — the boot-signed flash
+  metadata sector is never read or written), then reboots via
+  `power_reboot()`.
+
+Settings screens share one modal idiom (documented at the top of
+`m1_csrc/m1_settings.c`): UP/DOWN select a row, LEFT/RIGHT move the
+value toward its minimum/maximum, OK activates a row action, BACK exits
+through one atomic `settings_save()` for the whole session, skipped
+entirely when the session edited nothing (a refused save of real edits
+is displayed, not hidden). Modal button loops check the button-event
+receive result and never act on an empty receive (same guard as the
+virtual keyboard), so a stale or uninitialized event struct cannot
+trigger an action. Future settings screens (Sub-GHz radio,
+Bluetooth) copy this pattern.
+
 **Needs validation:** Document the remaining SD-card directory layout details,
 filename limits, concurrent USB/device access policy, and recovery behavior
 after removal or I/O failure.

@@ -149,6 +149,19 @@ void fb_reset_all(void);
 void fb_set_sound_enabled(bool enabled);
 bool fb_get_sound_enabled(void);
 
+/* LED-notifications master switch (user setting, issue #4). When disabled,
+ * the orchestration layer suppresses only the LED legs of the
+ * notification-class composite alerts (fb_alert_success()/fb_alert_notify()
+ * -- see m1_feedback_orchestration.c). NEVER gated, at any switch state:
+ * error alerts, power/boot/battery lifecycle cues, radio operation states,
+ * USB/payload states and firmware-update indications -- those are critical
+ * or state feedback, not user notifications. Sound has its own gate above;
+ * backlight behavior is unaffected. fb_manager_init() resets this to the
+ * compiled default (enabled); the boot code re-applies the persisted
+ * preference afterwards, so the default is behavior-identical. */
+void fb_set_led_notifications_enabled(bool enabled);
+bool fb_get_led_notifications_enabled(void);
+
 /* 0-100 percent. 0 is equivalent to Sound Off for note suppression
  * purposes (reference section 4.3). */
 void fb_set_alert_volume_pct(uint8_t pct);

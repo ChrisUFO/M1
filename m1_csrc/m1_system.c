@@ -29,6 +29,7 @@
 #include "battery.h"
 #include "m1_feedback_manager.h"
 #include "m1_feedback_orchestration.h"
+#include "m1_settings_store.h"
 
 /*************************** D E F I N E S ************************************/
 
@@ -576,13 +577,36 @@ static void battery_indicator_update(void)
 
 /*============================================================================*/
 /**
- * @brief Update LCD backlight operating status
+ * @brief Screen-saver period from the durable settings store, in ms.
+ *
+ * Single source of truth: settings_get()->screen_timeout_s (compiled
+ * default 45 s, equal to the compile-time constant this replaced). 0
+ * means Off -- the display must never sleep -- reported as a zero period
+ * that lcd_saver_update() treats as "always awake".
  */
+/*============================================================================*/
+static uint32_t lcd_saver_period_ms(void)
+{
+	uint16_t timeout_s;
+
+	timeout_s = settings_get()->screen_timeout_s;
+	if ( timeout_s==0u ) // Screen timeout Off?
+		return 0u; // Off: the display never sleeps
+
+	return (uint32_t)timeout_s * 1000u;
+} // static uint32_t lcd_saver_period_ms(void)
+
+
+
+/*============================================================================*/
+/**
+  * @brief Update LCD backlight operating status
+  */
 /*============================================================================*/
 static void lcd_saver_update(void)
 {
 	static uint8_t saver_mode = 0;
-	uint32_t delta;
+	uint32_t period_ms, delta;
 
 	/*
 	 * Migrated to the feedback manager (M1-FB-STD-001 v1.1, section 5.3):
@@ -594,11 +618,28 @@ static void lcd_saver_update(void)
 	 * over and the sleep timer's own state resumes automatically via the
 	 * manager's logical restore once that holder releases. See
 	 * documentation/M1_FEEDBACK_RECONCILIATION.md.
+	 *
+	 * The inactivity window is the runtime settings-store value (see
+	 * lcd_saver_period_ms()); a settings change takes effect on the next
+	 * periodic check without a reboot. With the timeout set to Off the
+	 * saver never sleeps, and a session that was already asleep when Off
+	 * took effect is woken immediately.
 	 */
+	period_ms = lcd_saver_period_ms();
+	if ( period_ms==0u ) // Timeout Off?
+	{
+		if ( saver_mode ) // Was asleep when Off took effect?
+		{
+			fb_sleep_timer_wake();
+			saver_mode = 0;
+		}
+		return;
+	} // if ( period_ms==0u )
+
 	delta = HAL_GetTick() - m1_device_stat.active_timestamp;
 	if ( saver_mode )
 	{
-		if ( delta < LCD_SAVER_PERIOD ) // Keypad is active?
+		if ( delta < period_ms ) // Keypad is active?
 		{
 			fb_sleep_timer_wake();
 			saver_mode = 0;
@@ -606,7 +647,7 @@ static void lcd_saver_update(void)
 	} // if ( saver_mode )
 	else
 	{
-		if ( delta >= LCD_SAVER_PERIOD ) // Keypad has been inactive?
+		if ( delta >= period_ms ) // Keypad has been inactive?
 		{
 			fb_sleep_timer_sleep();
 			saver_mode = 1;
@@ -623,8 +664,9 @@ static void lcd_saver_update(void)
  * Used when a view representing fresh, user-relevant output is shown (e.g. the
  * NFC/RFID successful-read info screen). Mirrors startup_info_screen_display():
  * wake the manager-owned backlight immediately and reseat active_timestamp so
- * the normal LCD_SAVER_PERIOD window starts from this moment. Scanning is not
- * affected and continues to time out normally.
+ * the normal screen-timeout window (settings_get()->screen_timeout_s)
+ * starts from this moment. Scanning is not affected and continues to time
+ * out normally.
  */
 /*============================================================================*/
 void m1_lcd_wake_restart_timer(void)

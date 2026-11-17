@@ -11,6 +11,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: LCD & Notifications and System settings screens over the SD settings
+  store (issues #4 and #7 except date/time, which lands with the RTC unit) —
+  Settings grows two new leading entries. *LCD & Notifications*: display
+  brightness 0–100% with live preview while editing, screen timeout
+  Off/10–120 s replacing the fixed compile-time 45 s saver period (Off never
+  sleeps; changes apply without a reboot, and a session already asleep when
+  Off takes effect wakes), and an LED notifications switch that suppresses
+  only the success/notify LED flashes — error, power, boot, battery, radio,
+  USB, payload and firmware-update cues are never suppressible, and sound/
+  backlight keep their own settings. *System*: editable device name (virtual
+  keyboard, shown in System and on the About page), SD storage total/free
+  readout, and Reset defaults — restores compiled defaults, persists them
+  over the settings file, and reboots; the boot-signed flash metadata sector
+  is never touched. Both screens apply edits immediately and persist the
+  whole editing session with one atomic save on exit, skipped when the
+  session edited nothing (a browse-only visit never writes the card and
+  never sees a failure notice); a refused save of real edits is
+  displayed rather than hidden, and modal button loops never act on an
+  empty button-event receive (virtual-keyboard seam guard). Screen
+  value logic (stepping, bounds,
+  labels) lives in a host-testable pure-core region of `m1_csrc/m1_settings.c`
+  that future settings screens (Sub-GHz, Bluetooth) are expected to copy.
+  Host coverage: new settings-screens suite; the backlight/saver suite now
+  proves runtime timeout semantics (default 45 s identical, Off, custom) and
+  the feedback-manager suite gains LED-notification gate cases (suppression
+  scope, error/power immunity, init default); all are wired into
+  `scripts/run_host_tests.sh` and CI.
+
 - Fork: durable user-settings store foundation for the Merge 3 feature set
   (issues #3/#4/#7/#11 substrate) — new `m1_csrc/m1_settings_store.c/.h`
   keeps a RAM settings image (`S_M1_Settings_t`: LCD brightness, screen

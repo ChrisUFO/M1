@@ -87,7 +87,11 @@
  * one marks the firmware metadata block in flash, not the backup registers. */
 #define SYS_CONFIG_MAGIC_NUMBER    ((uint32_t)0x534A1F42)
 
-#define LCD_SAVER_PERIOD			45000 // ms
+/* LCD screen-saver timeout lives in the durable settings store
+ * (settings_get()->screen_timeout_s, m1_settings_store.h): 0 = Off
+ * (never sleep), else 10..120 s, compiled default 45 s. lcd_saver_update()
+ * reads it at runtime, so a settings change takes effect without a
+ * reboot; nothing consumes a compile-time period anymore. */
 
 /* Backup-register (RTC/TAMP BKP) allocation, issue #41-A.
  *
@@ -238,8 +242,9 @@ void startup_info_screen_display(const char *scr_text);
 
 /* Wake the LCD backlight immediately and restart the normal inactivity timer.
  * Call when a view representing fresh, user-relevant output is shown (e.g. the
- * NFC/RFID successful-read info screen) so the standard LCD_SAVER_PERIOD window
- * begins from that moment. Does not affect scanning, which times out normally. */
+ * NFC/RFID successful-read info screen) so the standard screen-timeout window
+ * (settings_get()->screen_timeout_s) begins from that moment. Does not affect
+ * scanning, which times out normally. */
 void m1_lcd_wake_restart_timer(void);
 
 #endif /* M1_SYSTEM_H_ */

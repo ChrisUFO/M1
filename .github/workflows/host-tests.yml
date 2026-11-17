@@ -2,7 +2,9 @@ name: Host tests
 
 # Runs the host tests wired into scripts/run_host_tests.sh (python+gcc
 # extraction harnesses) on every push and pull request. The wired set is
-# the settings-store suite today; later units append their tests there by
+# the settings-store suite, the settings-screens suite, the
+# backlight/saver suite and the feedback manager suite (incl. the
+# LED-notification gate); later units append their tests there by
 # design, so a green run here covers exactly those listed tests -- not the
 # repository's full host-test corpus. Firmware/hardware-coupled
 # verification stays outside CI by design; see docs/testing.md for the

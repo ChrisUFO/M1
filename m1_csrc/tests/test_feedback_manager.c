@@ -868,6 +868,96 @@ static void test_N11_cadence_distinctness_across_palette(void)
 	fb_fw_update_stop();
 } // static void test_N11_cadence_distinctness_across_palette(void)
 
+/*************************** L E D   N O T I F I C A T I O N   G A T E ************/
+
+/* Gate off: success alert's LED leg is suppressed while its sound and
+ * backlight-wake legs still run, and re-enabling restores the LED leg. */
+static void test_G01_gate_suppresses_success_led_only(void)
+{
+	fb_set_led_notifications_enabled(false);
+	CHECK(!fb_get_led_notifications_enabled());
+
+	fb_alert_success(FB_OWNER_NOTIFY);
+	tick(1);
+	CHECK(fb_debug_visible_led() == FB_LED_OFF); /* no LED leg was admitted */
+	CHECK(g_led_write_count == 0);               /* nothing even transiently wrote */
+	CHECK(g_hw_snd_playing);                     /* sound leg unaffected */
+	CHECK(g_hw_bl == 100);                       /* backlight-wake leg unaffected */
+	tick_n(50, 20); /* 1000 ms: the BL one-shot completes and restores */
+	CHECK(g_hw_snd_playing == false);
+
+	/* Re-enable: the very next success alert flashes the LED again. */
+	fb_set_led_notifications_enabled(true);
+	fb_alert_success(FB_OWNER_NOTIFY);
+	tick(1);
+	CHECK(fb_debug_visible_led() == FB_LED_GREEN);
+} // static void test_G01_gate_suppresses_success_led_only(void)
+
+/* Gate off: notify alert's LED leg is suppressed too (it is the other
+ * notification-class composite). */
+static void test_G02_gate_suppresses_notify_led(void)
+{
+	fb_set_led_notifications_enabled(false);
+
+	fb_alert_notify(FB_OWNER_NOTIFY);
+	tick(1);
+	CHECK(fb_debug_visible_led() == FB_LED_OFF);
+	CHECK(g_hw_snd_playing);
+	CHECK(g_hw_bl == 100);
+} // static void test_G02_gate_suppresses_notify_led(void)
+
+/* Gate off: ERROR keeps its LED -- the setting must never suppress
+ * critical cues (error, power, boot, battery). */
+static void test_G03_gate_never_suppresses_error_led(void)
+{
+	fb_set_led_notifications_enabled(false);
+
+	fb_alert_error(FB_OWNER_NOTIFY);
+	tick(1);
+	CHECK(fb_debug_visible_led() == FB_LED_RED); /* error LED runs with the gate off */
+	CHECK(g_hw_snd_playing);
+
+	/* Power/lifecycle cues equally unaffected: charging still solid red,
+	 * boot still plays its LED sweep. */
+	fb_pwr_charging();
+	tick(1);
+	CHECK(fb_debug_visible_led() == FB_LED_RED);
+	fb_pwr_not_charging();
+	fb_pwr_boot();
+	tick(1);
+	CHECK(fb_debug_visible_led() == FB_LED_BLUE); /* boot sweep step 1 */
+} // static void test_G03_gate_never_suppresses_error_led(void)
+
+/* Gate off: radio/USB/payload STATE indications still run -- only the
+ * notification-class one-shots are gated. */
+static void test_G04_gate_spares_state_indications(void)
+{
+	fb_set_led_notifications_enabled(false);
+
+	fb_net_emulating_start();
+	tick(1);
+	CHECK(fb_debug_visible_led() != FB_LED_OFF); /* pulse-blue approximation */
+	fb_net_emulating_stop();
+
+	fb_usb_connect();
+	tick(1);
+	CHECK(fb_debug_visible_led() == FB_LED_CYAN); /* solid cyan hold */
+	fb_usb_disconnect();
+
+	fb_net_target(); /* APP_ALERT one-shot, but a radio state cue: not gated */
+	tick(1);
+	CHECK(fb_debug_visible_led() == FB_LED_GREEN);
+} // static void test_G04_gate_spares_state_indications(void)
+
+/* fb_manager_init() resets the gate to the compiled default (enabled);
+ * the boot code re-applies the persisted preference afterwards. */
+static void test_G05_init_resets_gate_to_enabled(void)
+{
+	fb_set_led_notifications_enabled(false);
+	reset_manager(); /* -> fb_manager_init() */
+	CHECK(fb_get_led_notifications_enabled());
+} // static void test_G05_init_resets_gate_to_enabled(void)
+
 /*************************** M A I N ***********************************************/
 
 int main(void)
@@ -909,6 +999,12 @@ int main(void)
 	RUN_TEST(test_N09_write_vs_charging_priority_and_restore);
 	RUN_TEST(test_N10_firmware_update_alternating_cyan_magenta_and_preempts);
 	RUN_TEST(test_N11_cadence_distinctness_across_palette);
+
+	RUN_TEST(test_G01_gate_suppresses_success_led_only);
+	RUN_TEST(test_G02_gate_suppresses_notify_led);
+	RUN_TEST(test_G03_gate_never_suppresses_error_led);
+	RUN_TEST(test_G04_gate_spares_state_indications);
+	RUN_TEST(test_G05_init_resets_gate_to_enabled);
 
 	printf("\n%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
