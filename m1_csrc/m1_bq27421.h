@@ -276,7 +276,7 @@ bool bq27421_readDesignCapacity_mAh( uint16_t *capacity_mAh );
 bool bq27421_readVoltage_mV( uint16_t *voltage_mV );
 bool bq27421_readTemp_degK( uint16_t *temp_degKbyTen );
 bool bq27421_readAvgCurrent_mA( int16_t *avgCurrent_mA );
-//bool bq27421_readStateofCharge_percent( uint16_t *soc_percent );
+bool bq27421_readStateofCharge_percent( uint16_t *soc_percent );
 
 bool bq27421_readControlReg( uint16_t *control );
 bool bq27421_readFlagsReg( uint16_t *flags );
