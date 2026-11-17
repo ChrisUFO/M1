@@ -272,8 +272,17 @@ static void settings_store_string(const settings_field_desc_t *fd, const char *v
 	}
 	if (n > (fd->size - 1U)) { n = fd->size - 1U; }
 
+	/* Zero the whole field, then copy: every intermediate state stays
+	 * NUL-terminated (the bytes past the copy frontier remain zero), so
+	 * a concurrent settings_get() reader can never run off the array --
+	 * the header ownership contract. A trailing dst[n] = '\0' after the
+	 * memcpy would leave the buffer un-terminated mid-update when the
+	 * new value is longer than the old; writing it before the memcpy
+	 * would leave a stale tail on shrink ("Bright" -> "Dim" reading
+	 * "Dimght"). Pinned by the host suite (static memset-before-memcpy
+	 * check + shrink/grow regression). */
+	memset(dst, 0, fd->size);
 	memcpy(dst, src, n);
-	dst[n] = '\0';
 }
 
 /* Reset one field to its compiled default (used for malformed values). */
@@ -463,11 +472,12 @@ static bool settings_serialize(char *out, size_t cap, size_t *out_len)
  * save interrupted at any point (power loss, SD removal). Must run before
  * settings.cfg is opened for reading.
  *
- * The writer only ever rotates settings.cfg -> .bak AFTER settings.tmp is
- * fully written and closed, so an orphaned .tmp is proven complete and is
- * promoted forward; the retained .bak is only consumed when no other
- * candidate survives. The CRC gate in settings_load_file() has the final
- * word on whatever reconciliation promotes. */
+ * An orphaned settings.tmp is promoted ONLY when settings.cfg is absent;
+ * when settings.cfg exists the tmp is discarded -- it may be an
+ * incomplete write whose cleanup path never ran. The .bak is consumed
+ * only when neither cfg nor tmp survives. Nothing here validates
+ * content: the CRC gate in settings_load_file() has the final word on
+ * whatever reconciliation promotes. */
 static void settings_recover_replace(void)
 {
 	bool final_exists = (f_stat(SETTINGS_PATH, NULL) == FR_OK);
@@ -513,6 +523,11 @@ static settings_load_status_t settings_load_file(void)
 	if (fr != FR_OK)
 	{
 		if ((fr == FR_NO_FILE) || (fr == FR_NO_PATH)) { return SETTINGS_LOAD_MISSING; }
+		/* Everything else -- absent card, I/O error, a present card with
+		 * no usable filesystem (FR_NO_FILESYSTEM et al.) -- reports the
+		 * generic SD-unavailable line: defaults are the correct outcome
+		 * for all of them, and this module never mounts the volume, so
+		 * it cannot usefully classify further. */
 		return SETTINGS_LOAD_SD_ERROR;
 	}
 
@@ -527,11 +542,12 @@ static settings_load_status_t settings_load_file(void)
 }
 
 /* Recoverable atomic promotion (same proven pattern as the Wi-Fi saved-
- * network store): fully write+close settings.tmp, rotate the previous
- * settings.cfg to settings.bak, then rename settings.tmp over settings.cfg.
- * A failure at any step leaves the previous good settings.cfg in place
- * (or restores it); the retained .bak is the last known-good copy.
- * Returns true on success. */
+ * network store): fully write+close settings.tmp, unlink the superseded
+ * settings.bak (FatFs renames cannot overwrite an existing destination),
+ * rotate the previous settings.cfg to settings.bak, then rename
+ * settings.tmp to settings.cfg. A failure at any step leaves the previous
+ * good settings.cfg in place (or restores it); while it exists, the
+ * retained .bak is the last known-good copy. Returns true on success. */
 static bool settings_write_file(void)
 {
 	char buf[SETTINGS_FILE_MAX];
@@ -561,7 +577,18 @@ static bool settings_write_file(void)
 		return false;
 	}
 
-	(void)f_unlink(SETTINGS_BAK_PATH); /* clear the superseded backup; ok if absent */
+	/* Clear the superseded backup so the rotation rename cannot hit
+	 * FR_EXIST (FatFs never renames onto an existing file). A missing
+	 * .bak is fine; any other failure (e.g. a write-protected card)
+	 * would make the rotation fail identically on every future save,
+	 * so abort with the tmp cleaned up and the actual cause named. */
+	fr = f_unlink(SETTINGS_BAK_PATH);
+	if ((fr != FR_OK) && (fr != FR_NO_FILE))
+	{
+		(void)f_unlink(SETTINGS_TMP_PATH);
+		M1_LOG_W(M1_LOGDB_TAG, "Settings .bak not removable, save aborted\r\n");
+		return false;
+	}
 
 	fr = f_rename(SETTINGS_PATH, SETTINGS_BAK_PATH);
 	if ((fr != FR_OK) && (fr != FR_NO_FILE) && (fr != FR_NO_PATH))

@@ -134,13 +134,19 @@ Semantics:
   log line, and the retained `.bak` is left in place; unknown keys are
   skipped; out-of-range values clamp to field bounds; malformed numerals
   reset that field to its default. An interrupted save is reconciled at
-  load: a proven-complete `settings.tmp` is promoted, or the `.bak` is
-  restored when no candidate survives.
-- *Save*: write `settings.tmp` fully and close it, rotate the previous
-  `settings.cfg` to `settings.bak`, then rename `settings.tmp` over
-  `settings.cfg`. Any failure leaves the previous good file in place (or
-  restores it); `.bak` is intentionally retained as the last known-good
-  copy and is only rotated out by the next successful save.
+  load: an orphaned `settings.tmp` is promoted only when `settings.cfg`
+  is missing (the CRC gate then has the final word on it); when
+  `settings.cfg` exists, the orphaned `.tmp` is discarded, and the `.bak`
+  is restored only when neither cfg nor tmp survives.
+- *Save*: write `settings.tmp` fully and close it, unlink the superseded
+  `.bak`, rotate the previous `settings.cfg` to `settings.bak`, then
+  rename `settings.tmp` to `settings.cfg`. Any failure leaves the
+  previous good `settings.cfg` in place (or restores it), so a save can
+  never destroy the newest good copy. While it exists, `.bak` is the
+  last known-good copy -- but it is unlinked during every save attempt
+  (FatFs `f_rename` cannot overwrite an existing destination), so a
+  failed rotation destroys the older backup while `settings.cfg`
+  survives.
 - *Ownership*: the UI task is the single writer (setters, save, reset);
   any task may read via `settings_get()`. Boot-time consumers run after
   `settings_init()` in `m1_system_init_task()`. SD-absent is safe: defaults,

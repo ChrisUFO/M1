@@ -74,9 +74,13 @@ bool settings_init(void);
 /** Read-only view of the current settings (see ownership contract above). */
 const S_M1_Settings_t *settings_get(void);
 
-/** Typed setters (UI task only). Values are clamped to the same bounds the
- *  file parser enforces, so the RAM image can never hold out-of-range
- *  data. Setters update RAM only; persistence is settings_save(). */
+/** Typed setters (UI task only). Numeric values are clamped to the same
+ *  bounds the file parser enforces, so the RAM image can never hold an
+ *  out-of-range number. String setters bound length only; string content
+ *  is stored verbatim -- if a control character ever reaches a string
+ *  field, settings_save() refuses and warns rather than emit a
+ *  corruptible line format. Setters update RAM only; persistence is
+ *  settings_save(). */
 void settings_set_brightness_pct(uint8_t pct);
 void settings_set_screen_timeout_s(uint16_t seconds);
 void settings_set_led_notifications(uint8_t enabled);

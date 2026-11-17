@@ -152,6 +152,19 @@ static int g_pass = 0, g_fail = 0;
 
 def pure_core_tests(tmp):
     mod = source("m1_csrc/m1_settings_store.c")
+
+    # Read-race contract pin (header ownership contract): a concurrent
+    # settings_get() reader must never observe an un-NUL-terminated string
+    # field mid-update. A threaded race test is impractical in this
+    # harness, so the invariant is checked statically: settings_store_string
+    # must zero the whole destination BEFORE copying into it.
+    # (memcpy-then-terminate leaves the buffer un-terminated mid-update on
+    # grow; terminator-first leaves a stale tail on shrink.)
+    store_string_src = function(mod, "settings_store_string")
+    assert store_string_src.index("memset(") < store_string_src.index("memcpy("), (
+        "settings_store_string must memset the destination before memcpy"
+    )
+
     core = region(mod, PURE_BEGIN, PURE_END) + "\n" + CHECK_MACROS
     for fn in PURE_FUNCTIONS:
         core += "\n" + function(mod, fn)
@@ -292,10 +305,16 @@ int main(void)
         CHECK(!settings_buffer_crc_valid(buf, len - 1), "7-digit trailer rejected");
     }
 
-    /* 7: unknown keys skipped, known keys still applied */
+    /* 7: unknown keys skipped, known keys still applied; blank lines and
+     * mid-file comments tolerated between settings lines */
     {
         len = build_file(buf, sizeof(buf),
-            "#ver=1\r\nbrightness_pct=50\r\nfuture_key=9\r\nsubghz_mod=2\r\n");
+            "#ver=1\r\n"
+            "\r\n"
+            "# mid-file comment\r\n"
+            "brightness_pct=50\r\n"
+            "future_key=9\r\n"
+            "subghz_mod=2\r\n");
         CHECK(settings_parse_buffer(buf, len), "file with unknown key parses");
         CHECK(g_m1_settings.brightness_pct == 50, "known key applied around unknown key");
         CHECK(g_m1_settings.subghz_mod == 2, "second known key applied after unknown key");
@@ -338,10 +357,12 @@ int main(void)
             "brightness_pct=0\r\n"
             "screen_timeout_s=0\r\n"
             "screen_timeout_s=120\r\n"
+            "subghz_bw_khz=-5\r\n"
             "subghz_power_dbm=-128\r\n");
         CHECK(settings_parse_buffer(buf, len), "boundary file parses");
         CHECK(g_m1_settings.brightness_pct == 0, "brightness 0 allowed");
         CHECK(g_m1_settings.screen_timeout_s == 120, "later duplicate key wins (120)");
+        CHECK(g_m1_settings.subghz_bw_khz == 0, "negative numeral into unsigned field clamps to 0");
         CHECK(g_m1_settings.subghz_power_dbm == -128, "power -128 allowed");
     }
 
@@ -393,6 +414,30 @@ int main(void)
         settings_reset_defaults();
         strcpy(g_m1_settings.bt_adv_name, "x\ry");
         CHECK(!settings_serialize(buf, sizeof(buf), &len), "CR in name refused");
+    }
+
+    /* 14: string updates leave the field fully terminated with no stale
+     * tail -- the final-state half of the memset-then-copy invariant that
+     * keeps concurrent settings_get() readers inside the array (the
+     * transient itself is not observable single-threaded; the python-side
+     * static memset-before-memcpy check pins that half) */
+    {
+        size_t i;
+        int clean_tail = 1;
+        settings_reset_defaults();
+        settings_store_string(&s_settings_fields[SETTINGS_F_DEVICE_NAME],
+                              "0123456789012345678901234567890X", 32);
+        CHECK(strlen(g_m1_settings.device_name) == 32, "grow to capacity stores 32 chars");
+        CHECK(g_m1_settings.device_name[32] == '\0', "terminator present at full capacity");
+        settings_store_string(&s_settings_fields[SETTINGS_F_DEVICE_NAME], "Dim", 3);
+        CHECK(strcmp(g_m1_settings.device_name, "Dim") == 0, "shrink leaves no stale tail");
+        for (i = 3; i < sizeof(g_m1_settings.device_name); i++)
+        {
+            if (g_m1_settings.device_name[i] != '\0') { clean_tail = 0; }
+        }
+        CHECK(clean_tail, "bytes past the new length are all zeroed");
+        settings_store_string(&s_settings_fields[SETTINGS_F_BT_ADV_NAME], "Grow", 4);
+        CHECK(strcmp(g_m1_settings.bt_adv_name, "Grow") == 0, "empty-field update stores exactly");
     }
 
     printf("settings pure core: %d/%d checks passed\n", g_pass, g_pass + g_fail);
@@ -508,8 +553,12 @@ static bool g_fail_write_short = false;
 
 static bool g_fail_close = false;
 
+static bool g_fail_read = false;
+
 static char    g_fail_rename_old[80] = ""; static char g_fail_rename_new[80] = "";
 static FRESULT g_fail_rename_code = FR_DISK_ERR;
+
+static char g_fail_unlink_path[80] = "";
 
 static bool g_fail_dir_ensure = false;
 
@@ -523,7 +572,9 @@ static void fault_reset(void)
     g_fail_open_n = 0;
     g_fail_write_after = -1; g_write_calls = 0; g_fail_write_short = false;
     g_fail_close = false;
+    g_fail_read = false;
     g_fail_rename_old[0] = 0; g_fail_rename_new[0] = 0;
+    g_fail_unlink_path[0] = 0;
     g_fail_dir_ensure = false;
     s_calls_n = 0; s_log_info = 0; s_log_warn = 0;
 }
@@ -556,6 +607,7 @@ FRESULT f_read(FIL *fp, void *buff, UINT btr, UINT *br)
     size_t avail = (s_vfs[slot].len > (size_t)fp->pos) ? (s_vfs[slot].len - (size_t)fp->pos) : 0;
     size_t n = ((size_t)btr < avail) ? (size_t)btr : avail;
     logcall("read", s_vfs[slot].path);
+    if (g_fail_read) { *br = 0; return FR_DISK_ERR; }
     memcpy(buff, s_vfs[slot].data + fp->pos, n);
     fp->pos += (long)n;
     *br = (UINT)n;
@@ -590,6 +642,7 @@ FRESULT f_unlink(const char *path)
 {
     int i = vfs_find(path);
     logcall("unlink", path);
+    if (g_fail_unlink_path[0] && strcmp(path, g_fail_unlink_path) == 0) { return FR_WRITE_PROTECTED; }
     if (i < 0) { return FR_NO_FILE; }
     s_vfs[i].exists = 0;
     return FR_OK;
@@ -681,6 +734,16 @@ int main(void)
     CHECK(s_log_warn == 1, "no repeated logging on second init");
     CHECK(call_count("open") == 1, "second init does not touch the filesystem again");
 
+    /* 2b: mid-read I/O failure -> SD_ERROR (f_read fault surfaced, not
+     *     hung or trusted; no FS re-touch beyond the single attempt) */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false;
+    vfs_put_valid(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=41\r\n");
+    g_fail_read = true;
+    CHECK(settings_load_file() == SETTINGS_LOAD_SD_ERROR, "mid-read failure -> SD_ERROR");
+    g_fail_read = false;
+    CHECK(g_m1_settings.brightness_pct == 100, "mid-read failure leaves defaults");
+
     /* 3: save + load round-trip through the FatFs boundary, with .bak lifecycle */
     vfs_reset(); fault_reset();
     g_settings_ready = true; g_settings_loaded_ok = true;
@@ -756,6 +819,37 @@ int main(void)
     vfs_put(SETTINGS_PATH, big);
     CHECK(settings_load_file() == SETTINGS_LOAD_CORRUPT, "oversized file -> CORRUPT");
 
+    /* 6b: exact SETTINGS_FILE_MAX boundary -- a 1024-byte file fits the
+     * bounded read exactly and is accepted; 1025 bytes is oversized */
+    {
+        int total;
+        for (total = (int)SETTINGS_FILE_MAX; total <= (int)SETTINGS_FILE_MAX + 1; total++)
+        {
+            size_t body_len = (size_t)total - 14u; /* trailer "crc=XXXXXXXX\r\n" */
+            size_t base = strlen("#ver=1\r\nbrightness_pct=41\r\n");
+            vfs_reset(); fault_reset();
+            g_settings_ready = false; g_settings_loaded_ok = false;
+            assert(body_len > base + 2u);
+            memset(big, '#', body_len);
+            memcpy(big, "#ver=1\r\nbrightness_pct=41\r\n", base);
+            big[body_len - 2u] = '\r'; big[body_len - 1u] = '\n'; /* padding comment line */
+            snprintf(big + body_len, 16, "crc=%08X\r\n", (unsigned)m1_crc32c(big, body_len));
+            vfs_put(SETTINGS_PATH, big);
+            CHECK(vfs_get(SETTINGS_PATH) != NULL && strlen(vfs_get(SETTINGS_PATH)) == (size_t)total,
+                  "boundary file has the intended exact size");
+            if (total == (int)SETTINGS_FILE_MAX)
+            {
+                CHECK(settings_load_file() == SETTINGS_LOAD_OK, "exactly-1024-byte file accepted");
+                CHECK(g_m1_settings.brightness_pct == 41, "exactly-1024-byte file content applied");
+            }
+            else
+            {
+                CHECK(settings_load_file() == SETTINGS_LOAD_CORRUPT, "1025-byte file rejected as oversized");
+                CHECK(g_m1_settings.brightness_pct == 100, "oversized boundary leaves defaults");
+            }
+        }
+    }
+
     /* 7: interrupted-save recovery states */
     /* 7a: no final, tmp+bak (crash between the two renames) -> tmp promoted, bak kept */
     vfs_reset(); fault_reset();
@@ -795,6 +889,15 @@ int main(void)
     CHECK(vfs_exists(SETTINGS_BAK_PATH), "normal state keeps bak in place");
     CHECK_FILE_EQ(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=88\r\n", "bak content not disturbed");
 
+    /* 7f: garbage tmp, no final/bak -> promoted, then CRC-rejected:
+     *     recovery only moves candidates, the CRC gate has final say */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false;
+    vfs_put(SETTINGS_TMP_PATH, "garbage, not a settings file");
+    CHECK(settings_load_file() == SETTINGS_LOAD_CORRUPT, "promoted garbage tmp rejected by the CRC gate");
+    CHECK(vfs_exists(SETTINGS_PATH) && !vfs_exists(SETTINGS_TMP_PATH), "garbage tmp was promoted to final");
+    CHECK(g_m1_settings.brightness_pct == 100, "defaults after CRC rejection of promoted tmp");
+
     /* 8: save failure modes never destroy the previous good file */
     /* 8a: tmp open failure */
     vfs_reset(); fault_reset();
@@ -831,12 +934,15 @@ int main(void)
     /* 8e: rotation rename (cfg->bak) failure */
     vfs_reset(); fault_reset();
     vfs_put_valid(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=90\r\n");
+    vfs_put_valid(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=80\r\n"); /* older backup present */
     strcpy(g_fail_rename_old, SETTINGS_PATH); strcpy(g_fail_rename_new, SETTINGS_BAK_PATH);
     g_fail_rename_code = FR_DISK_ERR;
     CHECK(!settings_write_file(), "rotation failure reported");
     CHECK_FILE_EQ(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=90\r\n",
                   "previous final preserved on rotation failure");
     CHECK(!vfs_exists(SETTINGS_TMP_PATH), "tmp cleaned up after rotation failure");
+    CHECK(!vfs_exists(SETTINGS_BAK_PATH),
+          "older .bak was already unlinked when the rotation failed (documented semantics)");
 
     /* 8f: promotion rename (tmp->cfg) failure -> rollback restores previous */
     vfs_reset(); fault_reset();
@@ -848,6 +954,20 @@ int main(void)
                   "previous final rolled back after promotion failure");
     CHECK(!vfs_exists(SETTINGS_TMP_PATH) && !vfs_exists(SETTINGS_BAK_PATH),
           "tmp and bak consumed by cleanup/rollback");
+
+    /* 8g: superseded-.bak unlink failure (e.g. write-protected card):
+     *     the save aborts with the actual cause named instead of failing
+     *     FR_EXIST at the rotation rename identically on every save */
+    vfs_reset(); fault_reset();
+    vfs_put_valid(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=90\r\n");
+    vfs_put_valid(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=80\r\n");
+    strcpy(g_fail_unlink_path, SETTINGS_BAK_PATH);
+    CHECK(!settings_write_file(), "unremovable .bak aborts the save");
+    CHECK_FILE_EQ(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=90\r\n",
+                  "previous final preserved when .bak cannot be cleared");
+    CHECK(vfs_exists(SETTINGS_BAK_PATH), "stale .bak left untouched by the abort");
+    CHECK(!vfs_exists(SETTINGS_TMP_PATH), "tmp cleaned up after the abort");
+    CHECK(s_log_warn == 1, "abort logged with its own distinct warning");
 
     /* 9: save before init refused, filesystem untouched */
     vfs_reset(); fault_reset();
