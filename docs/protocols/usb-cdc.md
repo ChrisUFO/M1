@@ -102,9 +102,11 @@ USB CDC bridge RX diagnostics reset.
 ```
 
 `cdcstats` is read-only; `cdcreset` zeroes both cumulative counters and the high
-watermark and confirms. The output is qualified on purpose: the legacy names
-(`CDC_CLI_RxDroppedBytes()`, "dropped bytes") belonged to a different path and a
-different metric, so reading the new values as the legacy ones would be wrong.
+watermark and confirms. The commands themselves, with the rest of the console
+table, are documented in [the CLI console reference](cli.md). The output is
+qualified on purpose: the legacy names (`CDC_CLI_RxDroppedBytes()`, "dropped
+bytes") belonged to a different path and a different metric, so reading the new
+values as the legacy ones would be wrong.
 
 Interpretation:
 

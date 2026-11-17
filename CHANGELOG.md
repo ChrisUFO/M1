@@ -142,6 +142,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CDC_CLI_RxLostBytes()` alongside the refusal counter when it runs, since a
   rising refusal counter alone proves back-pressure, not loss; see
   `docs/protocols/usb-cdc.md`
+- Fork: console diagnostics restored on the adopted base (issue #44, part B) —
+  the eight fork CLI commands (`log`, `status`, `version`, `sdcard`, `wifi`,
+  `battery`, `reboot`, `memory`) plus a new `dfu` are registered in the existing
+  `xCommandList[]`, so `vRegisterCLICommands()`'s loop and the built-in `help`
+  pick them up unchanged; every handler fits the 200-byte
+  `configCOMMAND_INT_MAX_OUTPUT_SIZE` response except `log`, which chunks
+  through FreeRTOS+CLI's multi-call protocol. `log` is deliberately not a
+  straight port: the fork's capture ring saturated at 2047 bytes and then froze
+  (its reader restored the tail it had just consumed) and it truncated the
+  capture length to the TX-ring return value, so a full ring captured nothing;
+  it now snapshots a 2048-byte linear window (`m1_csrc/m1_log_capture.h`) fed
+  from the single log enqueue funnel, where every put overwrites the oldest
+  bytes and only advances one free-running counter, so input is never refused
+  and the window never freezes, and the newest bytes come back oldest-first.
+  `reboot` and `dfu` acknowledge before they reset or jump (the response buffer
+  is only sent after a handler returns, so the fork's message raced its reset);
+  `battery` reports a failed gauge read instead of a 0 mV battery, and `sdcard`
+  probes capacity only when the cached status says the card is mounted.
+  `cmd_m1_mtest_help()` now lists every implemented `mtest` ID by decade, marks
+  9 and 61 DEV-ONLY and 22/23/24 legacy-equivalent, and no longer advertises 53
+  and 54, which no handler implements (both are 52). The destructive corruption
+  test is re-homed to the free ID 9 behind the `M1_TEST_CMDS` dev guard and
+  retargeted at the stored CRC word (`0x080FFC14`) the shipped boot failsafe
+  validates, not the config magic the fork overwrote — `m1_boot_classify_fault()`
+  reports metadata faults in preference to a CRC mismatch, so a magic fault
+  would have masked the stage the test exists to exercise. Recorded correction
+  to the issue: 22-24 needed no change, since the adopted base already
+  implements direct R/G/B PWM under those IDs with the same calls and the same
+  missing-parameter error, so only 9 actually collided; 5, 6, 61, 64, 68, 69,
+  78 and 79 stay upstream-owned. ROM cost of the unit: **+4792 B flash /
+  +4128 B RAM** (FLASH 725680 -> 730472 B, RAM 326220 -> 330348 B, same
+  toolchain, `./build.sh` on this tree versus `main` @ `598a803`; the RAM is
+  the 2 KB window, the 2 KB snapshot and their bookkeeping). `_wCRC.bin` is
+  still 1047576 bytes. New host targets `test_log_capture` (short, wrapped and
+  oversized writes, the 2^32 cursor wrap, the no-init empty state) and
+  `test_cli_commands` (every table entry registered with a help string, no
+  orphan handlers, no unbounded write into the 200-byte buffer, both guarded
+  paths compiled out, and the `reboot`/`dfu` flush-before-reset order), both in
+  `make test`, so a CLI addition cannot land without test-visible
+  registration; the reference page is `docs/protocols/cli.md`. No on-device
+  behaviour is claimed: counter non-zero proof stays hardware-gated by issue
+  #63, and the `mtest 9` recovery path belongs to the boot-recovery hardware
+  gate (issue #41)
 - Fork: CRC emitter parity harness (issue #40) — `scripts/verify_crc_parity.sh`
   generates four deterministic full-size (`0xFFC14`-byte) images from the
   committed spec in `tools/crc_test_vectors.py` (so no ~1 MiB binaries live in

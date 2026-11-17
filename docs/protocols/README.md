@@ -23,7 +23,7 @@
 | Infrared capture/replay | Code-defined plus fixtures | `Infrared/`, 112 `IR-Data` samples | Supported matrix and stored representation |
 | USB CDC | Code-defined | `USB/Class/CDC/`, `m1_usb_cdc_msc.c`; [RX diagnostics](usb-cdc.md) | Host behavior, baud semantics, buffering, errors |
 | USB MSC | Code-defined | `USB/Class/MSC/`, storage code | Media ownership, eject/removal, corruption recovery |
-| CLI over UART/USB | Code-defined | `m1_cli.c`, `cli_app.c` | Command reference, permissions, output/error contract |
+| CLI over UART/USB | Code-defined | `m1_cli.c`, `cli_app.c`; [console command reference](cli.md) | Permitting model (there is none: any console user may run every command); host-specific terminal/echo behavior |
 | External GPIO | Spreadsheet-defined | external GPIO ODS, `m1_gpio.*` | Electrical limits and application-level behavior |
 
 ## Protocol-document template
