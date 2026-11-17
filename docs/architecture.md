@@ -230,6 +230,45 @@ Bluetooth) copy this pattern.
 filename limits, concurrent USB/device access policy, and recovery behavior
 after removal or I/O failure.
 
+## Real-time clock
+
+The RTC calendar is a shared peripheral with one mediated access path:
+`m1_csrc/m1_rtc.c/.h` (issue #7). Pure date/time math (leap years,
+days-in-month, 2000–2099 validation, weekday, field stepping,
+formatting) lives in `m1_csrc/m1_rtc_date.c/.h`, free of HAL/FreeRTOS
+includes so the host suite compiles the real sources.
+
+- *Ownership*: the calendar is written only from the UI task (the
+  Settings > Date & Time editor). The low-power/power paths own the
+  RTC **wakeup timer**; the boot failsafe and ESP version record own
+  backup registers DR0–DR3 (`S_M1_BK_REGS_t` / `m1_esp_version.c`).
+  `m1_rtc` touches none of those and never re-initializes the backup
+  domain (MX_RTC_Init already ran; HAL_RTC_Init reconfigures
+  prescalers without clearing the calendar).
+- *Clock source*: LSI, as the shipped CubeMX/RCC configuration
+  selects. Switching to LSE would require a backup-domain reset that
+  wipes DR0–DR3 (boot-failsafe state and the ESP version cache), so it
+  is out of scope by constraint. LSI is a factory-trimmed RC (~32 kHz):
+  expect minutes-per-day drift — a settable clock, not wall-clock
+  accuracy.
+- *Persistence semantics*: the battery-backed RTC **is** the timebase;
+  there is no `settings.cfg` duplication (time is not a settings field,
+  and Reset defaults leaves the clock alone). Reads use the mandatory
+  GetTime-then-GetDate shadow-register order and return only validated
+  values. With VBAT holding the backup domain, the calendar (and
+  DR0–DR3) survive a power cycle — but LSI is a VDD-domain oscillator,
+  so the unpowered interval is not counted: the clock resumes where it
+  stopped. Full backup-domain loss (no/dead VBAT) resets the calendar;
+  `m1_rtc_get_datetime()` then reports "not set" and the System screen
+  shows "Time not set" until the user sets it.
+- *Validation*: writes pass the pure validator first (year 2000–2099,
+  month/day bounds leap-aware, 24-hour range) — impossible dates never
+  reach the hardware; the editor's stepping keeps its edit copy
+  possible by construction (day re-clamped across month/year steps).
+  HAL_RTC_SetTime/SetDate own calendar init-mode entry/exit; seconds
+  restart at 00 (minute granularity) and the true weekday is computed
+  and stored.
+
 ## Firmware update
 
 The STM32 uses dual 1 MiB flash banks and option-byte bank swapping. Update code
