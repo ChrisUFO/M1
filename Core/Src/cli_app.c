@@ -186,7 +186,7 @@ const CLI_Command_Definition_t xCommandList[] = {
     },
     {
         .pcCommand = "cdcstats", /* The command string to type. */
-        .pcHelpString = "cdcstats:\r\n Shows USB CDC bridge RX diagnostics (VCP/ESP32 bridge path): bytes refused at arrival (retryable back-pressure), bytes lost unrecoverably, the high watermark (sticky until cdcreset) and the sampled buffered-now level. The 32-bit counters can wrap after long sustained load.\r\n\r\n",
+        .pcHelpString = "cdcstats:\r\n Shows USB CDC bridge RX diagnostics: refused at arrival (retryable), lost unrecoverably, high watermark (sticky until cdcreset), buffered now (sampled); counters wrap.\r\n\r\n",
         .pxCommandInterpreter = cmd_cdcstats, /* The function to run. */
         .pxCommandHelper = cmd_cdcstats_help, /* Help for the function. */
         .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
