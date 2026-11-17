@@ -146,7 +146,11 @@ Semantics:
   last known-good copy -- but it is unlinked during every save attempt
   (FatFs `f_rename` cannot overwrite an existing destination), so a
   failed rotation destroys the older backup while `settings.cfg`
-  survives.
+  survives. Saving is refused while the boot load could not account for
+  the card (SD error, or a corrupt/unsupported-version file): the RAM
+  image is then compiled defaults, and writing it could clobber a live
+  `settings.cfg` after a late card insertion -- the store loads exactly
+  once per boot, so a reboot with the card readable re-enables saving.
 - *Ownership*: the UI task is the single writer (setters, save, reset);
   any task may read via `settings_get()`. Boot-time consumers run after
   `settings_init()` in `m1_system_init_task()`. SD-absent is safe: defaults,

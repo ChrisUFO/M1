@@ -92,6 +92,17 @@ def define(text, name):
     return m.group()
 
 
+def static_buffer(text, name):
+    """Extract a top-level `static char name[MACRO];` file-scope buffer
+    definition (the shared load/save work buffer lives outside the pure
+    core because it exists only for the FatFs-coupled functions)."""
+    import re
+
+    m = re.search(r"^static char\s+" + name + r"\s*\[[^]]*\]\s*;$", text, re.M)
+    assert m, name
+    return m.group()
+
+
 def region(text, begin_marker, end_marker):
     i = text.index(begin_marker)
     j = text.index(end_marker, i)
@@ -687,6 +698,7 @@ def file_io_tests(tmp):
     code += "\n" + define(mod, "SETTINGS_TMP_PATH")
     code += "\n" + define(mod, "SETTINGS_BAK_PATH")
     code += "\n" + define(mod, "SETTINGS_FILE_MAX")
+    code += "\n" + static_buffer(mod, "s_settings_work")
     code += "\n" + define(mod, "M1_LOGDB_TAG")
     code += "\n" + region(mod, PURE_BEGIN, PURE_END)
     for fn in PURE_FUNCTIONS + FILE_FUNCTIONS:
@@ -982,6 +994,71 @@ int main(void)
     g_fail_dir_ensure = true;
     CHECK(!settings_write_file(), "unwritable System dir -> save fails");
     CHECK(call_count("open") == 0, "no file opened when dir cannot be ensured");
+
+    /* 11: late-inserted-card guard -- a defaults RAM image can never
+     *     overwrite a live settings.cfg the boot load could not account
+     *     for (init is one attempt per boot; a card arriving later is
+     *     invisible until the next boot) */
+    /* 11a: card absent at boot (SD_ERROR), card present later: save
+     *      refused, customized file untouched, no FS mutation attempted */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false; g_settings_save_permitted = false;
+    vfs_put_valid(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=17\r\ndevice_name=Custom\r\n");
+    fault_open(SETTINGS_PATH, FR_NOT_READY);
+    CHECK(settings_init() == false, "absent card at boot -> defaults in effect");
+    CHECK(g_m1_settings.brightness_pct == 100, "absent card leaves compiled defaults");
+    fault_reset(); /* card inserted/remounted later in the same boot */
+    g_m1_settings.brightness_pct = 99; /* user edits on top of defaults */
+    CHECK(!settings_save(), "save still refused: boot load never accounted for the card");
+    CHECK_FILE_EQ(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=17\r\ndevice_name=Custom\r\n",
+                  "customized file NOT overwritten with the defaults image");
+    CHECK(s_calls_n == 0, "refused save makes no FatFs calls at all");
+    CHECK(s_log_warn == 1, "refusal logged exactly once");
+
+    /* 11b: corrupt file at boot (CORRUPT) -> save refused, file and .bak
+     *      left for recovery/factory reset */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false; g_settings_save_permitted = false;
+    vfs_put(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=17\r\ncrc=DEADBEEF\r\n"); /* stale trailer */
+    vfs_put_valid(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=16\r\n");
+    CHECK(settings_init() == false, "corrupt file at boot -> defaults in effect");
+    g_m1_settings.brightness_pct = 99;
+    CHECK(!settings_save(), "save after an unreadable boot load refused");
+    CHECK(strcmp(vfs_get(SETTINGS_PATH), "#ver=1\r\nbrightness_pct=17\r\ncrc=DEADBEEF\r\n") == 0,
+          "unreadable file left in place (factory reset is the caller's policy)");
+    CHECK_FILE_EQ(SETTINGS_BAK_PATH, "#ver=1\r\nbrightness_pct=16\r\n", ".bak preserved by the refusal");
+    CHECK(s_log_warn == 2, "corruption warn + refusal warn, nothing more");
+
+    /* 11c: card present, no file at boot (MISSING) -> save permitted:
+     *      a fresh card must be able to gain its first settings file */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false; g_settings_save_permitted = false;
+    CHECK(settings_init() == false, "no file at boot -> defaults (init still false)");
+    CHECK(settings_save(), "save permitted when the card provably held no file");
+    CHECK(vfs_exists(SETTINGS_PATH), "fresh card gained its first settings file");
+    {
+        settings_reset_defaults();
+        g_settings_ready = false; g_settings_loaded_ok = false;
+        fault_reset();
+        CHECK(settings_load_file() == SETTINGS_LOAD_OK, "saved defaults file reloads");
+        CHECK(g_m1_settings.brightness_pct == 100, "default image round-trips");
+    }
+
+    /* 11d: successful load at boot (OK) -> save permitted and rotates */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false; g_settings_save_permitted = false;
+    vfs_put_valid(SETTINGS_PATH, "#ver=1\r\nbrightness_pct=17\r\n");
+    CHECK(settings_init() == true, "valid file at boot loads");
+    g_m1_settings.brightness_pct = 18;
+    CHECK(settings_save(), "save permitted after a successful boot load");
+    CHECK(vfs_exists(SETTINGS_BAK_PATH), "previous file rotated to .bak");
+    {
+        settings_reset_defaults();
+        g_settings_ready = false; g_settings_loaded_ok = false;
+        fault_reset();
+        CHECK(settings_load_file() == SETTINGS_LOAD_OK, "reload after gated save");
+        CHECK(g_m1_settings.brightness_pct == 18, "edited value persisted");
+    }
 
     printf("settings file IO: %d/%d checks passed\n", g_pass, g_pass + g_fail);
     return g_fail ? 1 : 0;

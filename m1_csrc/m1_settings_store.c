@@ -158,8 +158,25 @@ static S_M1_Settings_t g_m1_settings = SETTINGS_DEFAULTS_INIT;
 /* Single-writer bookkeeping (see header ownership contract). */
 static bool g_settings_ready     = false;
 static bool g_settings_loaded_ok = false;
+/* True only when the boot load accounted for the card's content: a file
+ * was read (SETTINGS_LOAD_OK) or the card provably held no settings file
+ * (SETTINGS_LOAD_MISSING). Left false for SD errors and unreadable
+ * files so settings_save() can refuse before a compiled-defaults RAM
+ * image overwrites a live settings.cfg this boot never read (the
+ * late-inserted-card guard: one load attempt per boot, so a card that
+ * appears after init is invisible to the store until the next boot). */
+static bool g_settings_save_permitted = false;
 
 /* ====================== SETTINGS_PURE_CORE_END ====================== */
+
+/* Shared file-IO work buffer for settings_load_file()/settings_write_file().
+ * File-scope on purpose (stack relief): the 1 KiB transient no longer sits
+ * on the boot task's -- or the future UI writer task's -- stack. Safe
+ * under the ownership contract: the load runs once at boot before any
+ * other task exists, saves are single-writer (UI task only) and are
+ * refused until that load finished, so the two users are strictly
+ * sequenced and never nest. */
+static char s_settings_work[SETTINGS_FILE_MAX];
 
 /********************* F U N C T I O N   P R O T O T Y P E S ******************/
 
@@ -514,7 +531,6 @@ static settings_load_status_t settings_load_file(void)
 	FIL f;
 	FRESULT fr;
 	UINT br = 0;
-	char buf[SETTINGS_FILE_MAX];
 
 	settings_reset_defaults(); /* guaranteed defaults unless a valid file overlays them */
 	settings_recover_replace();
@@ -531,13 +547,13 @@ static settings_load_status_t settings_load_file(void)
 		return SETTINGS_LOAD_SD_ERROR;
 	}
 
-	fr = f_read(&f, buf, (UINT)sizeof(buf), &br);
+	fr = f_read(&f, s_settings_work, (UINT)sizeof(s_settings_work), &br);
 	if (fr != FR_OK) { (void)f_close(&f); return SETTINGS_LOAD_SD_ERROR; }
 	if (!f_eof(&f)) { (void)f_close(&f); return SETTINGS_LOAD_CORRUPT; } /* larger than our bound: not ours */
 	if (f_close(&f) != FR_OK) { return SETTINGS_LOAD_SD_ERROR; }
 
-	if (!settings_buffer_crc_valid(buf, (size_t)br)) { return SETTINGS_LOAD_CORRUPT; }
-	if (!settings_parse_buffer(buf, (size_t)br)) { return SETTINGS_LOAD_CORRUPT; } /* unsupported version */
+	if (!settings_buffer_crc_valid(s_settings_work, (size_t)br)) { return SETTINGS_LOAD_CORRUPT; }
+	if (!settings_parse_buffer(s_settings_work, (size_t)br)) { return SETTINGS_LOAD_CORRUPT; } /* unsupported version */
 	return SETTINGS_LOAD_OK;
 }
 
@@ -550,20 +566,19 @@ static settings_load_status_t settings_load_file(void)
  * retained .bak is the last known-good copy. Returns true on success. */
 static bool settings_write_file(void)
 {
-	char buf[SETTINGS_FILE_MAX];
 	size_t len = 0;
 	FIL f;
 	FRESULT fr;
 	UINT bw = 0;
 
-	if (!settings_serialize(buf, sizeof(buf), &len)) { return false; }
+	if (!settings_serialize(s_settings_work, sizeof(s_settings_work), &len)) { return false; }
 
 	if (fs_directory_ensure(SETTINGS_DIR) != FR_OK) { return false; }
 
 	fr = f_open(&f, SETTINGS_TMP_PATH, FA_CREATE_ALWAYS | FA_WRITE);
 	if (fr != FR_OK) { return false; }
 
-	fr = f_write(&f, buf, (UINT)len, &bw);
+	fr = f_write(&f, s_settings_work, (UINT)len, &bw);
 	if ((fr != FR_OK) || (bw != (UINT)len))
 	{
 		(void)f_close(&f);
@@ -626,9 +641,11 @@ bool settings_init(void)
 	{
 	case SETTINGS_LOAD_OK:
 		g_settings_loaded_ok = true;
+		g_settings_save_permitted = true; /* RAM image mirrors the card */
 		M1_LOG_I(M1_LOGDB_TAG, "Settings loaded from SD\r\n");
 		break;
 	case SETTINGS_LOAD_MISSING:
+		g_settings_save_permitted = true; /* card holds no file to clobber */
 		M1_LOG_I(M1_LOGDB_TAG, "No settings file, defaults in effect\r\n");
 		break;
 	case SETTINGS_LOAD_CORRUPT:
@@ -718,6 +735,18 @@ bool settings_save(void)
 	if (!g_settings_ready)
 	{
 		M1_LOG_W(M1_LOGDB_TAG, "Save before init refused\r\n");
+		return false;
+	}
+
+	/* Late-inserted-card guard: the boot load either read a file or
+	 * proved the card holds none (g_settings_save_permitted). Anything
+	 * else -- absent/failed SD, corrupt or unsupported-version file --
+	 * left compiled defaults in RAM; saving that image could overwrite a
+	 * live settings.cfg this boot never read (e.g. the card was inserted
+	 * after init). Refuse until a reboot loads with the card readable. */
+	if (!g_settings_save_permitted)
+	{
+		M1_LOG_W(M1_LOGDB_TAG, "Save refused: settings not read at boot, reboot with SD\r\n");
 		return false;
 	}
 

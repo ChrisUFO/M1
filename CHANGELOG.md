@@ -23,13 +23,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is tolerant and bounded (missing file → compiled defaults; CRC
   mismatch/truncation/unsupported version → defaults, one log line, `.bak`
   retained; unknown keys skipped; out-of-range values clamped; malformed
-  numerals reset to per-field defaults), interrupted saves are reconciled
-  at load (proven-complete `settings.tmp` promoted, otherwise `.bak`
-  restored), and saving is a recoverable atomic promotion
-  (`settings.tmp` fully written+closed → previous `settings.cfg` rotated
-  to `settings.bak` → tmp renamed over final) that can never destroy the
-  last good file. The `.bak` is deliberately retained as the last
-  known-good copy. Boot applies the loaded brightness via
+  numerals reset to per-field defaults). An interrupted save is
+  reconciled at load: an orphaned `settings.tmp` is promoted only when
+  `settings.cfg` is missing (the CRC gate has the final word on it);
+  when `settings.cfg` exists the orphaned `.tmp` is discarded, and the
+  `.bak` is restored only when neither cfg nor tmp survives. Saving is
+  a recoverable atomic promotion (`settings.tmp` fully written+closed →
+  superseded `.bak` unlinked → previous `settings.cfg` rotated to
+  `settings.bak` → tmp renamed over final) that can never destroy the
+  last good file; while it exists, the retained `.bak` is the last
+  known-good copy. A save is refused when the boot load could not
+  account for the card (absent/failed SD, or an unreadable settings
+  file), so a defaults image can never overwrite a live `settings.cfg`
+  after a late card insertion; the shared serialization work buffer is
+  file-scope, leaving the caller's transient stack need at the FatFs
+  file object and call depth. Boot applies the loaded brightness via
   `fb_set_brightness_pct()` after task creation — `fb_manager_init()`
   (reached through `m1_tasks_init()` → `m1_feedback_task_init()`)
   resets user brightness to the compiled-in default and would clobber an

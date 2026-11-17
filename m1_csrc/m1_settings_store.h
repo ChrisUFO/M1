@@ -25,6 +25,12 @@
  *    settings_save()/settings_reset_defaults(). No other task may mutate
  *    the store. settings_init() itself runs once from
  *    m1_system_init_task() before m1_tasks_init().
+ *  - FATFS SERIALIZATION: volume 0's FatFs is non-reentrant in this
+ *    build (FF_FS_REENTRANT=0, no global FS mutex), so settings_save()
+ *    must not run concurrently with any other FatFs user (capture,
+ *    Wi-Fi store, file browser) until such a mutex exists. True by
+ *    construction today: no runtime writer is wired yet and the boot
+ *    load runs before any other task exists.
  *
  * Persistence format (see docs/architecture.md "Storage model"):
  *  - line 1: "#ver=1"
@@ -95,12 +101,29 @@ void settings_set_bt_preset(uint8_t preset);
 void settings_set_bt_interval_ms(uint16_t interval_ms);
 
 /** Serialize the current RAM settings and atomically promote them:
- *  write settings.tmp (full write + close), rotate the previous
- *  settings.cfg to settings.bak, then rename settings.tmp to
- *  settings.cfg. On any failure the previous good settings.cfg is left in
- *  place (or restored), so a save can never destroy the last good file.
- *  The retained .bak is the last known-good copy. Returns true on
- *  success. UI task only. */
+ *  write settings.tmp (full write + close), unlink the superseded
+ *  settings.bak (FatFs renames cannot overwrite an existing
+ *  destination), rotate the previous settings.cfg to settings.bak, then
+ *  rename settings.tmp to settings.cfg. On any failure the previous
+ *  good settings.cfg is left in place (or restored), so a save can
+ *  never destroy the last good file. While it exists, the retained
+ *  .bak is the last known-good copy -- it is unlinked during every
+ *  save attempt, so a failed rotation destroys the older backup while
+ *  settings.cfg survives.
+ *
+ *  Refused (false, one warning) when settings_init() could not account
+ *  for the card: absent/failed SD, or a corrupt/unsupported-version
+ *  settings file. The RAM image is then compiled defaults, and writing
+ *  it could clobber a live settings.cfg after a late card insertion
+ *  (the store loads exactly once per boot); a reboot with the card
+ *  readable re-enables saving. Clearing the SD copy is the caller's
+ *  factory-reset policy (see settings_reset_defaults()).
+ *
+ *  The serialization work buffer is file-scope; the calling task still
+ *  needs roughly 1.5 KiB of stack for the FatFs file object (~550 B,
+ *  FF_FS_TINY=0), the FatFs LFN working buffer (512 B, FF_USE_LFN=2)
+ *  and call depth -- a static-analysis bound, no hardware high-water
+ *  measurement yet. Returns true on success. UI task only. */
 bool settings_save(void);
 
 /** Restore the compiled defaults in RAM. RAM-only by design: clearing the
