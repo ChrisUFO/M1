@@ -34,7 +34,14 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "stdio.h"
 #include "stdlib.h"
 #include "m1_log_debug.h"
+#include "m1_log_capture.h"        /* M1_LOG_CAPTURE_SIZE: the `log` window */
 #include "m1_cli.h"
+#include "m1_system.h"             /* m1_device_stat (status/version) */
+#include "m1_fw_update_bl.h"       /* BANK1_ACTIVE, FW_VERSION_FORK_TAG */
+#include "m1_fw_update.h"          /* firmware_update_enter_usb_dfu() */
+#include "m1_sdcard.h"             /* m1_sdcard_get_info()/status (FatFs-backed) */
+#include "m1_esp32_hal.h"          /* m1_esp32_get_init_status() */
+#include "m1_bq27421.h"            /* battery gauge accessors */
 #include "usbd_cdc_if.h"           /* CDC_Transmit_FS for the M1CP send adapter */
 #include "m1_manager_protocol.h"   /* M1CP init/process host */
 #include "usbd_cdc_if.h"
@@ -77,6 +84,24 @@ volatile uint32_t dbg_cli_newline = 0;
 
 BaseType_t cmd_clearScreen(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
 BaseType_t cmd_clearScreen_help(void);
+BaseType_t cmd_log(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_log_help(void);
+BaseType_t cmd_status(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_status_help(void);
+BaseType_t cmd_version(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_version_help(void);
+BaseType_t cmd_sdcard(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_sdcard_help(void);
+BaseType_t cmd_wifi(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_wifi_help(void);
+BaseType_t cmd_battery(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_battery_help(void);
+BaseType_t cmd_reboot(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_reboot_help(void);
+BaseType_t cmd_memory(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_memory_help(void);
+BaseType_t cmd_dfu(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
+BaseType_t cmd_dfu_help(void);
 BaseType_t cmd_cdcstats(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
 BaseType_t cmd_cdcstats_help(void);
 BaseType_t cmd_cdcreset(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params);
@@ -103,6 +128,62 @@ const CLI_Command_Definition_t xCommandList[] = {
         .cExpectedNumberOfParameters = -1 /* variable parameters are expected. */
     },
     {
+        .pcCommand = "log", /* The command string to type. */
+        .pcHelpString = "log:\r\n Shows a snapshot of the last 2 KB of log output captured at the time the command runs. Best effort: messages may be dropped while the log write path is contended, and output produced before the log transport became ready is not included.\r\n\r\n",
+        .pxCommandInterpreter = cmd_log, /* The function to run. */
+        .pxCommandHelper = cmd_log_help, /* Help for the function. */
+        .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
+    },
+    {
+        .pcCommand = "status", /* The command string to type. */
+        .pcHelpString = "status:\r\n Shows firmware version, active bank and USB CDC RX state (refused-at-arrival, lost, buffered-now)\r\n\r\n",
+        .pxCommandInterpreter = cmd_status, /* The function to run. */
+        .pxCommandHelper = cmd_status_help, /* Help for the function. */
+        .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
+    },
+    {
+        .pcCommand = "version", /* The command string to type. */
+        .pcHelpString = "version:\r\n Shows detailed version info (numeric version plus fork tag) and the active bank\r\n\r\n",
+        .pxCommandInterpreter = cmd_version, /* The function to run. */
+        .pxCommandHelper = cmd_version_help, /* Help for the function. */
+        .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
+    },
+    {
+        .pcCommand = "sdcard", /* The command string to type. */
+        .pcHelpString = "sdcard:\r\n Shows SD card mount status, total/free/used capacity\r\n\r\n",
+        .pxCommandInterpreter = cmd_sdcard, /* The function to run. */
+        .pxCommandHelper = cmd_sdcard_help, /* Help for the function. */
+        .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
+    },
+    {
+        .pcCommand = "wifi", /* The command string to type. */
+        .pcHelpString = "wifi:\r\n Shows ESP32 (WiFi/BLE co-processor) init status\r\n\r\n",
+        .pxCommandInterpreter = cmd_wifi, /* The function to run. */
+        .pxCommandHelper = cmd_wifi_help, /* Help for the function. */
+        .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
+    },
+    {
+        .pcCommand = "battery", /* The command string to type. */
+        .pcHelpString = "battery:\r\n Shows battery level, voltage and remaining/full capacity from the BQ27421 gauge\r\n\r\n",
+        .pxCommandInterpreter = cmd_battery, /* The function to run. */
+        .pxCommandHelper = cmd_battery_help, /* Help for the function. */
+        .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
+    },
+    {
+        .pcCommand = "reboot", /* The command string to type. */
+        .pcHelpString = "reboot:\r\n Reboots the device (acknowledges first, then resets)\r\n\r\n",
+        .pxCommandInterpreter = cmd_reboot, /* The function to run. */
+        .pxCommandHelper = cmd_reboot_help, /* Help for the function. */
+        .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
+    },
+    {
+        .pcCommand = "memory", /* The command string to type. */
+        .pcHelpString = "memory:\r\n Shows FreeRTOS heap usage (free, lowest ever, total, used), task count and the USB CDC RX high watermark\r\n\r\n",
+        .pxCommandInterpreter = cmd_memory, /* The function to run. */
+        .pxCommandHelper = cmd_memory_help, /* Help for the function. */
+        .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
+    },
+    {
         .pcCommand = "cdcstats", /* The command string to type. */
         .pcHelpString = "cdcstats:\r\n Shows USB CDC bridge RX diagnostics (VCP/ESP32 bridge path): bytes refused at arrival (retryable back-pressure), bytes lost unrecoverably, the high watermark (sticky until cdcreset) and the sampled buffered-now level. The 32-bit counters can wrap after long sustained load.\r\n\r\n",
         .pxCommandInterpreter = cmd_cdcstats, /* The function to run. */
@@ -114,6 +195,13 @@ const CLI_Command_Definition_t xCommandList[] = {
         .pcHelpString = "cdcreset:\r\n Resets the USB CDC bridge RX diagnostic counters and high watermark\r\n\r\n",
         .pxCommandInterpreter = cmd_cdcreset, /* The function to run. */
         .pxCommandHelper = cmd_cdcreset_help, /* Help for the function. */
+        .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
+    },
+    {
+        .pcCommand = "dfu", /* The command string to type. */
+        .pcHelpString = "dfu:\r\n Reboots into the ROM USB DFU bootloader (does not return until the reset)\r\n\r\n",
+        .pxCommandInterpreter = cmd_dfu, /* The function to run. */
+        .pxCommandHelper = cmd_dfu_help, /* Help for the function. */
         .cExpectedNumberOfParameters = 0 /* No parameters are expected. */
     },
     {
@@ -215,6 +303,7 @@ BaseType_t cmd_clearScreen(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 	write buffer length is adequate, so does not check for buffer overflows. */
     (void)pcCommandString;
     (void)xWriteBufferLen;
+    (void)num_of_params;   /* drive-by: silences a pre-existing -Wunused-parameter */
     memset(pcWriteBuffer, 0x00, xWriteBufferLen);
     printf("\033[2J\033[1;1H");
     return pdFALSE;
@@ -307,6 +396,502 @@ BaseType_t cmd_cdcreset_help(void)
 {
     return pdFALSE;
 } // BaseType_t cmd_cdcreset_help(void)
+
+
+
+/*============================================================================*/
+/*
+ * CLI command: show a snapshot of the recent log output (issue #44, part B)
+ *
+ * Adaptation of legacy/v0.8.11:Core/Src/cli_app.c cmd_log() (~:346): the fork
+ * captured into a 2047-byte ring that froze once full, and truncated its capture
+ * length to the TX-ring return value, so this does NOT reuse that code. The
+ * snapshot now comes from m1_logdb_get_recent() (linear window,
+ * m1_log_capture.h) and is emitted through FreeRTOS+CLI's multi-call protocol:
+ * the handler returns pdTRUE while more output follows and pdFALSE when done.
+ * Cost: one 2 KB static snapshot, taken once per invocation.
+ */
+/*============================================================================*/
+static char log_snapshot[M1_LOG_CAPTURE_SIZE + 1U];
+static size_t log_snapshot_len;
+static size_t log_snapshot_pos;
+static uint32_t log_snapshot_total;
+static uint8_t log_snapshot_active;
+
+BaseType_t cmd_log(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    size_t room;
+    size_t chunk;
+
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    if ((pcWriteBuffer == NULL) || (xWriteBufferLen < 2U))
+    {
+        log_snapshot_active = 0U;
+        return pdFALSE;
+    }
+    room = xWriteBufferLen - 1U; // keep space for the terminator
+
+    if (log_snapshot_active == 0U)
+    {
+        size_t len = m1_logdb_get_recent(log_snapshot, sizeof(log_snapshot),
+                                         &log_snapshot_total);
+
+        if (len == 0U)
+        {
+            /* Same one-line answer for both honest cases: nothing captured yet,
+             * or the capture was busy for the whole 20 ms window. */
+            (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                           "Recent log messages: none captured yet "
+                           "(best effort: empty or busy)\r\n");
+            return pdFALSE;
+        }
+
+        log_snapshot_len = len;
+        log_snapshot_pos = 0U;
+        log_snapshot_active = 1U;
+
+        if (log_snapshot_total > (uint32_t)len)
+        {
+            (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                           "Recent log messages (%lu bytes, window %u B):\r\n",
+                           (unsigned long)log_snapshot_total,
+                           (unsigned)M1_LOG_CAPTURE_SIZE);
+        }
+        else
+        {
+            (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                           "Recent log messages (%u bytes):\r\n",
+                           (unsigned)len);
+        }
+        return pdTRUE; // the snapshot body follows
+    }
+
+    if (log_snapshot_pos >= log_snapshot_len)
+    {
+        /* Terminator call: keeps the trailing CRLF out of the chunk arithmetic. */
+        (void)snprintf(pcWriteBuffer, xWriteBufferLen, "\r\n");
+        log_snapshot_active = 0U;
+        log_snapshot_len = 0U;
+        log_snapshot_pos = 0U;
+        log_snapshot_total = 0U;
+        return pdFALSE;
+    }
+
+    chunk = log_snapshot_len - log_snapshot_pos;
+    if (chunk > room)
+    {
+        chunk = room;
+    }
+    memcpy(pcWriteBuffer, &log_snapshot[log_snapshot_pos], chunk);
+    pcWriteBuffer[chunk] = '\0';
+    log_snapshot_pos += chunk;
+
+    return pdTRUE; // either more body, or the terminator call, follows
+} // BaseType_t cmd_log(...)
+
+
+
+/*============================================================================*/
+/*
+ * Help for the CLI command: recent log snapshot
+ *
+ */
+/*============================================================================*/
+BaseType_t cmd_log_help(void)
+{
+    return pdFALSE;
+} // BaseType_t cmd_log_help(void)
+
+
+
+/*============================================================================*/
+/*
+ * CLI command: system status (issue #44, part B; fork cmd_status ~:393)
+ *
+ * Adapted: the fork reported a single "USB CLI dropped" number. This branch
+ * split that counter (issue #44, part A), so the retryable refusal and the
+ * unrecoverable loss are reported separately and the sampled buffered-now level
+ * keeps its own label. Everything fits the 200-byte CLI buffer.
+ */
+/*============================================================================*/
+BaseType_t cmd_status(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                   "System status:\r\n"
+                   "  FW: %u.%u.%u.%u-%s\r\n"
+                   "  Bank: %u\r\n"
+                   "  RX refused: %lu B (retryable)\r\n"
+                   "  RX lost: %lu B, buffered: %lu B\r\n",
+                   (unsigned)m1_device_stat.config.fw_version_major,
+                   (unsigned)m1_device_stat.config.fw_version_minor,
+                   (unsigned)m1_device_stat.config.fw_version_build,
+                   (unsigned)m1_device_stat.config.fw_version_rc,
+                   FW_VERSION_FORK_TAG,
+                   (unsigned)((m1_device_stat.active_bank == BANK1_ACTIVE) ? 1U : 2U),
+                   (unsigned long)CDC_CLI_RxDroppedBytes(),
+                   (unsigned long)CDC_CLI_RxLostBytes(),
+                   (unsigned long)CDC_CLI_RxBufferedBytes());
+    return pdFALSE;
+} // BaseType_t cmd_status(...)
+
+
+
+/*============================================================================*/
+/*
+ * Help for the CLI command: system status
+ *
+ */
+/*============================================================================*/
+BaseType_t cmd_status_help(void)
+{
+    return pdFALSE;
+} // BaseType_t cmd_status_help(void)
+
+
+
+/*============================================================================*/
+/*
+ * CLI command: detailed version (issue #44, part B; fork cmd_version ~:443)
+ *
+ * Adapted: the fork line is kept verbatim in shape (numeric quad + fork tag);
+ * the active bank is appended because `status` and `version` are the two places
+ * a support report looks for "which bank am I running".
+ */
+/*============================================================================*/
+BaseType_t cmd_version(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                   "M1 firmware version:\r\n"
+                   "  %u.%u.%u.%u-%s\r\n"
+                   "  Bank: %u\r\n",
+                   (unsigned)m1_device_stat.config.fw_version_major,
+                   (unsigned)m1_device_stat.config.fw_version_minor,
+                   (unsigned)m1_device_stat.config.fw_version_build,
+                   (unsigned)m1_device_stat.config.fw_version_rc,
+                   FW_VERSION_FORK_TAG,
+                   (unsigned)((m1_device_stat.active_bank == BANK1_ACTIVE) ? 1U : 2U));
+    return pdFALSE;
+} // BaseType_t cmd_version(...)
+
+
+
+/*============================================================================*/
+/*
+ * Help for the CLI command: detailed version
+ *
+ */
+/*============================================================================*/
+BaseType_t cmd_version_help(void)
+{
+    return pdFALSE;
+} // BaseType_t cmd_version_help(void)
+
+
+
+/*============================================================================*/
+/*
+ * CLI command: SD card info (issue #44, part B; fork cmd_sdcard ~:475)
+ *
+ * Adapted: the fork called FatFs f_getfree("0:") directly and reached into
+ * FATFS internals (n_fatent/csize). The drive letter and the FATFS object live
+ * in m1_sdcard.c statics, so this uses the public m1_sdcard_get_info() accessor
+ * instead (it performs the same f_getfree() and pre-divides to KB), and only
+ * asks it when the cached access status says the card is mounted -- otherwise
+ * the probe just logs an error. MB are derived from the KB figures.
+ */
+/*============================================================================*/
+BaseType_t cmd_sdcard(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    S_M1_SDCard_Access_Status status = m1_sdcard_get_status();
+    S_M1_SDCard_Info *info = NULL;
+    uint32_t total_kb = 0U;
+    uint32_t free_kb = 0U;
+
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    if (status == SD_access_OK)
+    {
+        info = m1_sdcard_get_info();
+    }
+
+    if ((status != SD_access_OK) || (info == NULL))
+    {
+        (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                       "SD card:\r\n  Status: %s\r\n",
+                       m1_sd_error_msg(status));
+        return pdFALSE;
+    }
+
+    total_kb = info->total_cap_kb;
+    free_kb = info->free_cap_kb;
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                   "SD card:\r\n"
+                   "  Status: Mounted\r\n"
+                   "  Total: %lu MB\r\n"
+                   "  Free: %lu MB\r\n"
+                   "  Used: %lu MB (%lu%%)\r\n",
+                   (unsigned long)(total_kb / 1024U),
+                   (unsigned long)(free_kb / 1024U),
+                   (unsigned long)((total_kb - free_kb) / 1024U),
+                   (unsigned long)((total_kb != 0U) ?
+                                   (((total_kb - free_kb) * 100U) / total_kb) : 0U));
+    return pdFALSE;
+} // BaseType_t cmd_sdcard(...)
+
+
+
+/*============================================================================*/
+/*
+ * Help for the CLI command: SD card info
+ *
+ */
+/*============================================================================*/
+BaseType_t cmd_sdcard_help(void)
+{
+    return pdFALSE;
+} // BaseType_t cmd_sdcard_help(void)
+
+
+
+/*============================================================================*/
+/*
+ * CLI command: ESP32 / WiFi co-processor status (fork cmd_wifi ~:537)
+ *
+ */
+/*============================================================================*/
+BaseType_t cmd_wifi(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                   "WiFi status:\r\n"
+                   "  ESP32: %s\r\n",
+                   m1_esp32_get_init_status() ? "Ready" : "Not ready");
+    return pdFALSE;
+} // BaseType_t cmd_wifi(...)
+
+
+
+/*============================================================================*/
+/*
+ * Help for the CLI command: ESP32 / WiFi co-processor status
+ *
+ */
+/*============================================================================*/
+BaseType_t cmd_wifi_help(void)
+{
+    return pdFALSE;
+} // BaseType_t cmd_wifi_help(void)
+
+
+
+/*============================================================================*/
+/*
+ * CLI command: battery status (fork cmd_battery ~:566)
+ *
+ * Adapted: the fork ignored every gauge read result, so a failed I2C read
+ * looked like a flat battery at 0 mV. A failed read is now reported as such.
+ */
+/*============================================================================*/
+BaseType_t cmd_battery(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    uint16_t voltage_mV = 0U;
+    uint16_t remaining_mAh = 0U;
+    uint16_t full_mAh = 0U;
+    uint8_t soc_percent;
+    bool read_ok;
+
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    read_ok = bq27421_readVoltage_mV(&voltage_mV);
+    read_ok = bq27421_readRemainingCapacity_mAh(&remaining_mAh) && read_ok;
+    read_ok = bq27421_readFullChargeCapacity_mAh(&full_mAh) && read_ok;
+
+    if (!read_ok)
+    {
+        (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                       "Battery: gauge read failed\r\n");
+        return pdFALSE;
+    }
+
+    soc_percent = (uint8_t)(bq27421_soc(FILTERED) & 0xFFU);
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                   "Battery status:\r\n"
+                   "  Level: %u%%\r\n"
+                   "  Voltage: %u mV\r\n"
+                   "  Capacity: %u/%u mAh\r\n",
+                   (unsigned)soc_percent,
+                   (unsigned)voltage_mV,
+                   (unsigned)remaining_mAh,
+                   (unsigned)full_mAh);
+    return pdFALSE;
+} // BaseType_t cmd_battery(...)
+
+
+
+/*============================================================================*/
+/*
+ * Help for the CLI command: battery status
+ *
+ */
+/*============================================================================*/
+BaseType_t cmd_battery_help(void)
+{
+    return pdFALSE;
+} // BaseType_t cmd_battery_help(void)
+
+
+
+/*============================================================================*/
+/*
+ * CLI command: reboot (issue #44, part B; fork cmd_reboot ~:621)
+ *
+ * Adapted: the fork filled the CLI output buffer with "Rebooting..." and reset
+ * immediately. The buffer is only written to the host AFTER the handler returns
+ * (handleNewline() -> cliWrite()), so that message raced the reset and was lost.
+ * This handler writes the acknowledgement itself, waits a bounded moment so the
+ * USB transfer / log TX can complete, and only then resets.
+ */
+/*============================================================================*/
+BaseType_t cmd_reboot(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen, "Rebooting...\r\n");
+
+    /* cliWrite() sends immediately in CDC log/CLI mode and queues onto the log
+     * TX path otherwise; either way the bytes leave the host-facing queue a few
+     * milliseconds later, so give them a bounded head start before the reset
+     * discards everything. Nothing is echoed twice: the buffer is cleared here
+     * and this handler never returns to handleNewline()'s writer anyway. */
+    cliWrite(pcWriteBuffer);
+    pcWriteBuffer[0] = '\0';
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    NVIC_SystemReset(); // noreturn: nothing after this may run
+} // BaseType_t cmd_reboot(...)
+
+
+
+/*============================================================================*/
+/*
+ * Help for the CLI command: reboot
+ *
+ */
+/*============================================================================*/
+BaseType_t cmd_reboot_help(void)
+{
+    return pdFALSE;
+} // BaseType_t cmd_reboot_help(void)
+
+
+
+/*============================================================================*/
+/*
+ * CLI command: heap and task telemetry (fork cmd_memory ~:640)
+ *
+ * Adapted: the fork's last line used the CDC high-watermark accessor with the
+ * "USB CLI max buf" label; it now says what it measures (RX high watermark of
+ * the bridge path, sticky since `cdcreset`), and "Used" is clamped so a heap
+ * that grew past configTOTAL_HEAP_SIZE (impossible today) can never underflow.
+ */
+/*============================================================================*/
+BaseType_t cmd_memory(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    size_t free_heap = (size_t)xPortGetFreeHeapSize();
+    size_t min_ever_free = (size_t)xPortGetMinimumEverFreeHeapSize();
+    size_t total_heap = (size_t)configTOTAL_HEAP_SIZE;
+    size_t used_heap = (total_heap > free_heap) ? (total_heap - free_heap) : 0U;
+    UBaseType_t num_tasks = uxTaskGetNumberOfTasks();
+
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                   "Heap:\r\n"
+                   "  Free: %lu B\r\n"
+                   "  Min ever free: %lu B\r\n"
+                   "  Total: %lu B\r\n"
+                   "  Used: %lu B (%lu%%)\r\n"
+                   "  Tasks: %lu\r\n"
+                   "  CDC RX high watermark: %lu B\r\n",
+                   (unsigned long)free_heap,
+                   (unsigned long)min_ever_free,
+                   (unsigned long)total_heap,
+                   (unsigned long)used_heap,
+                   (unsigned long)((total_heap != 0U) ? ((used_heap * 100U) / total_heap) : 0U),
+                   (unsigned long)num_tasks,
+                   (unsigned long)CDC_CLI_RxHighWatermark());
+    return pdFALSE;
+} // BaseType_t cmd_memory(...)
+
+
+
+/*============================================================================*/
+/*
+ * Help for the CLI command: heap and task telemetry
+ *
+ */
+/*============================================================================*/
+BaseType_t cmd_memory_help(void)
+{
+    return pdFALSE;
+} // BaseType_t cmd_memory_help(void)
+
+
+
+/*============================================================================*/
+/*
+ * CLI command: enter the ROM USB DFU bootloader (fork cmd_dfu ~:700)
+ *
+ * firmware_update_enter_usb_dfu() is the one DFU entry path on this branch (the
+ * boot recovery offer in m1_system.c calls the same function): it persists
+ * DEV_OP_STATUS_USB_DFU_REQUEST, waits for the log to drain and resets, and it is
+ * declared noreturn. So the acknowledgement is written here first -- exactly
+ * like cmd_reboot(), because the CLI buffer would otherwise never reach the host
+ * -- and no code follows the call.
+ */
+/*============================================================================*/
+BaseType_t cmd_dfu(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString, uint8_t num_of_params)
+{
+    (void)pcCommandString;
+    (void)num_of_params;
+
+    (void)snprintf(pcWriteBuffer, xWriteBufferLen,
+                   "Entering USB DFU mode...\r\n");
+    cliWrite(pcWriteBuffer);
+    pcWriteBuffer[0] = '\0';
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    firmware_update_enter_usb_dfu(); // persists the request, then resets (noreturn)
+} // BaseType_t cmd_dfu(...)
+
+
+
+/*============================================================================*/
+/*
+ * Help for the CLI command: enter the ROM USB DFU bootloader
+ *
+ */
+/*============================================================================*/
+BaseType_t cmd_dfu_help(void)
+{
+    return pdFALSE;
+} // BaseType_t cmd_dfu_help(void)
 
 
 
