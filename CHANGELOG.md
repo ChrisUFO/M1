@@ -11,6 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: RTC date/time setting (issue #7 completion) — Settings grows an
+  eighth entry, *Date & Time*: a two-line clock editor ("YYYY-MM-DD" /
+  "HH:MM", selected field on an inverted segment) where LEFT/RIGHT pick
+  the field and UP/DOWN step it (wrapping month/day/hour/minute,
+  clamped year, day re-clamped across month/year steps so an impossible
+  date cannot be entered), OK applies the whole validated date/time to
+  the RTC and re-syncs from a read-back, and BACK exits without
+  applying. New `m1_csrc/m1_rtc.c/.h` is the single mediated calendar
+  path (GetTime-then-GetDate shadow-register order on read, validation
+  before write, HAL-owned init-mode handling, true weekday stored,
+  seconds restart at 00); pure date/time math (leap year,
+  days-in-month, 2000–2099 validation, weekday, stepping, formatting)
+  lives in `m1_csrc/m1_rtc_date.c/.h` and is host-tested against the
+  real sources. The battery-backed RTC is the timebase: time is
+  deliberately not duplicated into `settings.cfg` (Reset defaults
+  leaves the clock alone) and backup registers DR0–DR3 stay untouched —
+  which is also why the clock source stays LSI (switching to LSE needs
+  a backup-domain reset). The System screen shows the current date/time
+  read-only, refreshed on entry ("Time not set" after backup-domain
+  loss, where the LSI/VBAT semantics — retained but not advanced across
+  power-off — are documented in `docs/architecture.md`).
 - Fork: LCD & Notifications and System settings screens over the SD settings
   store (issues #4 and #7 except date/time, which lands with the RTC unit) —
   Settings grows two new leading entries. *LCD & Notifications*: display

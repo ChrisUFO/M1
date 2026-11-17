@@ -3,12 +3,12 @@
 # into it (python+gcc extraction harnesses under m1_csrc/test/).
 #
 # Current wired set: the settings-store suite, the settings-screens suite
-# (PR-2), the backlight-startup/saver suite (PR-2), and the feedback
-# manager suite incl. the LED-notification gate (PR-2). The remaining
-# pre-existing host tests under m1_csrc/test/ and m1_csrc/tests/ are NOT
-# run by this script yet; later units append their tests to the list
-# below by design, so a green run means exactly the listed tests passed
-# -- nothing more.
+# (PR-2), the backlight-startup/saver suite (PR-2), the feedback manager
+# suite incl. the LED-notification gate (PR-2), and the RTC date/time suite
+# (PR-3). The remaining pre-existing host tests under m1_csrc/test/ and
+# m1_csrc/tests/ are NOT run by this script yet; later units append their
+# tests to the list below by design, so a green run means exactly the
+# listed tests passed -- nothing more.
 #
 # CI runs this script (see .github/workflows/host-tests.yml). Append new
 # tests to the list below as they land -- keep one line per test so a
@@ -44,6 +44,7 @@ fi
 PYTHON_TESTS="
 m1_csrc/test/m1_settings_store_test.py
 m1_csrc/test/m1_settings_screens_test.py
+m1_csrc/test/m1_rtc_test.py
 m1_csrc/tests/test_backlight_startup.py
 "
 
