@@ -11,6 +11,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: durable user-settings store foundation for the Merge 3 feature set
+  (issues #3/#4/#7/#11 substrate) — new `m1_csrc/m1_settings_store.c/.h`
+  keeps a RAM settings image (`S_M1_Settings_t`: LCD brightness, screen
+  timeout, LED notifications, device name, plus round-trip-only Sub-GHz
+  radio and Bluetooth advertisement fields their future screens will
+  define) loaded once at boot from `0:/System/settings.cfg` after SD init
+  and before any consumer task starts. The file format is `#ver=1` +
+  `key=value` lines + a trailing `crc=<8 hex>` CRC-32C (Castagnoli,
+  0x1EDC6F41, the shared `m1_crc32c.c`) over all preceding bytes. Loading
+  is tolerant and bounded (missing file → compiled defaults; CRC
+  mismatch/truncation/unsupported version → defaults, one log line, `.bak`
+  retained; unknown keys skipped; out-of-range values clamped; malformed
+  numerals reset to per-field defaults), interrupted saves are reconciled
+  at load (proven-complete `settings.tmp` promoted, otherwise `.bak`
+  restored), and saving is a recoverable atomic promotion
+  (`settings.tmp` fully written+closed → previous `settings.cfg` rotated
+  to `settings.bak` → tmp renamed over final) that can never destroy the
+  last good file. The `.bak` is deliberately retained as the last
+  known-good copy. Boot applies the loaded brightness via
+  `fb_set_brightness_pct()` (default 100 is behavior-identical to the
+  compiled-in value). Settings are SD-only: no writes to flash sector 127
+  or `S_M1_FW_CONFIG_t` anywhere in the module. Ownership: UI task is the
+  single writer, any task may read. Host coverage in
+  `m1_csrc/test/m1_settings_store_test.py` (pure-core parse/serialize/
+  CRC/clamp tests on the extracted real code plus FatFs-stand-in
+  fault-injection for atomic-save/recovery behavior), wired into the new
+  `scripts/run_host_tests.sh` aggregator and
+  `.github/workflows/host-tests.yml` CI entry point. `0:/System` added to
+  the canonical path constants (`m1_sdcard_provision.h`), created lazily
+  on first save
 - Fork: automatic boot-time firmware integrity failsafe on the adopted base
   (issue #41, part A) — every boot validates the running bank's fixed
   `[0x08000000, 0x080FFC14)` span against the CRC the build embedded at

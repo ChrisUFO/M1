@@ -104,9 +104,51 @@ supports application data, captured protocol data, and firmware images. USB MSC
 also exposes storage, which means firmware and USB code must coordinate media
 ownership and card-change events.
 
-**Needs validation:** Document the SD-card directory layout, filename limits,
-concurrent USB/device access policy, and recovery behavior after removal or I/O
-failure.
+Canonical firmware-owned folders (`m1_sdcard_provision.h` is the single source
+of truth for their paths) are provisioned at mount time: `0:/nfc`,
+`0:/nfc/system`, `0:/nfc/recover`, `0:/rfid`, `0:/subghz`, `0:/wifi`,
+`0:/ble`, `0:/infrared`, `0:/infrared/db`. `0:/System` is also canonical but
+created lazily by its first user (the settings store creates it on first save)
+so a fresh card without user changes does not grow an empty folder.
+
+### User settings (`0:/System/settings.cfg`)
+
+Durable user settings live in `0:/System/settings.cfg`
+(`m1_csrc/m1_settings_store.c/.h`) — never in flash: the boot-signed metadata
+span (`S_M1_FW_CONFIG_t`, sector 127) is off-limits to application settings.
+
+File format (version 1):
+
+- first line `#ver=1`;
+- one `key=value` line per field, CRLF endings, keys in the module's field
+  table (`brightness_pct`, `screen_timeout_s`, `led_notifications`,
+  `device_name`, `subghz_*`, `bt_*`);
+- final line `crc=XXXXXXXX`: CRC-32C (Castagnoli, polynomial 0x1EDC6F41,
+  the shared `m1_crc32c.c` helper) over every byte preceding that line.
+
+Semantics:
+
+- *Load* (once per boot, after SD init and before task creation): missing
+  file → compiled defaults; CRC mismatch, truncation, unsupported version,
+  or a file larger than the loader's 1 KiB bound → compiled defaults, one
+  log line, and the retained `.bak` is left in place; unknown keys are
+  skipped; out-of-range values clamp to field bounds; malformed numerals
+  reset that field to its default. An interrupted save is reconciled at
+  load: a proven-complete `settings.tmp` is promoted, or the `.bak` is
+  restored when no candidate survives.
+- *Save*: write `settings.tmp` fully and close it, rotate the previous
+  `settings.cfg` to `settings.bak`, then rename `settings.tmp` over
+  `settings.cfg`. Any failure leaves the previous good file in place (or
+  restores it); `.bak` is intentionally retained as the last known-good
+  copy and is only rotated out by the next successful save.
+- *Ownership*: the UI task is the single writer (setters, save, reset);
+  any task may read via `settings_get()`. Boot-time consumers run after
+  `settings_init()` in `m1_system_init_task()`. SD-absent is safe: defaults,
+  no retries, no error spam.
+
+**Needs validation:** Document the remaining SD-card directory layout details,
+filename limits, concurrent USB/device access policy, and recovery behavior
+after removal or I/O failure.
 
 ## Firmware update
 
@@ -142,3 +184,8 @@ See [Firmware image and update](protocols/firmware-update.md).
 
 Update this page when a change adds a task, queue, shared peripheral, subsystem,
 startup dependency, persistent format, or inter-processor interface.
+
+Persistent formats documented here: `0:/System/settings.cfg` (user settings,
+see "Storage model"); Wi-Fi saved networks (`m1_csrc/m1_wifi.c`, versioned CSV).
+New persistent formats must document their file layout, integrity mechanism,
+failure/recovery behavior, and writer ownership.
