@@ -354,6 +354,18 @@ static BaseType_t prvHelpCommand( char * pcWriteBuffer,
     /* Return the next command help string, before moving the pointer on to
      * the next command in the list. */
     strncpy( pcWriteBuffer, pxCommand->pxCommandLineDefinition->pcHelpString, xWriteBufferLen );
+
+    /* strncpy() writes no terminator when the help string is at least
+     * xWriteBufferLen bytes long, and the caller (handleNewline() ->
+     * cliWrite()) immediately strlen()s this buffer. Force the terminator:
+     * for a short string this only rewrites the one the copy already placed
+     * (it is the last byte of a full copy), for a long one it bounds the
+     * output at xWriteBufferLen - 1 characters instead of running past the
+     * global CLI buffer. */
+    if( xWriteBufferLen > 0U )
+    {
+        pcWriteBuffer[ xWriteBufferLen - 1U ] = '\0';
+    }
     pxCommand = pxCommand->pxNext;
 
     if( pxCommand == NULL )

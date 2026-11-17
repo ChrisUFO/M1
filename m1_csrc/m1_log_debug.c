@@ -23,6 +23,7 @@
 #include <string.h>
 #include "stm32h5xx_hal.h"
 #include "m1_log_debug.h"
+#include "m1_log_capture.h"        /* `log` command history window (issue #44-B) */
 #include "main.h"
 #include "m1_manager_protocol.h"   /* m1cp_session_active() log gate */
 #include "app_freertos.h"
@@ -77,6 +78,13 @@ static volatile uint16_t logdb_dma_tx_len; // This variable may be modified by a
 
 static SemaphoreHandle_t mutex_log_write_trans;
 TaskHandle_t log_db_task_hdl;
+
+/* History window for the CLI `log` command (issue #44, part B). File-scope and
+ * never zeroed after startup: `wr == 0` is the empty state, so the history
+ * survives m1_logdb_init() re-entry across USB mode switches. Written only from
+ * m1_logdb_enqueue() under mutex_log_write_trans, read only from
+ * m1_logdb_get_recent() under the same mutex. */
+static S_M1_LogCapture log_capture;
 
 /********************* F U N C T I O N   P R O T O T Y P E S ******************/
 /*
@@ -720,11 +728,52 @@ static int m1_logdb_enqueue(const uint8_t *data, size_t len)
     if (xSemaphoreTake(mutex_log_write_trans, 0) != pdTRUE) return 0;
     uint16_t count = (len > M1_LOGDB_TX_BUFFER_SIZE) ?
                      M1_LOGDB_TX_BUFFER_SIZE : (uint16_t)len;
+    /* Single funnel for the `log` history window: every log byte on this build
+     * reaches the host through here -- the CDC_MODE_LOG_CLI/ESP32 branch of
+     * m1_logdb_write() calls enqueue() directly, and the UART/printf branch
+     * reaches it through _write() -> enqueue() (or through m1_logdb_write()'s
+     * printf() fallback, which ends in the same _write()). m1_logdb_enqueue()
+     * already refuses ISR and pre-scheduler context, so no critical section is
+     * needed; the mutex is what serialises this against m1_logdb_get_recent().
+     * Capture the CLAMPED count: the TX-ring return value is not a byte count
+     * (a full ring returns 0), which is exactly how the fork's capture froze. */
+    m1_log_capture_put(&log_capture, data, count);
     int written = m1_ringbuffer_write(plogdb_tx_rb, (uint8_t *)data, count);
     (void)xSemaphoreGive(mutex_log_write_trans);
     (void)xQueueSend(log_q_hdl, &q_item, 0);
     return written;
 }
+
+
+
+/*============================================================================*/
+/*
+ * Copy the most recent log output into out for the CLI `log` command.
+ *
+ * Best effort and bounded: takes the log write mutex for at most 20 ms (so it
+ * can never block a producer for long), copies under it and gives it back
+ * BEFORE returning -- the caller prints after this returns, never inside.
+ * Returns the number of bytes copied (NUL-terminated), 0 when nothing has been
+ * captured yet or the mutex was busy. total_written (optional) receives the
+ * free-running captured byte count, so the caller can report a wrapped window.
+ */
+/*============================================================================*/
+size_t m1_logdb_get_recent(char *out, size_t max_len, uint32_t *total_written)
+{
+    uint16_t limit;
+    uint16_t copied;
+
+    if (total_written != NULL) *total_written = 0U;
+    if ((out == NULL) || (max_len == 0U) || (mutex_log_write_trans == NULL)) return 0U;
+
+    limit = (max_len > 0xFFFFU) ? 0xFFFFU : (uint16_t)max_len;
+
+    if (xSemaphoreTake(mutex_log_write_trans, pdMS_TO_TICKS(20)) != pdTRUE) return 0U;
+    copied = m1_log_capture_peek(&log_capture, out, limit, total_written);
+    (void)xSemaphoreGive(mutex_log_write_trans);
+
+    return (size_t)copied;
+} // size_t m1_logdb_get_recent(char *out, size_t max_len, uint32_t *total_written)
 
 
 

@@ -923,12 +923,13 @@ bool bq27421_clearHiberate(void)
 }
 
 
-#if 0
 /*============================================================================*/
 /**
-  * @brief
-  * @param
-  * @retval
+  * @brief Reads the filtered state of charge, reporting the I2C result.
+  *        (Enabled for the CLI `battery` command: bq27421_soc() below cannot
+  *        tell a failed read from a genuinely empty battery, this can.)
+  * @param soc_percent out: state of charge in percent; untouched on failure
+  * @retval true when the read completed
   */
 /*============================================================================*/
 bool bq27421_readStateofCharge_percent( uint16_t *soc_percent )
@@ -940,7 +941,6 @@ bool bq27421_readStateofCharge_percent( uint16_t *soc_percent )
 
     return true;
 }
-#endif
 
 
 /*============================================================================*/
@@ -957,7 +957,13 @@ uint16_t bq27421_soc(soc_measure type)
 	switch (type)
 	{
 	case FILTERED:
-		bq27421_i2c_read16(BQ27421_STATE_OF_CHARGE_LOW, &socRet);
+		/* Shared with the checked accessor above: same result as the direct
+		 * read it replaces (the accessor leaves the output untouched on
+		 * failure, so a failed read still yields 0 here), but there is only
+		 * one implementation of the register read. Callers that must know
+		 * whether the read succeeded use bq27421_readStateofCharge_percent()
+		 * instead. */
+		(void)bq27421_readStateofCharge_percent(&socRet);
 		break;
 	case UNFILTERED:
 		bq27421_i2c_read16(BQ27421_STATE_OF_CHARGE_UNFILT_LOW, &socRet);

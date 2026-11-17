@@ -55,6 +55,7 @@
 #include "m1_isr_drop_counters.h"  /* main_q_hdl ISR-send drop counters (m1_mtest 5)  */
 #include "m1_file_browser.h"       /* directory-scan / file-open perf counters (m1_mtest 5) */
 #include "privateprofilestring.h"  /* INI-header open counter (m1_mtest 5)            */
+#include "m1_fw_update_bl.h"       /* FW_CONFIG_RESERVED_ADDRESS/FW_CRC_ADDRESS/bl_get_active_bank() (m1_mtest 9) */
 
 /*************************** D E F I N E S ************************************/
 
@@ -156,10 +157,11 @@ BaseType_t cmd_m1_mtest(char *pconsole, size_t xWriteBufferLen, const char *pcCo
 	switch (temp32)
 	{
 		case 0:
-			/* mtest 5 is a read-only snapshot and intentionally takes no
-			 * argument beyond its command number.  The other basic-system
-			 * commands retain their existing parameter requirement. */
-			if ( (n_params < 2) && (cmd_type != 5) )
+			/* mtest 5 is a read-only snapshot and mtest 9 is the no-argument
+			 * dev-only corruption test; neither takes a parameter beyond its
+			 * command number.  The other basic-system commands retain their
+			 * existing parameter requirement. */
+			if ( (n_params < 2) && (cmd_type != 5) && (cmd_type != 9) )
 				cmd_m1_mtest_help_basic_system();
 			else
 				cmd_m1_mtest_basic_system(pconsole, input_params, n_params, cmd_type);
@@ -404,6 +406,159 @@ void cmd_m1_mtest_basic_system(char *pconsole, char *input_params[], uint8_t n_p
 		reset_private_profile_open_count();
 		strcpy(pconsole, "File-browser perf counters reset.\r\n");
 		break;
+
+	case 9:   /* DEVeloper-only boot-failsafe test ("mtest 9").
+	           *
+	           * Purpose: make the NEXT boot fail its own image-integrity check
+	           * so startup_boot_failsafe() (m1_system.c) can be exercised end to
+	           * end on real hardware: bl_crc_validate_active_bank() must report
+	           * M1_BOOT_FAULT_CRC_MISMATCH, boot_attempts/boot_fault_signature
+	           * must be written to the backup registers, "FW CORRUPT!" must be
+	           * shown and the bounded DFU offer must run (OK within 5 s).
+	           *
+	           * Target: the STORED CRC WORD at FW_CRC_ADDRESS -- not the config
+	           * magic the legacy fork corrupted (legacy/v0.8.11:
+	           * m1_csrc/m1_cli.c:336 wrote BOOT_FAIL_SIGNATURE over
+	           * FW_CONFIG_ADDRESS). The CRC word is the value the failsafe
+	           * compares the computed image CRC against, i.e. exactly the
+	           * "metadata intact, image bytes differ" case this branch's
+	           * recovery path exists for. The config magic is deliberately NOT
+	           * corrupted: m1_boot_classify_fault() reports metadata faults in
+	           * preference to a CRC mismatch, so a magic fault would mask the
+	           * CRC stage instead of testing it. The metadata is snapshotted and
+	           * written back unchanged (bar that one word) to keep the fault
+	           * class on the CRC stage.
+	           *
+	           * THIS IMAGE WILL NOT BOOT UNTIL IT IS RE-FLASHED. The config
+	           * shares the last 8 KiB sector (sector 127) with the padding after
+	           * the image, and the H5 can only program erased flash, so the
+	           * sector is erased first. No code or rodata is lost by that: the
+	           * loaded image ends at 0x080B2590 in this build while the sector
+	           * starts at 0x080FE000, and the sector holds only the 20-byte
+	           * config section at 0x080FFC00 and the CRC word -- the rest is
+	           * 0x00 padding, which the erase turns into 0xFF. What the erase
+	           * does break is validation: the stored CRC word no longer matches
+	           * the image, so the next boot stops at the failsafe. Treat a power
+	           * cycle plus a DFU re-flash as part of the test -- not as a failure
+	           * of it.
+	           *
+	           * Bank addressing: erase and program address the same physical
+	           * bank while "active bank" means "the bank mapped at
+	           * 0x08000000", which is the invariant this image runs under. The
+	           * erase selects FLASH_BANK_1/FLASH_BANK_2 from
+	           * bl_get_active_bank(), and the HAL writes that into the
+	           * controller's bank-select field (FLASH_CR_BKSEL) -- a physical
+	           * bank select; HAL_FLASH_Program() writes through the CPU-visible
+	           * address FW_CRC_ADDRESS (the H5 programs by memory-mapped store),
+	           * which the option-byte bank swap maps to whichever bank is
+	           * active. That is the same mapping bl_crc_validate_active_bank()
+	           * relies on when it reads the stored CRC word from the fixed
+	           * FW_CRC_ADDRESS at boot (see its address reasoning in
+	           * m1_fw_update_bl.c). Run the test on both banks deliberately as
+	           * hardware validation rather than inferring it from this
+	           * reasoning alone.
+	           *
+	           * Compiled out of every shipped image: M1_TEST_CMDS is defined by
+	           * no build file and no source file (tools/m1cp_host_test/
+	           * test_cli_commands.c scans the tree for both dev macros), so a
+	           * build defining it is a
+	           * bench build. The legacy fork shipped the same capability
+	           * unconditionally, where "mtest 9" could destroy a customer unit;
+	           * "mtest 61" (raw CW TX) is gated the same way. */
+#if defined(M1_TEST_CMDS)
+		{
+			/* The stored CRC word at 0x080FFC14 is not quadword-aligned and the
+			 * H5 programs 16-byte flash words, so it is corrupted through the
+			 * aligned word that starts 4 bytes earlier -- the one that also
+			 * carries magic_number_2. Both metadata quadwords are snapshotted
+			 * before the erase and written back with only meta_hi[1] changed. */
+			_Static_assert(((FW_CRC_ADDRESS - FW_IMAGE_CRC_SIZE) % 16U) == 0U,
+			               "the stored CRC word must be programmed through an aligned flash word");
+			_Static_assert((((FW_CONFIG_RESERVED_ADDRESS - FW_START_ADDRESS) % FLASH_SECTOR_SIZE)
+			                + (FW_CRC_ADDRESS - FW_CONFIG_RESERVED_ADDRESS) + FW_IMAGE_CRC_SIZE)
+			               <= FLASH_SECTOR_SIZE,
+			               "the config metadata and its CRC word must share one erase sector");
+
+			uint32_t meta_lo[4], meta_hi[4], sector_error = 0U, cfg_sector;
+			FLASH_EraseInitTypeDef erase_init = {0};
+			HAL_StatusTypeDef hal_unlock, hal_erase, hal_lo, hal_hi, hal_lock;
+			const volatile uint32_t *cfg_word = (const volatile uint32_t *)(uintptr_t)FW_CONFIG_RESERVED_ADDRESS;
+			const volatile uint32_t *crc_word = (const volatile uint32_t *)(uintptr_t)(FW_CRC_ADDRESS - FW_IMAGE_CRC_SIZE);
+			uint8_t i;
+
+			for (i = 0; i < 4; i++)
+			{
+				meta_lo[i] = cfg_word[i];
+				meta_hi[i] = crc_word[i];
+			}
+			meta_hi[1] ^= 0xFFFFFFFFU; /* 1 == the stored CRC word; nothing else changes */
+
+			/* Say what to do BEFORE destroying anything: once the sector is
+			 * erased, the only way back is the DFU path described here. */
+			M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: destructive test - corrupting the firmware CRC word.\r\n");
+			M1_LOG_N(M1_LOGDB_TAG, "Reboot after this returns: the next boot must show FW CORRUPT! and offer DFU for 5 s (press OK).\r\n");
+			M1_LOG_N(M1_LOGDB_TAG, "If it does not recover: hold UP at power-on for the DFU strap, then flash <artifact>_wCRC.bin.\r\n");
+
+			cfg_sector = (FW_CONFIG_RESERVED_ADDRESS - FW_START_ADDRESS) / FLASH_SECTOR_SIZE;
+			erase_init.TypeErase = FLASH_TYPEERASE_SECTORS;
+			erase_init.Banks = (bl_get_active_bank() == BANK1_ACTIVE) ? FLASH_BANK_1 : FLASH_BANK_2;
+			erase_init.Sector = cfg_sector;
+			erase_init.NbSectors = 1;
+
+			/* The erase stalls this task's own instruction fetches (the code is
+			 * in the bank being erased) for its whole duration; feed the
+			 * watchdog first, as bl_flash_start() does per sector. */
+			m1_wdt_reset();
+			M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: erasing config sector %lu in bank %d\r\n",
+			         (unsigned long)cfg_sector, (erase_init.Banks == FLASH_BANK_1) ? 1 : 2);
+
+			/* Each step runs only if the previous one succeeded; on the first
+			 * failure the remaining steps are skipped and reported as such, so
+			 * the operator is never told a step ran that did not. */
+			hal_unlock = HAL_FLASH_Unlock();
+			hal_erase = (hal_unlock == HAL_OK) ? HAL_FLASHEx_Erase(&erase_init, &sector_error) : HAL_ERROR;
+			hal_lo = (hal_erase == HAL_OK) ? HAL_FLASH_Program(FLASH_TYPEPROGRAM_QUADWORD, FW_CONFIG_RESERVED_ADDRESS,
+			                                                   (uint32_t)(uintptr_t)meta_lo) : HAL_ERROR;
+			hal_hi = (hal_lo == HAL_OK) ? HAL_FLASH_Program(FLASH_TYPEPROGRAM_QUADWORD, (FW_CRC_ADDRESS - FW_IMAGE_CRC_SIZE),
+			                                                (uint32_t)(uintptr_t)meta_hi) : HAL_ERROR;
+			hal_lock = HAL_FLASH_Lock();
+
+			M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: unlock=%d erase=%d (sector_err=%lu) program_metadata=%d program_crc=%d lock=%d\r\n",
+			         (int)hal_unlock, (int)hal_erase, (unsigned long)sector_error, (int)hal_lo, (int)hal_hi, (int)hal_lock);
+
+			if (hal_unlock != HAL_OK)
+			{
+				strcpy(pconsole, "Error: flash unlock failed\r\n");
+			}
+			else if (hal_erase != HAL_OK)
+			{
+				strcpy(pconsole, "Error: config sector erase failed\r\n");
+			}
+			else if (hal_lo != HAL_OK)
+			{
+				strcpy(pconsole, "Error: metadata write failed\r\n");
+			}
+			else if (hal_hi != HAL_OK)
+			{
+				strcpy(pconsole, "Error: CRC word write failed\r\n");
+			}
+			else if (hal_lock != HAL_OK)
+			{
+				strcpy(pconsole, "CRC word corrupted; flash lock failed\r\n");
+			}
+			else
+			{
+				strcpy(pconsole, "Firmware CRC corrupted. Reboot now.\r\n");
+			}
+			break;
+		}
+#else
+		/* Shipped images: the path above is not compiled in, and this branch
+		 * exists so the ID stays explained instead of falling through to
+		 * "command not defined yet". */
+		strcpy(pconsole, "Firmware corruption test not available in this build\r\n");
+		break;
+#endif
 
     	default:
     		M1_LOG_N(M1_LOGDB_TAG, "CLI mtest: command not defined yet!\r\n");

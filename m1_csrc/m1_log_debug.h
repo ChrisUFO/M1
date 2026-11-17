@@ -17,6 +17,7 @@
 #include "cmsis_os2.h"
 #include "app_freertos.h"
 #include "m1_log_debug_defs.h"
+#include <stddef.h>
 
 void m1_logdb_printf(S_M1_LogDebugLevel_t, const char* tag, const char* format, ...)
     _ATTRIBUTE((__format__(__printf__, 3, 4)));
@@ -57,4 +58,14 @@ extern TaskHandle_t log_db_task_hdl;
 extern QueueHandle_t log_q_hdl;
 
 void m1_logdb_deinit(void);
+
+/* Copy the most recent log output (the last M1_LOG_CAPTURE_SIZE bytes, see
+ * m1_log_capture.h) into out, NUL-terminated, for the CLI `log` command.
+ * Bounded and best effort: returns the bytes copied, or 0 when nothing has been
+ * captured yet or the log write mutex stayed busy for 20 ms. total_written
+ * (optional) receives the captured byte count so the caller can report a
+ * wrapped window. Never call this while already holding the log mutex, and do
+ * not print from inside it. */
+size_t m1_logdb_get_recent(char *out, size_t max_len, uint32_t *total_written);
+
 #endif /* M1_LOG_DEBUG_H_ */
