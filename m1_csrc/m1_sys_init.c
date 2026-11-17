@@ -215,6 +215,14 @@ void m1_system_init_task(void *param)
 			 * so default settings boot behavior-identical. */
 			fb_set_brightness_pct(settings_get()->brightness_pct);
 
+			/* Apply the persisted LED-notification preference at the same
+			 * point, for the same reason: fb_manager_init() (via
+			 * m1_tasks_init()) resets the gate to its compiled default
+			 * (enabled), which is also the store's default, so default
+			 * settings boot behavior-identical. The setter is
+			 * critical-sectioned and task-safe. */
+			fb_set_led_notifications_enabled(settings_get()->led_notifications != 0u);
+
 			startup_config_handler();
 			M1_LOG_I(M1_LOGDB_TAG, "Power-up init done!\r\n");
 			vTaskDelete(NULL); // Delete this task
