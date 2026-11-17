@@ -213,10 +213,12 @@ static int macro_value(const char *src, const char *name) {
  *     .json/.mk/.yml/.yaml/.bat): this project defines every compile-time macro
  *     as a BARE name inside target_compile_definitions() /
  *     add_compile_definitions() (cmake/m1_01/CMakeLists.txt: USE_HAL_DRIVER,
- *     STM32H573xx, M1_MFC_*...), so ANY mention of the macro name counts.
- *     `#`-to-EOL comments are stripped first (the CMake/shell/Makefile/preset
- *     comment form); no build or config file names either guard today, so the
- *     scan starts green.
+ *     STM32H573xx, M1_MFC_*...), so a whole-word occurrence of the macro name
+ *     counts -- and so does the dashed `-D<macro>` form that shell CFLAGS,
+ *     Makefiles and add_definitions(-D...) use (the `D` of `-D` is why the
+ *     bare-name matcher alone is not enough). `#`-to-EOL comments are stripped
+ *     first (the CMake/shell/Makefile/preset comment form); no build or config
+ *     file names either guard today, so the scan starts green.
  *
  * The source set is WALKED from the project trees instead of being a fixed list
  * of paths: a new file cannot hide from the scan. `tools/` is deliberately not
@@ -311,8 +313,11 @@ static char *strip_hash_comments(const char *src) {
 }
 
 /* First whole-word occurrence of `tok` in `hay`, or NULL, so M1_TEST_CMDS does
- * not match M1_TEST_CMDS_DEV. */
-static const char *find_token(const char *hay, const char *tok) {
+ * not match M1_TEST_CMDS_DEV. With `allow_dash_d`, a `-D` immediately in front
+ * of the name also counts: `-DM1_TEST_CMDS` is how a shell, Makefile or CMake
+ * line passes a definition, and that `D` is an identifier character -- without
+ * this the dashed form would be invisible to the scan. */
+static const char *find_token(const char *hay, const char *tok, int allow_dash_d) {
     size_t len = strlen(tok);
     const char *p = hay;
 
@@ -325,7 +330,10 @@ static const char *find_token(const char *hay, const char *tok) {
         int after_ident = (after == '_' || (after >= 'a' && after <= 'z') ||
                            (after >= 'A' && after <= 'Z') ||
                            (after >= '0' && after <= '9'));
-        if (!before_ident && !after_ident) return p;
+        int dashed = allow_dash_d && (before == 'D') &&
+                     ((size_t)(p - hay) >= 2U) && (p[-2] == '-');
+
+        if ((!before_ident || dashed) && !after_ident) return p;
         p += len;
     }
     return NULL;
@@ -358,7 +366,10 @@ static void guard_scan_file(const char *path) {
             snprintf(dash_tok, sizeof(dash_tok), "-D%s", guard_macros[i]);
             hit = (strstr(code, define_tok) != NULL) || (strstr(code, dash_tok) != NULL);
         } else {
-            hit = (find_token(code, guard_macros[i]) != NULL);
+            /* Build/config files: the bare name -- target_compile_definitions,
+             * add_compile_definitions, add_definitions -- and the dashed
+             * -D<macro> form (shell CFLAGS, Makefiles, add_definitions(-D...)). */
+            hit = (find_token(code, guard_macros[i], 1) != NULL);
         }
         if (hit) {
             printf("       (defines %s: %s)\n", guard_macros[i], path);
