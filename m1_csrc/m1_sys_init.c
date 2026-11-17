@@ -24,6 +24,8 @@
 #include "m1_rf_spi.h"
 #include "m1_sdcard.h"
 #include "m1_esp32_hal.h"
+#include "m1_settings_store.h"
+#include "m1_feedback_manager.h"
 #include "battery.h"
 #include "m1_gpio.h"
 #include "m1_log_debug.h"
@@ -180,6 +182,19 @@ void m1_system_init_task(void *param)
 			m1_lcd_init(&hspi1);
 
 			m1_sdcard_init(&hsd1);
+
+			/* Load durable user settings once the filesystem is up and before
+			 * any consumer task starts (m1_tasks_init below creates the UI
+			 * task, the store's only writer). Missing file, corruption, or an
+			 * absent SD card all leave the compiled defaults active. */
+			(void)settings_init();
+
+			/* Apply the persisted brightness to the feedback manager's
+			 * user-brightness value while only this task runs. The default
+			 * (100) equals the feedback manager's own compiled-in initial
+			 * value, so default settings boot behavior-identical. */
+			fb_set_brightness_pct(settings_get()->brightness_pct);
+
 			//m1_esp32_init();
 #if defined M1_DEBUG_CLI_ENABLE
 			/* USART1 default config */
