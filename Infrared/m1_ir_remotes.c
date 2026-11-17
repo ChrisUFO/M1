@@ -9,6 +9,45 @@
 *
 */
 
+/*
+* ===========================================================================
+* PROTOCOL TABLE AUDIT (issue #43 part 1, PR-4)
+* ===========================================================================
+* ir_protocols_mapping_table[] is the ONE protocol map in this firmware
+* ("single map" rule): the .ir "protocol:" vocabulary is resolved through it
+* by ir_protocol_map_lookup() and the golden-decode host test. The legacy
+* fork alias table (ir_proto_map in m1_ir_universal.c, which aliased
+* NEC/NECext->NEC, RC5X->RC5 and SIRC15/20->SIRC, transmitting wrong codes)
+* is intentionally NOT ported.
+*
+* Audited against the official Flipper .ir protocol vocabulary required by
+* issue #43 -- all present, none added (audit result: complete):
+*   NEC      -> IRMP_NEC8_PROTOCOL  8-bit addr + 8-bit cmd, each followed by
+*                                  its inverted byte (the vendored add-on
+*                                  encoder emits exactly the Flipper "NEC"
+*                                  8/8-with-inversion frame)
+*   NECext   -> IRMP_NEC_PROTOCOL   16-bit address passed through verbatim;
+*                                  16-bit command with the low byte emitted
+*                                  as the inverse of the high byte (the only
+*                                  extended-NEC encoder in the vendored IRMP;
+*                                  the frame still validates as NEC family)
+*   RC5X     -> IRMP_RC5X_PROTOCOL  RC5 extended frame (S/start bit cleared)
+*   SIRC15   -> IRMP_SIRCS15_PROTOCOL 15-bit Sony frame (cmd7 + addr8)
+*   SIRC20   -> IRMP_SIRCS20_PROTOCOL 20-bit Sony frame (cmd7 + addr13)
+*   RCA      -> IRMP_RCA_PROTOCOL   24-bit frame AAAA CCCC CCCC ~CMD ~ADDR
+* Plus further official names already covered: SIRC, RC5, RC6, NEC42,
+* Samsung32, Kaseikyo. Plus upstream extras passing through: Pioneer
+* (NEC-shaped add-on encoder), raw (timing stream; must stay the last entry)
+* and the NEC8 encoder class behind the "NEC" name. "UNKNOWN" must stay the
+* first entry.
+*
+* Intentional omissions (strict-skip keeps them safe: unknown names skip the
+* block, increment the skipped counter and raise a visible notice -- never a
+* garbage transmit): NEC42ext, Samsung48/Samsung64, Cassette and any other
+* Flipper name with no encoder in the vendored IRMP build.
+* ===========================================================================
+*/
+
 /*************************** I N C L U D E S **********************************/
 
 #include <stdint.h>
@@ -98,8 +137,6 @@
 #define IR_REMOTE_ACS_BUTTON_ROW4_Y			105
 #define IR_REMOTE_ACS_BUTTON_ROW4_X1		7
 #define IR_REMOTE_ACS_BUTTON_ROW4_X2		39
-
-#define IR_PROTOCOLS_MAPPING_MAX			15
 
 #define IR_TRANSMIT_SLIDER_WIDTH				5 // pixel
 #define IR_TRANSMIT_SLIDER_OVERLAP				4 // pixel, each slider will be overlapped by 4 pixels when it's drawn on screen
@@ -395,6 +432,8 @@ const S_M1_IR_Button_Info_t ir_buttons_info[] =
 	}
 };
 
+/* ===================== IR_PROTOCOL_MAP_PURE_BEGIN ===================== */
+#define IR_PROTOCOLS_MAPPING_MAX			15 /* keep in sync with the table below */
 const S_M1_IR_Protocol_Mapping_t ir_protocols_mapping_table[IR_PROTOCOLS_MAPPING_MAX] =
 {
 	{
@@ -455,6 +494,35 @@ const S_M1_IR_Protocol_Mapping_t ir_protocols_mapping_table[IR_PROTOCOLS_MAPPING
 		IRMP_RAW_PROTOCOL // Should be the last element of this array!
 	}
 };
+
+/*============================================================================*/
+/**
+  * @brief  Resolve a .ir "protocol:" name to its IRMP protocol number through
+  * 		the single upstream mapping table (issue #43 protocol audit).
+  * @param  protocol_name: NUL-terminated name as found in the .ir file
+  * @param  pprotocol_number: receives the IRMP protocol constant on success
+  * @retval 0 if the name is in the table, 1 otherwise (strict-skip caller)
+  */
+/*============================================================================*/
+uint8_t ir_protocol_map_lookup(const char *protocol_name, uint8_t *pprotocol_number)
+{
+	uint8_t i;
+
+	if ( (protocol_name==NULL) || (pprotocol_number==NULL) )
+		return 1;
+
+	for (i=0; i<IR_PROTOCOLS_MAPPING_MAX; i++)
+	{
+		if ( !strcmp(protocol_name, ir_protocols_mapping_table[i].protocol_name) )
+		{
+			*pprotocol_number = ir_protocols_mapping_table[i].protocol_number;
+			return 0;
+		} // if ( !strcmp(protocol_name, ir_protocols_mapping_table[i].protocol_name) )
+	} // for (i=0; i<IR_PROTOCOLS_MAPPING_MAX; i++)
+
+	return 1;
+} // uint8_t ir_protocol_map_lookup(const char *protocol_name, uint8_t *pprotocol_number)
+/* ====================== IR_PROTOCOL_MAP_PURE_END ====================== */
 /***************************** V A R I A B L E S ******************************/
 
 S_M1_IR_Payload_t ir_universal_payload;
@@ -464,6 +532,7 @@ static uint8_t ir_remote_state;
 /********************* F U N C T I O N   P R O T O T Y P E S ******************/
 
 uint8_t ir_remote_file_load(void);
+uint8_t ir_protocol_map_lookup(const char *protocol_name, uint8_t *pprotocol_number);
 void infrared_universal_tv_remotes(void);
 void infrared_universal_audio_remotes(void);
 void infrared_universal_projector_remotes(void);
