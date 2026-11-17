@@ -2,28 +2,55 @@
 """Run production feedback initialization + LCD saver with actual manager code.
 Usage: python3 m1_csrc/tests/test_backlight_startup.py [source checkout]
 Mocks only scheduling, clock and hardware outputs; no device acceptance implied.
+The screen-saver window is the runtime settings-store value
+(settings_get()->screen_timeout_s, stubbed here): the compiled default 45 s
+must behave exactly like the old compile-time constant, 0 (Off) must never
+sleep, and a custom timeout must retime the boundary.
 """
+
 from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
 
-root = Path(sys.argv[1]).resolve() if len(sys.argv)>1 else Path(__file__).resolve().parents[2]
-def function(file,name):
-    s=(root/file).read_text()
-    m=re.search(r'^(?:static )?void '+name+r'\(void\)\n\{',s,re.M)
-    assert m,name
-    return s[m.start():s.index('\n}',m.end())+2]
-header=(root/'m1_csrc/m1_system.h').read_text()
-period=re.search(r'^#define\s+LCD_SAVER_PERIOD\s+([^\r\n/]+)',header,re.M)[1].strip()
-pre=r'''
+root = (
+    Path(sys.argv[1]).resolve()
+    if len(sys.argv) > 1
+    else Path(__file__).resolve().parents[2]
+)
+
+
+def host_cc():
+    for cc in ("cc", "gcc", "clang"):
+        try:
+            subprocess.run([cc, "--version"], capture_output=True, check=True)
+            return cc
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    raise AssertionError("no usable host C compiler (cc/gcc/clang) found")
+
+
+CC = host_cc()
+
+
+def function(file, name):
+    s = (root / file).read_text()
+    m = re.search(r"^(?:static )?void " + name + r"\(void\)\n\{", s, re.M)
+    if m is None:
+        m = re.search(r"^(?:static )?\w+ " + name + r"\(void\)\n\{", s, re.M)
+    assert m, name
+    return s[m.start() : s.index("\n}", m.end()) + 2]
+
+
+pre = r"""
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <assert.h>
 #include "m1_feedback_manager.h"
 #include "m1_feedback_orchestration.h"
+#include "m1_settings_store.h"
 typedef int BaseType_t;
 typedef int TaskHandle_t;
 #define FEEDBACK_TASK_STACK_SIZE 1
@@ -42,15 +69,20 @@ static const fb_hw_adapter_t *m1_feedback_hw_adapter_get(void){return &hw;}
 static void feedback_task(void *p){(void)p;}
 static BaseType_t xTaskCreate(void (*fn)(void*),const char *name,int stack,void *arg,int prio,TaskHandle_t *handle){
  (void)fn;(void)name;(void)stack;(void)arg;(void)prio;*handle=1;
- /* Must already have a normal owner before scheduling other tasks. */
- assert(fb_debug_visible_bl()==100);assert(writes==0);return pdPASS;
+  /* Must already have a normal owner before scheduling other tasks. */
+  assert(fb_debug_visible_bl()==100);assert(writes==0);return pdPASS;
 }
-'''
-main=r'''
+/* Runtime settings stub: the saver must read the store, not a constant. */
+static S_M1_Settings_t g_settings;
+const S_M1_Settings_t *settings_get(void){return &g_settings;}
+"""
+main = r"""
 static void tick(void){fb_manager_tick(1);}
 static void button(void){now++;m1_device_stat.active_timestamp=now;lcd_saver_update();tick();}
 int main(void){
  m1_feedback_task_init();
+ /* Compiled default: 45 s must equal the retired 45000 ms constant. */
+ g_settings.screen_timeout_s=45;
  /* Raw boot splash write; both normal and post-update status use this path. */
  hardware_bl=100;now=m1_device_stat.active_timestamp=1000;tick();
  assert(hardware_bl==100);
@@ -67,22 +99,81 @@ int main(void){
  unsigned before=writes;
  for(unsigned i=0;i<20;i++){now++;lcd_saver_update();tick();}
  assert(writes==before);
- now=m1_device_stat.active_timestamp+LCD_SAVER_PERIOD-1;lcd_saver_update();tick();assert(hardware_bl==37);
+ now=m1_device_stat.active_timestamp+45000u-1;lcd_saver_update();tick();assert(hardware_bl==37);
  now++;lcd_saver_update();tick();assert(hardware_bl==0);
  /* One accepted button event must wake at the saved brightness. */
  button();assert(hardware_bl==37);
  /* A higher-priority hold still overrides sleep; release restores sleep. */
- fb_net_emulating_start();tick();now+=LCD_SAVER_PERIOD;lcd_saver_update();tick();assert(hardware_bl==37);
+ fb_net_emulating_start();tick();now+=45000u;lcd_saver_update();tick();assert(hardware_bl==37);
  fb_net_emulating_stop();tick();assert(hardware_bl==0);button();assert(hardware_bl==37);
  /* Critical-power cleanup respects both awake and sleeping baseline. */
  fb_pwr_batt_crit();tick();fb_pwr_charger_attached(false);tick();assert(hardware_bl==37);
- now+=LCD_SAVER_PERIOD;lcd_saver_update();tick();assert(hardware_bl==0);
+ now+=45000u;lcd_saver_update();tick();assert(hardware_bl==0);
  fb_pwr_charger_attached(true);tick();assert(hardware_bl==0);button();assert(hardware_bl==37);
- puts("PASS: startup owner before tasks; charger/temporary-owner cleanup; brightness; idle boundary; single-button wake; priority and sleeping restore; no repeated awake writes.");
-}
-'''
-code=pre+'\n#define LCD_SAVER_PERIOD '+period+'\n'+function('m1_csrc/m1_feedback_task.c','m1_feedback_task_init')+'\n'+function('m1_csrc/m1_system.c','lcd_saver_update')+main
+ /* Runtime timeout (Off): the display must never sleep, no matter how
+  * long the inactivity grows, and a session that was already asleep when
+  * Off took effect wakes on the next periodic check. */
+ g_settings.screen_timeout_s=0;
+ now+=120000u;lcd_saver_update();tick();assert(hardware_bl==37);
+ /* Asleep -> Off transition wakes immediately. */
+ g_settings.screen_timeout_s=45;
+ now=m1_device_stat.active_timestamp+45000u;lcd_saver_update();tick();assert(hardware_bl==0);
+ g_settings.screen_timeout_s=0;
+ lcd_saver_update();tick();assert(hardware_bl==37);
+ /* Runtime timeout (custom 30 s): boundary retimes without a reboot. */
+ g_settings.screen_timeout_s=30;
+ button();
+ now=m1_device_stat.active_timestamp+29999u;lcd_saver_update();tick();assert(hardware_bl==37);
+ now++;lcd_saver_update();tick();assert(hardware_bl==0);
+ button();assert(hardware_bl==37);
+ puts("PASS: startup owner before tasks; charger/temporary-owner cleanup; brightness; idle boundary; single-button wake; priority and sleeping restore; no repeated awake writes; runtime timeout Off/custom.");
+ }
+"""
+code = (
+    pre
+    + "\n"
+    + function("m1_csrc/m1_feedback_task.c", "m1_feedback_task_init")
+    + "\n"
+    + function("m1_csrc/m1_system.c", "lcd_saver_period_ms")
+    + "\n"
+    + function("m1_csrc/m1_system.c", "lcd_saver_update")
+    + main
+)
 with tempfile.TemporaryDirectory() as d:
-    p=Path(d);(p/'test.c').write_text(code)
-    subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-DM1_FEEDBACK_HOST_TEST','-I'+str(root/'m1_csrc'),str(p/'test.c'),*[str(root/'m1_csrc'/f) for f in ['m1_feedback_manager.c','m1_feedback_sequences.c','m1_feedback_orchestration.c']],'-o',str(p/'test')],check=True)
-    subprocess.run([str(p/'test')],check=True)
+    p = Path(d)
+    (p / "test.c").write_text(code)
+    # Sanitizers when the toolchain has the runtime (CI); plain build
+    # otherwise (some MinGW hosts) -- the assertions are unaffected.
+    for extra in (["-fsanitize=address,undefined"], []):
+        r = subprocess.run(
+            [
+                CC,
+                "-std=c11",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-DM1_FEEDBACK_HOST_TEST",
+                "-I" + str(root / "m1_csrc"),
+            ]
+            + extra
+            + [
+                str(p / "test.c"),
+                *[
+                    str(root / "m1_csrc" / f)
+                    for f in [
+                        "m1_feedback_manager.c",
+                        "m1_feedback_sequences.c",
+                        "m1_feedback_orchestration.c",
+                    ]
+                ],
+                "-o",
+                str(p / "test"),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode == 0:
+            break
+    else:
+        raise SystemExit("compile failed")
+    subprocess.run([str(p / "test")], check=True)
