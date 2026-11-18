@@ -46,14 +46,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no two IR functions can overlap (the guard is what extends the UI-task
   serialization to the CLI task). Static workspaces only — no dynamic
   allocation in screen loops. Host suite
-  `m1_csrc/test/m1_ir_browser_test.py` (78 checks): compiled pure-core
+  `m1_csrc/test/m1_ir_browser_test.py` (81 checks): compiled pure-core
   pagination/search/classification/label/notice math, a second harness
   compiling the REAL PR-4 loader + protocol map to prove the empty-data-line
   raw blocks land on the non-transmittable side of the TX gate, plus static
   seams for the menu wiring, the guard on every entry point, the
   empty-library hint, the loader hookup, the 12-char notice-title cap
   (beside-icon literals and the 9999 skip-count clamp), the over-long
-  category-name skip and the zero-usable-file aggregated skip notice. Favorites/recent and the
+  category-name skip and the zero-usable-file aggregated skip notice
+  (plus the durable parsed-protocol publish: the TX payload never points
+  into the browser's transmit frame). Favorites/recent and the
   explicit "cycle all in category" submenu action are deliberately left
   for the next unit.
 - Fork: IR data layer — streaming `.ir` loader, strict-skip policy and an

@@ -712,6 +712,25 @@ def static_seam_tests():
         "proto_no == IRMP_RAW_PROTOCOL" in tx,
         '"protocol: raw" on a parsed block is refused (no timings to play)',
     )
+    # parsed publish durability: ir_universal_payload is a long-lived upstream
+    # global, sig is stack-local here -- pprotocol must point at storage that
+    # outlives irb_transmit's frame (module-static copy, like the "raw"
+    # literal in the raw branch), never at the signal itself
+    CHECK(
+        "static char irb_tx_proto_name[M1_IR_FILE_PROTO_LEN_MAX + 1u];" in browser,
+        "module-static protocol-name buffer exists for the parsed TX publish",
+    )
+    i_copy = tx.find("irb_tx_proto_name[i] = '\\0';")
+    i_pub = tx.find("ir_universal_payload.pprotocol = (uint8_t *)irb_tx_proto_name;")
+    CHECK(
+        -1 not in (i_copy, i_pub) and i_copy < i_pub,
+        "parsed protocol name is NUL-terminated into the static buffer "
+        "before pprotocol is published",
+    )
+    CHECK(
+        "= (uint8_t *)sig.protocol_name" not in tx,
+        "no TX publish points pprotocol into irb_transmit's dead frame",
+    )
     CHECK(
         'irb_notice("Empty raw", "Nothing to send"' in browser,
         "empty raw signal maps to a plain error notice",

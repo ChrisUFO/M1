@@ -443,6 +443,10 @@ static char irb_dev_names[M1_IR_BROWSER_DEVICES_MAX][M1_IR_BROWSER_NAME_LEN_MAX]
 static char irb_dev_paths[M1_IR_BROWSER_DEVICES_MAX][M1_IR_BROWSER_PATH_LEN_MAX];
 static S_M1_IR_File_Entry_t irb_entries[M1_IR_BROWSER_BUTTONS_MAX];
 static uint16_t irb_raw_ticks[M1_IR_BROWSER_RAW_TICKS_MAX];
+/* Durable protocol-name copy for the parsed TX publish: ir_universal_payload
+ * is an upstream global that outlives irb_transmit's frame, so pprotocol
+ * must never point at the stack-local signal (mirrors the "raw" literal). */
+static char irb_tx_proto_name[M1_IR_FILE_PROTO_LEN_MAX + 1u];
 static char irb_query[M1_IR_BROWSER_NAME_LEN_MAX];
 static uint16_t irb_cat_count;
 static uint16_t irb_dev_count;
@@ -937,6 +941,7 @@ static uint8_t irb_transmit(const char *path, uint16_t entry_idx)
 	S_M1_IR_File_Signal_t sig;
 	IRMP_DATA ir_data;
 	uint8_t proto_no;
+	uint8_t i;
 	int32_t got;
 
 	got = m1_ir_file_signal_load(path, &irb_entries[entry_idx], &sig,
@@ -968,7 +973,17 @@ static uint8_t irb_transmit(const char *path, uint16_t entry_idx)
 			return M1_IRB_TX_ERR_EMPTY_RAW; /* "protocol: raw" on a parsed block carries
 											* no timings (issue #74): raw_count == 0 */
 		ir_universal_payload.ir_data_type = IR_DATATYPE_PARSED;
-		ir_universal_payload.pprotocol = (uint8_t *)sig.protocol_name;
+		/* ir_universal_payload outlives this frame: copy the protocol name
+		 * into the module-static buffer instead of pointing pprotocol at
+		 * the stack-local sig (same value, storage that never dies) */
+		i = 0u;
+		while ( (i < M1_IR_FILE_PROTO_LEN_MAX) && (sig.protocol_name[i] != '\0') )
+		{
+			irb_tx_proto_name[i] = sig.protocol_name[i];
+			i++;
+		}
+		irb_tx_proto_name[i] = '\0';
+		ir_universal_payload.pprotocol = (uint8_t *)irb_tx_proto_name;
 		ir_universal_payload.address = sig.address;
 		ir_universal_payload.command = sig.command;
 		ir_data.protocol = proto_no;
