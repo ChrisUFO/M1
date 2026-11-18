@@ -412,6 +412,7 @@ static char irb_scan_paths[M1_IR_BROWSER_DEPTH_MAX + 1u][M1_IR_BROWSER_PATH_LEN_
 static void irb_draw_list(const char *title, uint16_t count, const S_M1_IRB_Win_t *w,
 		const char *(*row_get)(uint16_t idx), uint8_t truncated);
 static void irb_notice(const char *line1, const char *line2, uint32_t delay_ms);
+static void irb_draw_empty_library(void);
 static void irb_draw_hourglass(void);
 static void irb_draw_sending(const char *name);
 static const char *irb_row_cat(uint16_t idx);
@@ -516,6 +517,27 @@ static void irb_notice(const char *line1, const char *line2, uint32_t delay_ms)
 	if ( delay_ms > 0u )
 		vTaskDelay(pdMS_TO_TICKS(delay_ms));
 } // static void irb_notice(...)
+
+/*============================================================================*/
+/**
+  * @brief  Empty-library hint: 0:/IR is missing or holds no categories.
+  *         Actionable text (what to copy, where), dismissed with BACK.
+  */
+/*============================================================================*/
+static void irb_draw_empty_library(void)
+{
+	m1_u8g2_firstpage();
+	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+	u8g2_SetFont(&m1_u8g2, M1_DISP_FUNC_MENU_FONT_N);
+	u8g2_DrawXBMP(&m1_u8g2, 2, 2, 48, 25, remote_48x25);
+	u8g2_DrawStr(&m1_u8g2, 54, 15, "No IR");
+	u8g2_DrawStr(&m1_u8g2, 54, 25, "database");
+	u8g2_DrawStr(&m1_u8g2, 2, 40, "Copy Flipper IRDB");
+	u8g2_DrawStr(&m1_u8g2, 2, 50, "to 0:/IR on SD");
+	u8g2_DrawStr(&m1_u8g2, 2, 60, "Then reopen browser");
+	m1_u8g2_nextpage(); // Update display RAM
+	m1_wait_back_to_exit();
+} // static void irb_draw_empty_library(void)
 
 /*============================================================================*/
 /**
@@ -851,8 +873,9 @@ static int32_t irb_index_device(const char *path)
   *         on-demand load via m1_ir_file_signal_load, publish into
   *         ir_universal_payload exactly like ir_remote_function_play,
   *         then irsnd_generate_tx_data + infrared_transmit.
-  * @retval 0 when the frame was started, 1 on any load/strict-skip error
-  *         (the caller shows the mapped notice).
+  * @retval 0 when the frame was started, otherwise the (positive)
+  *         S_M1_IR_File_Error_t of the failed load (the caller maps it
+  *         to a plain notice).
   */
 /*============================================================================*/
 static uint8_t irb_transmit(const char *path, uint16_t entry_idx)
@@ -865,7 +888,7 @@ static uint8_t irb_transmit(const char *path, uint16_t entry_idx)
 	got = m1_ir_file_signal_load(path, &irb_entries[entry_idx], &sig,
 			irb_raw_ticks, M1_IR_BROWSER_RAW_TICKS_MAX);
 	if ( got != 0 )
-		return 1;
+		return (uint8_t)(-got);
 
 	memset(&ir_data, 0, sizeof(ir_data));
 	memset(&ir_universal_payload, 0, sizeof(ir_universal_payload));
@@ -883,7 +906,7 @@ static uint8_t irb_transmit(const char *path, uint16_t entry_idx)
 	else
 	{
 		if ( ir_protocol_map_lookup(sig.protocol_name, &proto_no) )
-			return 1; /* strict-skip held at load time too */
+			return (uint8_t)M1_IR_FILE_ERR_UNKNOWN_PROTOCOL; /* strict-skip held at load too */
 		ir_universal_payload.ir_data_type = IR_DATATYPE_PARSED;
 		ir_universal_payload.pprotocol = (uint8_t *)sig.protocol_name;
 		ir_universal_payload.address = sig.address;
@@ -980,7 +1003,7 @@ static void irb_screen_categories(void)
 	}
 	if ( st == M1_IRB_SCAN_EMPTY )
 	{
-		irb_notice("No database", "Copy .ir to 0:/IR", M1_IRB_NOTICE_MS_DEFAULT);
+		irb_draw_empty_library(); /* actionable hint, waits for BACK */
 		return;
 	}
 
@@ -1120,14 +1143,26 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 	BaseType_t ret;
 	int32_t indexed;
 	uint16_t count;
-	uint8_t truncated, tx_active = 0;
+	uint8_t truncated, tx_err, tx_active = 0;
 
 	irb_draw_hourglass();
 	indexed = irb_index_device(path);
 
 	if ( indexed < 0 )
 	{
-		irb_notice("Can't read file", "Check SD card", M1_IRB_NOTICE_MS_DEFAULT);
+		/* map the loader error to a plain notice */
+		switch ( (S_M1_IR_File_Error_t)(-indexed) )
+		{
+			case M1_IR_FILE_ERR_IO:
+				irb_notice("Can't read file", "Check SD card", M1_IRB_NOTICE_MS_DEFAULT);
+				break;
+			case M1_IR_FILE_ERR_HEADER:
+				irb_notice("Not an .ir file", path, M1_IRB_NOTICE_MS_DEFAULT);
+				break;
+			default:
+				irb_notice("Unreadable file", path, M1_IRB_NOTICE_MS_DEFAULT);
+				break;
+		}
 		return 1;
 	}
 	count = (uint16_t)indexed;
@@ -1215,10 +1250,28 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 			irb_draw_sending(irb_entries[w.sel].name);
 			m1_buzzer_notification();
 			m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_M, LED_FASTBLINK_ONTIME_M);
-			if ( irb_transmit(path, w.sel) )
+			tx_err = irb_transmit(path, w.sel);
+			if ( tx_err )
 			{
 				m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
-				irb_notice("Send failed", "Unsupported signal", M1_IRB_NOTICE_MS_DEFAULT);
+				switch ( (S_M1_IR_File_Error_t)tx_err )
+				{
+					case M1_IR_FILE_ERR_IO:
+						irb_notice("Can't read file", "Check SD card", M1_IRB_NOTICE_MS_DEFAULT);
+						break;
+					case M1_IR_FILE_ERR_MALFORMED:
+						irb_notice("File changed", "Reopen device", M1_IRB_NOTICE_MS_DEFAULT);
+						break;
+					case M1_IR_FILE_ERR_RAW_OVERFLOW:
+						irb_notice("Raw signal", "too long", M1_IRB_NOTICE_MS_DEFAULT);
+						break;
+					case M1_IR_FILE_ERR_UNKNOWN_PROTOCOL:
+						irb_notice("Unsupported", "protocol skipped", M1_IRB_NOTICE_MS_DEFAULT);
+						break;
+					default:
+						irb_notice("Send failed", "Unsupported signal", M1_IRB_NOTICE_MS_DEFAULT);
+						break;
+				}
 				irb_draw_list(title, count, &w, irb_row_entry, truncated);
 			}
 			else
