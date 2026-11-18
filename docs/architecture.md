@@ -124,14 +124,20 @@ Durable user settings live in `0:/System/settings.cfg`
 (`m1_csrc/m1_settings_store.c/.h`) — never in flash: the boot-signed metadata
 span (`S_M1_FW_CONFIG_t`, sector 127) is off-limits to application settings.
 
-File format (version 1):
+File format (version 2):
 
-- first line `#ver=1`;
+- first line `#ver=2`;
 - one `key=value` line per field, CRLF endings, keys in the module's field
   table (`brightness_pct`, `screen_timeout_s`, `led_notifications`,
   `device_name`, `subghz_*`, `bt_*`);
 - final line `crc=XXXXXXXX`: CRC-32C (Castagnoli, polynomial 0x1EDC6F41,
   the shared `m1_crc32c.c` helper) over every byte preceding that line.
+
+A v1 file written by pre-Radio-Settings firmware still loads: its
+serialized `subghz_power_dbm=0` was the then-inert default rather than a
+user choice, so the load migrates it to the +20 dBm default (stock TX
+power); every other field is kept, and the next save rewrites the file as
+v2 — under which an explicit 0 dBm choice is preserved verbatim.
 
 Semantics:
 

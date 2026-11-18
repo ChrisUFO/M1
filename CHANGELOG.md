@@ -45,7 +45,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   binding, override-ordering/region-gate/no-ISR static seams, menu and
   store-default wiring), wired into `scripts/run_host_tests.sh`;
   `settings_exit_save()`/`settings_str_clip()` are exported through
-  `m1_settings.h` as the shared modal-screen helpers.
+  `m1_settings.h` as the shared modal-screen helpers. The settings file
+  format is bumped to `#ver=2` with a load-time migration for legacy v1
+  files (PR-1…PR-6 firmware serialized the then-inert
+  `subghz_power_dbm=0` wholesale; on load it maps to the +20 dBm
+  default, every other field is kept, and the next save rewrites the
+  file as v2 — under which an explicit 0 dBm choice loads verbatim), so
+  devices upgraded across the PR-7 boundary keep stock TX power.
 - Fork: IR favorites and recent lists in the SD-card IR browser, plus the
   explicit "cycle all in category" submenu action (issue #43 part 3 —
   this completes #43 together with the earlier IR units). The browser
@@ -236,8 +242,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout, LED notifications, device name, plus round-trip-only Sub-GHz
   radio and Bluetooth advertisement fields their future screens will
   define) loaded once at boot from `0:/System/settings.cfg` after SD init
-  and before any consumer task starts. The file format is `#ver=1` +
-  `key=value` lines + a trailing `crc=<8 hex>` CRC-32C (Castagnoli,
+  and before any consumer task starts. The file format is a versioned
+  `#ver=N` first line (v1 at introduction; bumped to v2 by the Radio
+  Settings unit, whose power semantics required a load-time migration —
+  see the Sub-GHz Radio Settings entry) + `key=value` lines + a trailing `crc=<8 hex>` CRC-32C (Castagnoli,
   0x1EDC6F41, the shared `m1_crc32c.c`) over all preceding bytes. Loading
   is tolerant and bounded (missing file → compiled defaults; CRC
   mismatch/truncation/unsupported version makes the file unreadable →
