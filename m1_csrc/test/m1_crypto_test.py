@@ -65,10 +65,13 @@ Layers:
      HAL_GetTick-seeded randomness. The tree's pre-existing decorative
      srand(HAL_GetTick())/rand() sites (saved-file name suffixes in
      m1_save_filename.c, synthetic NFC tag UIDs and file names in
-     m1_nfc.c) are NOT keys/IVs/credentials; the set of files with
-     ACTIVE srand calls is pinned exactly (comments stripped first),
-     so re-enabling m1_sdcard_man.c's commented-out srand -- or
-     adding any new site -- fails the pin.
+     m1_nfc.c) are NOT keys/IVs/credentials; the PER-FILE COUNTS of
+     active srand and rand( sites are pinned exactly (comments
+     stripped first), so re-enabling m1_sdcard_man.c's commented-out
+     srand, adding a site to an already-tolerated file, or adding a
+     new rand()/srand file anywhere in m1_csrc -- including a
+     rand()-only file on libc's deterministic default seed -- fails
+     the pin.
 
 Usage: python3 m1_csrc/test/m1_crypto_test.py
 """
@@ -800,11 +803,13 @@ def static_checks():
 
     # 8. No-fallback grep proof over the crypto layer and the (current
     #    and future) crypto consumers. The tree's decorative
-    #    srand(HAL_GetTick()) sites (file-name suffixes, synthetic NFC
-    #    UIDs) never touch keys/IVs/credentials; the files with ACTIVE
-    #    srand calls are pinned EXACTLY, after stripping comments, so a
-    #    re-enabled srand in m1_sdcard_man.c (whose only site is
-    #    commented out) or any new site anywhere fails the pin.
+    #    srand(HAL_GetTick())/rand() sites (file-name suffixes, synthetic
+    #    NFC UIDs) never touch keys/IVs/credentials; the PER-FILE SITE
+    #    COUNTS of both srand and rand( are pinned EXACTLY, after
+    #    stripping comments, so a re-enabled srand in m1_sdcard_man.c
+    #    (whose only site is commented out), an extra site in an
+    #    already-tolerated file, or an all-new rand()/srand file
+    #    anywhere in m1_csrc fails the pin.
     guarded = [
         "m1_crypto.c",
         "m1_crypto.h",
@@ -824,17 +829,28 @@ def static_checks():
             "srand" not in s and "rand(" not in s,
             f"{f} contains rand()/srand (fallback risk)",
         )
-    active = {"m1_save_filename.c", "m1_nfc.c"}
-    found = set()
+    srand_sites = {}
+    rand_sites = {}
     for p in (ROOT / "m1_csrc").glob("*.c"):
         code = strip_c_comments(p.read_text(encoding="utf-8", errors="replace"))
-        if "srand" in code:
-            found.add(p.name)
+        n_srand = len(re.findall(r"\bsrand\s*\(", code))
+        n_rand = len(re.findall(r"\brand\s*\(", code))
+        if n_srand:
+            srand_sites[p.name] = n_srand
+        if n_rand:
+            rand_sites[p.name] = n_rand
     CHECK(
-        found == active,
-        f"srand site drift: {sorted(found ^ active)} "
-        "(active decorative set pinned exactly: file names / synthetic "
-        "NFC UIDs; m1_sdcard_man.c's site must stay commented out)",
+        srand_sites == {"m1_nfc.c": 2, "m1_save_filename.c": 1},
+        f"srand site drift: {srand_sites} != pinned counts "
+        "(decorative sites count-pinned per file: file-name suffixes / "
+        "synthetic NFC UIDs; m1_sdcard_man.c's site must stay "
+        "commented out)",
+    )
+    CHECK(
+        rand_sites == {"m1_nfc.c": 2, "m1_save_filename.c": 1},
+        f"rand() site drift: {rand_sites} != pinned counts "
+        "(a rand()-only file rides libc's deterministic default seed "
+        "and fails this pin just like a new srand site)",
     )
 
     # 9. KDF layout is pinned in-source: counter byte, label, 0x00,

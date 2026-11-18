@@ -63,9 +63,12 @@ peripheral (HSI48 kernel clock, brought up at boot before any
 consumer). On any init or generate failure the wrapper refuses
 permanently — the crypto path fails closed. There is no time-based or
 pseudo-random fallback anywhere in the tree; the host suite pins the
-three pre-existing decorative `srand(HAL_GetTick())`/`rand()` sites
-(saved-file name suffixes and synthetic NFC tag UIDs) as the complete
-tolerated set — none of them produce keys or IVs.
+per-file counts of every pre-existing decorative
+`srand(HAL_GetTick())`/`rand()` call site (saved-file name suffixes
+and synthetic NFC tag UIDs) as the complete tolerated set — any new
+or extra site in `m1_csrc/`, including a `rand()`-only file on libc's
+deterministic default seed, fails the pin. None of the tolerated
+sites produce keys or IVs.
 
 **Out of scope (tracked as non-goals for this series):** secure
 element or hardware key storage, TLS, SPI-link encryption, and

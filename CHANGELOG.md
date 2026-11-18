@@ -26,8 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   task. Any RNG init or generate failure latches permanently and every
   later `m1_rng_init()`/`m1_rng_bytes()` call refuses — there is no
   time-based or pseudo-random fallback anywhere
-  (host-suite-proven; the three pre-existing decorative `rand()` sites
-  are file-name suffixes and synthetic NFC UIDs, never keys or IVs).
+  (host-suite-proven; the pre-existing decorative `rand()`/`srand()`
+  sites are count-pinned per file — file-name suffixes and synthetic
+  NFC UIDs, never keys or IVs).
   Threat-model honesty is documented in `docs/security.md` and the
   module header: the UID-derived key hides credentials from
   removed-SD-card reading only — no secure element, no TLS, no SPI-link

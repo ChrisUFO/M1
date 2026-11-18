@@ -362,9 +362,9 @@ consumer) are split into a pure core and one hardware-coupled wrapper:
   permanently; every later `m1_rng_init()`/`m1_rng_bytes()` call
   refuses (partial output zeroized).
   There is no time-based or pseudo-random fallback anywhere in the
-  tree (host suite pins the three decorative `rand()` sites — file
-  name suffixes and synthetic NFC UIDs — which never touch keys or
-  IVs).
+  tree (host suite pins the per-file counts of the decorative
+  `rand()`/`srand()` sites — file name suffixes and synthetic NFC
+  UIDs — which never touch keys or IVs).
 - *Threat model*: the UID-derived key hides credentials from
   removed-SD-card casual reading only; see
   [security](security.md#wi-fi-credential-crypto-and-hardware-rng)
