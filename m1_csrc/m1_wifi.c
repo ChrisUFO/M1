@@ -156,7 +156,7 @@
  * writer max output 419 < WIFI_SAVED_LINE_BUF = 448 (worst row + NUL
  * fits with 28 bytes spare), and f_gets(line, 480) reads up to 479
  * chars, so the 419-char worst line incl. '\n' reloads complete with
- * 59 bytes spare. */
+ * 60 bytes spare. */
 #define WIFI_SAVED_LINE_MAX         480u
 /* Writer-side row assembly buffer (see WIFI_SAVED_LINE_MAX above). */
 #define WIFI_SAVED_LINE_BUF         448u
