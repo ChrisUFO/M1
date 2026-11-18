@@ -46,7 +46,10 @@ uint8_t wifi_ap_sta_scan_list(ctrl_cmd_t *app_req, uint8_t target);
  * network with the given canonical uppercase BSSID. psk is ABSORBED
  * (zeroized on every return once sealing is attempted). NULL/"" clears
  * the stored credential. Returns 0 ok, 1 no such network, 2 save failed
- * (state rolled back), 3 crypto refused (RNG/KDF; nothing changed).
+ * (state rolled back), 3 seal refused (PSK length outside 1..64, RNG,
+ * or KDF; nothing changed). WPA passphrase-length policy (8..63) is the
+ * join flow's, not the store's: both WPA forms — 8..63-char passphrases
+ * and the 64-hex-char PMK — are storable.
  *
  * wifi_cred_get_psk: decrypt at join time (re-verifies; never trusts the
  * load-time state alone). psk_out needs room for 65 bytes (the 64-char

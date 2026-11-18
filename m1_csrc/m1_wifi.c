@@ -5673,7 +5673,8 @@ static uint8_t wifi_saved_delete_index(uint16_t idx)
  * with m1_secure_zero() on every return path once sealing is attempted,
  * so the plaintext never outlives the call. Returns 0 ok, 1 no such
  * saved network, 2 save failed (in-memory state rolled back to match
- * the card), 3 crypto refused (RNG/KDF; nothing changed). */
+ * the card), 3 seal refused (PSK length outside 1..64, RNG, or KDF;
+ * nothing changed). */
 uint8_t wifi_cred_set_psk(const char *bssid_upper, char *psk)
 {
     char field[WIFI_CRED_FIELD_MAX];
