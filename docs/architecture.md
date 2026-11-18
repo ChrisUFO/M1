@@ -108,8 +108,10 @@ Canonical firmware-owned folders (`m1_sdcard_provision.h` is the single source
 of truth for their paths) are provisioned at mount time: `0:/nfc`,
 `0:/nfc/system`, `0:/nfc/recover`, `0:/rfid`, `0:/subghz`, `0:/wifi`,
 `0:/ble`, `0:/infrared`, `0:/infrared/db`. `0:/System` is also canonical but
-created lazily by its first user (the settings store creates it on first save)
-so a fresh card without user changes does not grow an empty folder.
+created lazily by its first user (the settings store creates it on first
+save; the IR browser's favorites/recent stores below do the same on their
+first write) so a fresh card without user changes does not grow an empty
+folder.
 
 User-side content lives outside those folders and is never provisioned; the
 IR database browser reads the Flipper IRDB layout under `0:/IR`
@@ -235,6 +237,25 @@ Bluetooth) copy this pattern.
 filename limits, concurrent USB/device access policy, and recovery behavior
 after removal or I/O failure.
 
+### IR favorites and recent (`0:/System/ir_favorites.txt`, `ir_recent.txt`)
+
+The IR file browser keeps two plain-text device lists (issue #43,
+`Infrared/m1_ir_browser.c`; format and user behavior in
+[IR provisioning](ir-provisioning.md)):
+
+- one full device path per line, newest first (the legacy fork format);
+- LRU caps enforced by rewriting the whole file on every change:
+  20 favorites, 10 recent;
+- loads are tolerant (missing/unreadable file, blank, corrupt and
+  over-long lines are skipped; an unreadable store renders an empty
+  list), and the rewrite is bounded to the cap — no unbounded memory or
+  file growth;
+- integrity mechanism: none beyond tolerance (plain user data, no CRC);
+  deleting the files is the supported reset;
+- writer ownership: the browser UI task only, between transmits inside
+  its IR-session (the transmit path itself performs no store writes);
+  no other module reads or writes these files.
+
 ## Real-time clock
 
 The RTC calendar is a shared peripheral with one mediated access path:
@@ -279,15 +300,16 @@ includes so the host suite compiles the real sources.
 The IR subsystem is deliberately single-owner (issue #43):
 
 - *Ownership*: every IRMP/IRSND access — remote learning, saved-remote
-  replay, the upstream curated universal remotes (`0:/infrared/db`), the
-  `0:/IR` file browser, and the CLI transmit test — runs while holding the
-  module-level busy guard `m1_ir_subsys_acquire()`/`m1_ir_subsys_release()`
-  (`m1_csrc/m1_infrared.c/.h`). The four UI paths execute in
+  replay, the upstream curated universal remotes (`0:/infrared/db`),
+  the `0:/IR` file browser, the cycle-all actions and the CLI transmit
+  test — runs while holding the module-level busy guard
+  `m1_ir_subsys_acquire()`/`m1_ir_subsys_release()`
+  (`m1_csrc/m1_infrared.c/.h`). The UI paths execute in
   `subfunc_handler_task` and are serialized by the menu dispatcher; the guard
   extends that serialization to the CLI task, which reaches the transmit path
   through `m1_mtest`. A failed acquire means another IR function is active:
-  callers show a busy notice and back out. Learn, playback and (future)
-  cycle-all can therefore never overlap.
+  callers show a busy notice and back out. Learn, playback and cycle-all can
+  therefore never overlap.
 - *Protocol map*: `ir_protocols_mapping_table` in
   `Infrared/m1_ir_remotes.c` is the one protocol map; `.ir` protocol names
   resolve through `ir_protocol_map_lookup()`. Unknown names follow the
@@ -299,9 +321,22 @@ The IR subsystem is deliberately single-owner (issue #43):
   with a stale-index name check. The browser (`Infrared/m1_ir_browser.c/.h`)
   is the UI-task consumer: bounded recursive `0:/IR` scan (convention and
   bounds in [IR provisioning](ir-provisioning.md)), 6-row paginated
-  category/device/button lists, search, and transmit through the same
+  category/device/button lists, search, favorites/recent stores under
+  `0:/System` (see the storage model above), and transmit through the same
   payload/encoder path as the universal remotes. It uses static workspaces
   only — no dynamic allocation in screen loops.
+- *Cycle-all vs the default press* (issue #43): the universal-remote
+  session `infrared_universal_all_remotes(remote_type, cycle_all)` is
+  exposed for the explicit Infrared → Universal Remotes → Cycle all …
+  submenu actions (one per category). Those run it with
+  `cycle_all = 1`: the upstream behavior — after the first OK the session
+  transmits through every device of the category database with its
+  pause/resume (OK) and stop (BACK) UI and the device-count progress bar,
+  re-acquiring the guard itself. The four remote entries run it with
+  `cycle_all = 0`: every OK press transmits exactly one frame (the next
+  device's code each press; END_OF_FILE wraps to the first device) — the
+  default per-press behavior everywhere in this firmware, matching the
+  browser's one-frame-per-button.
 
 ## Firmware update
 
@@ -339,6 +374,8 @@ Update this page when a change adds a task, queue, shared peripheral, subsystem,
 startup dependency, persistent format, or inter-processor interface.
 
 Persistent formats documented here: `0:/System/settings.cfg` (user settings,
-see "Storage model"); Wi-Fi saved networks (`m1_csrc/m1_wifi.c`, versioned CSV).
-New persistent formats must document their file layout, integrity mechanism,
-failure/recovery behavior, and writer ownership.
+see "Storage model"); IR favorites/recent (`0:/System/ir_favorites.txt` /
+`ir_recent.txt`, see "Storage model"); Wi-Fi saved networks
+(`m1_csrc/m1_wifi.c`, versioned CSV). New persistent formats must document
+their file layout, integrity mechanism, failure/recovery behavior, and
+writer ownership.
