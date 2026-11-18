@@ -11,6 +11,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: IR file browser on the SD card (issue #43 part 2) — the Infrared
+  menu gains *IR File Browser* (the four upstream category entries stay):
+  a dashboard over the side-loaded Flipper IRDB tree under `0:/IR`
+  (convention, side-load steps and the bounded-scan table live in
+  `docs/ir-provisioning.md`), category → device → button lists with 6-row
+  pagination (UP/DOWN step, LEFT/RIGHT jump a page, BACK climbs back out)
+  and a virtual-keyboard search across the whole tree. Selecting a device
+  indexes it through the PR-4 streaming loader (names only, no command
+  buffering, no per-file cap) and every OK press re-parses exactly that
+  button and transmits one frame through the upstream play path — including
+  correct NEC/NECext/RC5X/SIRC15/SIRC20/RCA encodings and raw timing
+  playback — never a category-wide cycle. Empty states are actionable: a
+  missing or empty `0:/IR` shows a hint telling the user what to copy
+  where, unreadable files and unsupported signals map to plain notices
+  (every notice title is capped at 12 characters so line 1 fits beside the
+  icon on the 128-px display), scan limits surface as a `+` truncation
+  marker in the list title, and unknown-protocol blocks strict-skip into
+  one aggregated notice per file
+  (via the PR-4 hook), never a garbage transmit; when a file's every block
+  is skipped the aggregate replaces the bare no-usable-buttons notice and
+  explains it. Category folder names too long for the bounded category
+  list are skipped during the scan (like over-long paths), so the list can
+  never offer a directory it cannot re-open. Raw playback is gated on
+  the loaded tick count: an empty or zero-sample `data:` line, a
+  bare-leading-pause count or any even count (the loader edge cases
+  tracked in issue #74), and a parsed block claiming `protocol: raw` are
+  all refused with an error notice before the payload is published — a
+  bare pause or polarity-flipped frame can never be transmitted. The IR
+  subsystem is now
+  formally single-owner: a module-level busy guard
+  (`m1_ir_subsys_acquire/release`) is held by learn, saved-remote replay,
+  the universal remotes, the browser session and the CLI transmit test, so
+  no two IR functions can overlap (the guard is what extends the UI-task
+  serialization to the CLI task). Static workspaces only — no dynamic
+  allocation in screen loops. Host suite
+  `m1_csrc/test/m1_ir_browser_test.py` (81 checks): compiled pure-core
+  pagination/search/classification/label/notice math, a second harness
+  compiling the REAL PR-4 loader + protocol map to prove the empty-data-line
+  raw blocks land on the non-transmittable side of the TX gate, plus static
+  seams for the menu wiring, the guard on every entry point, the
+  empty-library hint, the loader hookup, the 12-char notice-title cap
+  (beside-icon literals and the 9999 skip-count clamp), the over-long
+  category-name skip and the zero-usable-file aggregated skip notice
+  (plus the durable parsed-protocol publish: the TX payload never points
+  into the browser's transmit frame). Favorites/recent and the
+  explicit "cycle all in category" submenu action are deliberately left
+  for the next unit.
 - Fork: IR data layer — streaming `.ir` loader, strict-skip policy and an
   IRMP golden-decode regression suite (issue #43 part 1; no user-visible UX
   yet, the browser lands in the next units). The protocol table in

@@ -113,6 +113,22 @@ void infrared_encode_sys_init(void);
 void infrared_encode_sys_deinit(void);
 S_M1_IR_Tx_States infrared_transmit(uint8_t init, uint8_t tx_protocol);
 
+/* ---------------------------------------------------------------------------
+ * IR subsystem ownership (single-owner IRMP rule, issue #43)
+ * ---------------------------------------------------------------------------
+ * Every IRMP/IRSND access (learn, saved-remote replay, the upstream
+ * universal remotes, the 0:/IR file browser and the CLI transmit test)
+ * must hold the subsystem for its whole session: call
+ * m1_ir_subsys_acquire() before touching IRMP/timers and
+ * m1_ir_subsys_release() on every exit path. The UI paths run in the
+ * subfunc_handler_task and are serialized by the menu dispatcher anyway;
+ * the guard is what makes the rule hold for the CLI task and any future
+ * second entry point. Acquire failure means another IR function is
+ * active: show a busy notice and back out -- never proceed.
+ * ------------------------------------------------------------------------- */
+uint8_t m1_ir_subsys_acquire(void); /* 1 = acquired, 0 = busy */
+void m1_ir_subsys_release(void);
+
 extern uint32_t TIM_GetCounterCLKValue(uint16_t prescaler);
 extern void HAL_TIM_PeriodElapsedCallback_IR(TIM_HandleTypeDef *htim);
 

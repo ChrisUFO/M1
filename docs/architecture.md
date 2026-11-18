@@ -111,6 +111,11 @@ of truth for their paths) are provisioned at mount time: `0:/nfc`,
 created lazily by its first user (the settings store creates it on first save)
 so a fresh card without user changes does not grow an empty folder.
 
+User-side content lives outside those folders and is never provisioned; the
+IR database browser reads the Flipper IRDB layout under `0:/IR`
+(see [IR database provisioning](ir-provisioning.md) and the Infrared
+subsystem section below).
+
 ### User settings (`0:/System/settings.cfg`)
 
 Durable user settings live in `0:/System/settings.cfg`
@@ -268,6 +273,35 @@ includes so the host suite compiles the real sources.
   HAL_RTC_SetTime/SetDate own calendar init-mode entry/exit; seconds
   restart at 00 (minute granularity) and the true weekday is computed
   and stored.
+
+## Infrared subsystem
+
+The IR subsystem is deliberately single-owner (issue #43):
+
+- *Ownership*: every IRMP/IRSND access — remote learning, saved-remote
+  replay, the upstream curated universal remotes (`0:/infrared/db`), the
+  `0:/IR` file browser, and the CLI transmit test — runs while holding the
+  module-level busy guard `m1_ir_subsys_acquire()`/`m1_ir_subsys_release()`
+  (`m1_csrc/m1_infrared.c/.h`). The four UI paths execute in
+  `subfunc_handler_task` and are serialized by the menu dispatcher; the guard
+  extends that serialization to the CLI task, which reaches the transmit path
+  through `m1_mtest`. A failed acquire means another IR function is active:
+  callers show a busy notice and back out. Learn, playback and (future)
+  cycle-all can therefore never overlap.
+- *Protocol map*: `ir_protocols_mapping_table` in
+  `Infrared/m1_ir_remotes.c` is the one protocol map; `.ir` protocol names
+  resolve through `ir_protocol_map_lookup()`. Unknown names follow the
+  strict-skip policy — the block is skipped and counted, never transmitted
+  as garbage. No fork aliasing map exists.
+- *Data layer*: `Infrared/m1_ir_file.c/.h` is the streaming Flipper-`.ir`
+  loader — an index pass per device (names/types/offsets, no command
+  buffering, no per-file cap) and on-demand single-block parse for transmit
+  with a stale-index name check. The browser (`Infrared/m1_ir_browser.c/.h`)
+  is the UI-task consumer: bounded recursive `0:/IR` scan (convention and
+  bounds in [IR provisioning](ir-provisioning.md)), 6-row paginated
+  category/device/button lists, search, and transmit through the same
+  payload/encoder path as the universal remotes. It uses static workspaces
+  only — no dynamic allocation in screen loops.
 
 ## Firmware update
 
