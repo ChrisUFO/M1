@@ -24,7 +24,8 @@ Layers:
      trailing text after the fourth field tolerated, and the
      negatives (missing field, non-numeric field, 256, 1000, 3-digit
      cap, lowercase marker, no marker at all, NULL);
-   - minimum table: both features {1,0,0,0}, unknown feature refused;
+   - minimum table: join {1,1,0,0} (PR-11 pairing), advertise
+     {1,0,0,0}, unknown feature refused;
    - THE query matrix (live console simulated, cache controlled):
        console dead            -> ABSENT / NO_CONSOLE / refused
        version round trip fail -> ABSENT / TRANSPORT / refused
@@ -264,8 +265,8 @@ static void test_minimums(void)
     uint8_t m[4];
 
     CHECKN(esp_feature_minimum(ESP_FEATURE_WIFI_JOIN, m) &&
-           m[0] == 1 && m[1] == 0 && m[2] == 0 && m[3] == 0,
-           "wifi join minimum {1,0,0,0}");
+           m[0] == 1 && m[1] == 1 && m[2] == 0 && m[3] == 0,
+           "wifi join minimum {1,1,0,0} (PR-11 pairing)");
     CHECKN(esp_feature_minimum(ESP_FEATURE_BLE_ADVERTISE, m) &&
            m[0] == 1 && m[1] == 0 && m[2] == 0 && m[3] == 0,
            "ble advertise minimum {1,0,0,0}");
@@ -278,7 +279,7 @@ static void test_minimums(void)
 
 static void test_query_matrix(void)
 {
-    const uint8_t min_v[] = {1, 0, 0, 0};
+    const uint8_t min_v[] = {1, 1, 0, 0};
     const uint8_t older_v[] = {0, 9, 9, 9};
     const uint8_t newer_v[] = {1, 0, 1, 0};
     const uint8_t cache_new_v[] = {9, 9, 9, 9};
@@ -305,9 +306,18 @@ static void test_query_matrix(void)
                  ESP_GATE_REASON_NO_VERSION, false, NL, false, false,
                  "ESP fw unknown");
 
+    /* 3b. live firmware BELOW the join minimum (e.g. a 1.0.0.0 image,
+     * which the pre-PR-11 placeholder accepted): OLDER, refused (the
+     * case-1 cache of {9,9,9,9} is still loaded -- disagreeing, never
+     * gating). */
+    sim_reset(true, true, "ESPFW 1.0.0.0\r\n>> ");
+    expect_state("join minimum gates 1.0.0.0", ESP_FEATURE_WIFI_JOIN,
+                 ESP_FW_OLDER, RS, true, (const uint8_t[]){1, 0, 0, 0},
+                 true, false, "ESP update required");
+
     /* 4. live == minimum. */
     m1cp_esp_version_set(min_v);
-    sim_reset(true, true, "ESPFW 1.0.0.0\r\n>> ");
+    sim_reset(true, true, "ESPFW 1.1.0.0\r\n>> ");
     expect_state("equivalent", ESP_FEATURE_WIFI_JOIN, ESP_FW_EQUIVALENT,
                  RS, true, min_v, false, true, "ESP fw supported");
 
@@ -352,7 +362,7 @@ static void test_query_matrix(void)
     }
 
     /* 9. bad feature guard + NULL detail path. */
-    sim_reset(true, true, "ESPFW 1.0.0.0\r\n>> ");
+    sim_reset(true, true, "ESPFW 1.1.0.0\r\n>> ");
     expect_state("bad feature", (esp_feature_t)99, ESP_FW_ABSENT,
                  ESP_GATE_REASON_BAD_FEATURE, false, NL, false, false,
                  "ESP gate misuse");
