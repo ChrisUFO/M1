@@ -1383,8 +1383,9 @@ uint8_t SI446x_Set_Properties(uint8_t group, uint8_t start_prop, uint8_t num_pro
  * preset (decimation trio, AFC limiter, spike/DSA thresholds, 36 CHFLT
  * coefficients in three 12-property writes exactly like WDS). Power is
  * NOT written here: the mapped PA_PWR_LVL byte is returned through
- * *tx_power_out and the TX path writes it right before Radio_Start_Tx,
- * which also keeps CW/direct-mode callers on their own sequencing.
+ * *tx_power_out and the TX path writes it right after Radio_Start_Tx
+ * (stock ordering; the PA property stays writable in TX state), which
+ * also keeps CW/direct-mode callers on their own sequencing.
  * Returns the number of refused property writes (0 = fully applied).
  *
  */

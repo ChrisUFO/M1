@@ -954,7 +954,8 @@ static uint8_t sub_ghz_freq_override_hz(uint32_t *out_hz)
   *         MODEM_MOD_TYPE code when the user overrode the modulation (so a
   *         TX caller re-encodes its direct-mode 0xC8|mod_type with the
   *         user's modulation) and *tx_power holds the nominal PA_PWR_LVL
-  *         byte (written by the TX path right before Radio_Start_Tx).
+  *         byte (written by the TX path right after Radio_Start_Tx -
+  *         stock ordering; the PA property stays writable in TX state).
   *         Either pointer may be NULL.
   */
 /*============================================================================*/
