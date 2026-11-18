@@ -460,14 +460,11 @@ static uint8_t *spi_AT_app_get_response(int *read_len, uint32_t *uid, int timeou
  * zeroes in chunks, drain each chunk straight back out); it never
  * calls notify_slave_to_recv(), so nothing is ever transmitted, and a
  * completed scrub leaves the ring empty exactly as it found it.
- * Coverage precision: with xLength = usable+1, the fill overwrites
- * every storage slot EXCEPT the one immediately behind the write head
- * -- which can only hold the previously drained command's final line
- * terminator ('\n'; every CONCAT_CMD_PARAM command ends CRLF) or a
- * zero from an earlier scrub, never credential material. The drain
+ * Coverage: an uninterrupted fill overwrites every storage slot; a
+ * short-send or short-receive break aborts the scrub and leaves the
+ * remainder unwritten (the defensive second gates above). The drain
  * target is zeroized before return so it can never become a retention
- * site, and the short-send/short-receive breaks remain as defensive
- * second gates. */
+ * site. */
 static void esp_scrub_spi_tx_ring_buf(void)
 {
 	uint8_t zeros[128] = {0};
@@ -766,10 +763,17 @@ uint8_t wifi_ap_scan_list(ctrl_cmd_t *app_req)
  *   CTRL_ERR_NO_AP_FOUND         AT +CWJAP:<3> (AP not found)
  *   CTRL_ERR_NOT_CONNECTED       +CWJAP:<1|4|other> or FAIL
  *   CTRL_ERR_REQUEST_TIMEOUT     no marker before the timeout
- * The plaintext PSK rides the join command into three transient copies.
- * Per exit path of this handler (re-verified with the conditional TX
- * scrub): the join_cmd buffer is wiped (volatile stores) on EVERY path
- * that built it -- send refusal, AT failure, success, and timeout
+ * The plaintext PSK exists in FOUR holders: the caller's request
+ * struct (u.wifi_ap_config.ssid/.pwd -- the source this handler
+ * reads), the join_cmd buffer, the SPI TX stream-buffer storage, and
+ * the DMA staging region in the control task. Per exit path of this
+ * handler (re-verified with the conditional TX scrub): the
+ * request-struct fields are wiped (esp_wipe_ap_config_credentials())
+ * on EVERY path that received them -- the three grammar-refusal early
+ * returns, the malloc-failure return, and the common cleanup tail
+ * (covering mode-set failure, send refusal, and all post-send exits);
+ * the join_cmd buffer is wiped (volatile stores) on EVERY path that
+ * built it -- send refusal, AT failure, success, and timeout
  * alike; the DMA staging region in the control task is wiped right
  * after EVERY actual transmit (the slave answering proves the transmit
  * happened); the SPI TX stream-buffer storage is scrubbed
@@ -781,8 +785,27 @@ uint8_t wifi_ap_scan_list(ctrl_cmd_t *app_req)
  * pulled the write -- or when another request holds the semaphore --
  * the scrub is skipped and the plaintext can remain in the ring
  * storage until later traffic overwrites it. Grammar-refusal,
- * mode-set-failure, and malloc-failure exits build no command at all,
- * so no copy ever exists on them. */
+ * mode-set-failure, and malloc-failure exits build no join command
+ * at all, so only the request-struct copy ever exists on them (and
+ * it is wiped). */
+
+/* Wipe the caller's request-struct copy of the credentials -- the
+ * fourth plaintext holder above. Volatile stores over the full field
+ * width, so the plaintext cannot survive the handler on any exit path
+ * that received it. */
+static void esp_wipe_ap_config_credentials(ctrl_cmd_t *app_req)
+{
+	volatile uint8_t *wipe;
+	size_t wi;
+
+	wipe = app_req->u.wifi_ap_config.pwd;
+	for ( wi=0; wi<sizeof(app_req->u.wifi_ap_config.pwd); wi++ )
+		wipe[wi] = 0;
+	wipe = app_req->u.wifi_ap_config.ssid;
+	for ( wi=0; wi<sizeof(app_req->u.wifi_ap_config.ssid); wi++ )
+		wipe[wi] = 0;
+} // static void esp_wipe_ap_config_credentials(ctrl_cmd_t *app_req)
+
 uint8_t wifi_connect_ap(ctrl_cmd_t *app_req)
 {
 	char *rx_buf = NULL;
@@ -810,18 +833,21 @@ uint8_t wifi_connect_ap(ctrl_cmd_t *app_req)
 
 		if ( (ssid_len == SSID_LENGTH) || (pwd_len == PASSWORD_LENGTH) )
 		{
+			esp_wipe_ap_config_credentials(app_req); /* the plaintext stays only in the struct */
 			app_req->resp_event_status = CTRL_ERR_INVALID_ARGUMENT;
 			return CTRL_ERR_INCORRECT_ARG;
 		}
 		for ( i=0; i<ssid_len; i++ )
 			if ( (ssid[i]=='"') || (ssid[i]=='\r') || (ssid[i]=='\n') )
 			{
+				esp_wipe_ap_config_credentials(app_req);
 				app_req->resp_event_status = CTRL_ERR_INVALID_ARGUMENT;
 				return CTRL_ERR_INCORRECT_ARG;
 			}
 		for ( i=0; i<pwd_len; i++ )
 			if ( (pwd[i]=='"') || (pwd[i]=='\r') || (pwd[i]=='\n') )
 			{
+				esp_wipe_ap_config_credentials(app_req);
 				app_req->resp_event_status = CTRL_ERR_INVALID_ARGUMENT;
 				return CTRL_ERR_INCORRECT_ARG;
 			}
@@ -870,6 +896,7 @@ uint8_t wifi_connect_ap(ctrl_cmd_t *app_req)
 			if ( !join_cmd )
 			{
 				esp_free_mem(&resp_buf);
+				esp_wipe_ap_config_credentials(app_req);
 				app_req->resp_event_status = CTRL_ERR_MEMORY_FAILURE;
 				return ERROR;
 			}
@@ -938,6 +965,11 @@ uint8_t wifi_connect_ap(ctrl_cmd_t *app_req)
 			app_req->at_cmd = NULL; /* join_cmd freed below with the others */
 		} // if ( ret==SUCCESS )
 	} // if ( ret==SUCCESS )
+	/* Common cleanup tail -- every non-early-return exit passes here
+	 * (mode-set failure, join send refusal, and all post-send exits):
+	 * wipe the caller's request-struct copy of the credentials (the
+	 * join_cmd buffer and the TX ring were already handled above). */
+	esp_wipe_ap_config_credentials(app_req);
 	esp_free_mem(&resp_buf);
 	if ( join_cmd )
 		free(join_cmd);

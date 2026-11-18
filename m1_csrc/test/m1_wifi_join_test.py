@@ -874,6 +874,26 @@ def static_checks():
         "wipe[wi] = 0;" in after_send,
         "DMA staging region not scrubbed after the transmit",
     )
+    # 8d. The caller's request struct (u.wifi_ap_config.ssid/.pwd) is the
+    #     FOURTH plaintext holder: a wipe helper must cover both fields
+    #     with volatile stores, and the handler must call it on every
+    #     exit site that received them -- the three grammar-refusal
+    #     returns, the malloc-failure return, and the common tail.
+    cred_wipe = function(esp_app, "esp_wipe_ap_config_credentials")
+    CHECK(
+        "u.wifi_ap_config.pwd" in cred_wipe and "u.wifi_ap_config.ssid" in cred_wipe,
+        "request-struct wipe must cover both credential fields",
+    )
+    CHECK(
+        "volatile" in cred_wipe,
+        "request-struct wipe must use volatile stores",
+    )
+    n_wipe_sites = handler.count("esp_wipe_ap_config_credentials(app_req);")
+    CHECK(
+        n_wipe_sites == 5,
+        f"handler wipes the request struct at {n_wipe_sites} sites (need 5: "
+        "3 grammar refusals + malloc failure + common tail)",
+    )
     CHECK(
         "ESP32C6_AT_REQ_CONNECT_AP" in esp_list,
         "AT+CWJAP define missing from esp_at_list.h",

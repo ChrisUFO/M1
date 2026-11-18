@@ -69,16 +69,18 @@ verification.
   command `join "<ssid>" "<psk>"` then crosses the UART link in the
   clear and the ESP-side handler re-emits it as
   `AT+CWJAP="<ssid>","<pwd>"` to the radio — where it lives in ESP32
-  RAM, best-effort scrubbed (the command buffer is wiped before free
-  on every path that built it; the DMA staging region is wiped after
-  every actual transmit; the SPI TX stream-buffer storage is scrubbed
-  only when the driver's single-flight semaphore is free AND the ring
-  is empty — on a response timeout against a wedged slave that never
-  pulled the write, or while another request holds the semaphore, the
-  scrub is skipped and the plaintext can remain in the ring storage
-  until later traffic overwrites it) — and this is hygiene, not
-  protection against an ESP32-side attacker — and on the wire to the
-  AP, which is exactly what any Wi-Fi station does. A passive observer of the STM32↔ESP32 link,
+  RAM, best-effort scrubbed (the caller's request-struct fields are
+  wiped on every handler path that received them; the command buffer
+  is wiped before free on every path that built it; the DMA staging
+  region is wiped after every actual transmit; the SPI TX
+  stream-buffer storage is scrubbed only when the driver's
+  single-flight semaphore is free AND the ring is empty — on a
+  response timeout against a wedged slave that never pulled the
+  write, or while another request holds the semaphore, the scrub is
+  skipped and the plaintext can remain in the ring storage until
+  later traffic overwrites it) — and this is hygiene, not protection
+  against an ESP32-side attacker — and on the wire to the AP, which
+  is exactly what any Wi-Fi station does. A passive observer of the STM32↔ESP32 link,
   or code execution on either processor, recovers the PSK at join time.
   SPI/UART-link encryption is out of scope; the on-device plaintext
   window and the link are accepted exposures. The join verb never logs

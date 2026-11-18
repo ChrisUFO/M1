@@ -65,7 +65,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and — transiently, when the console echoes the typed command — the
     reply buffer; each is zeroized with `m1_secure_zero()` on every
     exit path (the ESP-side handler wipes its `AT+CWJAP` command
-    before free on every path that built it; the DMA staging region is
+    before free on every path that built it, and wipes the caller's
+    request-struct ssid/pwd fields on every path that received them;
+    the DMA staging region is
     wiped after every actual transmit; the SPI TX stream-buffer
     storage — where the command's `xStreamBufferSend` copy landed — is
     scrubbed best-effort after the exchange, only when the driver's
