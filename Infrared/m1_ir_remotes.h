@@ -17,5 +17,6 @@ void infrared_universal_tv_remotes(void);
 void infrared_universal_audio_remotes(void);
 void infrared_universal_projector_remotes(void);
 void infrared_universal_ac_remotes(void);
+uint8_t ir_protocol_map_lookup(const char *protocol_name, uint8_t *pprotocol_number);
 
 #endif /* M1_IR_REMOTES_H_ */
