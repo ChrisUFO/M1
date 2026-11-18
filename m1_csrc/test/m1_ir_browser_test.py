@@ -23,7 +23,9 @@ mocks of the code under test):
    test-and-set, acquired/released on every IR entry point: learn,
    saved-remote replay, universal remotes, the browser session, and the
    CLI mtest transmit), the empty-library hint screen, the aggregated
-   strict-skip hook passed to the PR-4 loader, and the raw playback gate
+   strict-skip hook passed to the PR-4 loader, the 12-char notice-title
+    cap for the beside-icon slot (with the skip-count clamp), the
+    over-long category-name skip in the category scan, and the raw playback gate
    (odd/non-empty tick count checked before the payload is published;
    "protocol: raw" on a parsed block refused).
 
@@ -159,6 +161,7 @@ def pure_core_tests():
         "/* ====================== M1_IR_BROWSER_PURE_CORE_END ====================== */",
     )
     rows = define_of(browser_h, "M1_IR_BROWSER_ROWS")
+    name_len = define_of(browser_h, "M1_IR_BROWSER_NAME_LEN_MAX")
     proto_len = define_of(ir_file_h, "M1_IR_FILE_PROTO_LEN_MAX")
 
     harness = (
@@ -168,6 +171,7 @@ def pure_core_tests():
         "#include <string.h>\n"
         "#include <assert.h>\n"
         f"#define M1_IR_BROWSER_ROWS {rows}\n"
+        f"#define M1_IR_BROWSER_NAME_LEN_MAX {name_len}\n"
         f"#define M1_IR_FILE_PROTO_LEN_MAX {proto_len}\n"
         "\n"
         + core
@@ -285,6 +289,42 @@ def pure_core_tests():
             assert(strcmp(l1, "3 skipped") == 0);
             assert(strcmp(l2, "RCA") == 0);            /* first name kept */
             m1_irb_skip_add(NULL, "x");               /* no crash */
+
+            /* skip-count clamp: line 1 renders beside the notice icon, so
+             * "9999 skipped" (12 chars) is the cap -- bigger aggregates
+             * clamp the displayed count, never the line width */
+            memset(&acc, 0, sizeof(acc));
+            strcpy(acc.first_name, "RC5X");
+            acc.skipped = 9999u;
+            assert(m1_irb_skip_lines(&acc, l1, sizeof(l1), l2, sizeof(l2)) == 1);
+            assert(strcmp(l1, "9999 skipped") == 0);
+            assert(strlen(l1) == 12);
+            acc.skipped = 10000u;
+            assert(m1_irb_skip_lines(&acc, l1, sizeof(l1), l2, sizeof(l2)) == 1);
+            assert(strcmp(l1, "9999 skipped") == 0);   /* clamped */
+            acc.skipped = 65535u;
+            assert(m1_irb_skip_lines(&acc, l1, sizeof(l1), l2, sizeof(l2)) == 1);
+            assert(strcmp(l1, "9999 skipped") == 0);   /* clamped */
+        }
+
+        /* ---- category-name fit: over-long names are skipped, never
+         * listed truncated (they could not be re-opened from the list) */
+        {
+            char name[M1_IR_BROWSER_NAME_LEN_MAX + 1];
+            uint8_t i;
+            assert(m1_irb_cat_name_ok("TVs") == 1);
+            assert(m1_irb_cat_name_ok("Audio") == 1);
+            for ( i = 0; i < (uint8_t)(M1_IR_BROWSER_NAME_LEN_MAX - 1u); i++ )
+                name[i] = 'A';
+            name[i] = '\\0';               /* NAME_LEN_MAX-1 chars: fits whole */
+            assert(strlen(name) == M1_IR_BROWSER_NAME_LEN_MAX - 1u);
+            assert(m1_irb_cat_name_ok(name) == 1);
+            name[M1_IR_BROWSER_NAME_LEN_MAX - 1u] = 'A';
+            name[M1_IR_BROWSER_NAME_LEN_MAX] = '\\0'; /* full length: skipped */
+            assert(strlen(name) == M1_IR_BROWSER_NAME_LEN_MAX);
+            assert(m1_irb_cat_name_ok(name) == 0);
+            assert(m1_irb_cat_name_ok("") == 0);
+            assert(m1_irb_cat_name_ok(NULL) == 0);
         }
 
         /* ---- raw transmittability gate (issue #74 consumer side) ---- */
@@ -654,8 +694,41 @@ def static_seam_tests():
         '"protocol: raw" on a parsed block is refused (no timings to play)',
     )
     CHECK(
-        'irb_notice("Empty raw signal", "Nothing to send"' in browser,
+        'irb_notice("Empty raw", "Nothing to send"' in browser,
         "empty raw signal maps to a plain error notice",
+    )
+
+    # --- notice line 1 fits beside the 48-px icon (title-cap regression guard)
+    # irb_notice draws line 1 at x=54 with the 5x8 font: at most 12 chars fit
+    # the 128-px display. Every literal notice title -- and every literal
+    # drawn at x=54 by the other icon screens -- must respect the cap; the
+    # dynamic skip title is clamped to 12 chars by m1_irb_skip_lines.
+    titles = re.findall(r'irb_notice\(\s*"([^"]*)"', browser)
+    CHECK(
+        len(titles) >= 12,
+        f"all irb_notice call sites found by the title scan ({len(titles)} titles)",
+    )
+    for t in titles:
+        CHECK(
+            len(t) <= 12,
+            f'notice title "{t}" is <=12 chars (fits beside the icon at x=54)',
+        )
+    for t in re.findall(r'u8g2_DrawStr\(&m1_u8g2, 54, \d+, "([^"]*)"\)', browser):
+        CHECK(len(t) <= 12, f'beside-icon text "{t}" is <=12 chars')
+
+    # --- over-long category names are skipped during the category scan
+    # (never listed truncated: a truncated label would build an unopenable
+    # scan root and surface a misleading "Check SD card" notice)
+    scan_cats = fn_body(
+        browser,
+        "static S_M1_IRB_Scan_Status_t irb_scan_categories(uint8_t *truncated)\n{",
+        "} // static S_M1_IRB_Scan_Status_t irb_scan_categories(",
+    )
+    CHECK(
+        "if ( !m1_irb_cat_name_ok(fi->fname) )" in scan_cats
+        and scan_cats.index("m1_irb_cat_name_ok(fi->fname)")
+        < scan_cats.index("m1_irb_row_label(irb_cat_names[irb_cat_count]"),
+        "category scan skips over-long names before storing them for the list",
     )
 
 

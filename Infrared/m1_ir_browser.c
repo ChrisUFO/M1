@@ -75,8 +75,8 @@
 * Pure view/model core: no FatFs, no HAL, no FreeRTOS, no allocation. The
 * host test m1_csrc/test/m1_ir_browser_test.py extracts this region
 * verbatim and exercises pagination, search matching, entry classification
-* (category dir vs .ir device), display-name derivation and the
-* strict-skip notice aggregation.
+* (category dir vs .ir device, category-name fit for the bounded rows),
+* display-name derivation and the strict-skip notice aggregation.
 */
 
 /* List window: selection + first visible row (6-row pagination). */
@@ -166,6 +166,28 @@ static uint8_t m1_irb_is_ir_file(const char *fname)
 		return 0;
 	return 1;
 } // static uint8_t m1_irb_is_ir_file(const char *fname)
+
+/*============================================================================*/
+/**
+  * @brief  Can this directory name be stored whole as a category row (and
+  *         therefore re-opened from the category list)? Names at or above
+  *         M1_IR_BROWSER_NAME_LEN_MAX chars cannot fit the bounded
+  *         irb_cat_names rows; listing them truncated would later build an
+  *         unopenable scan root and a misleading error, so the scan skips
+  *         them instead -- same philosophy as over-long paths
+  *         (docs/ir-provisioning.md).
+  */
+/*============================================================================*/
+static uint8_t m1_irb_cat_name_ok(const char *fname)
+{
+	size_t len = 0;
+
+	if ( (fname == NULL) || (fname[0] == '\0') )
+		return 0;
+	while ( fname[len] != '\0' )
+		len++;
+	return (uint8_t)(len < (size_t)M1_IR_BROWSER_NAME_LEN_MAX);
+} // static uint8_t m1_irb_cat_name_ok(const char *fname)
 
 /*============================================================================*/
 /**
@@ -347,8 +369,9 @@ static void m1_irb_u16_text(char *dst, uint8_t dstsz, uint16_t value)
 /*============================================================================*/
 /**
   * @brief  Aggregated strict-skip notice lines (one notice per file, never
-  *         one per block): l1 = "N skipped", l2 = the first offending
-  *         protocol name ("" when unknown).
+  *         one per block): l1 = "N skipped" (count clamped at 9999 so the
+  *         line fits beside the notice icon, see irb_notice), l2 = the
+  *         first offending protocol name ("" when unknown).
   * @retval 1 when the lines are valid (something was skipped), 0 when the
   *         caller must suppress the notice.
   */
@@ -359,12 +382,17 @@ static uint8_t m1_irb_skip_lines(const S_M1_IRB_SkipAcc_t *acc, char *l1, uint8_
 	static const char suffix[] = " skipped";
 	char num[6];
 	uint8_t n = 0, i = 0;
+	uint16_t shown;
 
 	if ( (acc == NULL) || (acc->skipped == 0u) )
 		return 0;
 	if ( (l1 == NULL) || (l1sz == 0u) )
 		return 0;
-	m1_irb_u16_text(num, (uint8_t)sizeof(num), acc->skipped);
+	/* line 1 renders beside the 48-px notice icon from x=54: "9999
+	 * skipped" (12 chars) is the longest count that fits the 128-px
+	 * display, so bigger aggregates clamp the displayed count. */
+	shown = (acc->skipped > 9999u) ? 9999u : acc->skipped;
+	m1_irb_u16_text(num, (uint8_t)sizeof(num), shown);
 	while ( (n < (uint8_t)(l1sz - 1u)) && (num[n] != '\0') )
 	{
 		l1[n] = num[n];
@@ -652,6 +680,10 @@ static S_M1_IRB_Scan_Status_t irb_scan_categories(uint8_t *truncated)
 			continue;
 		if ( !(fi->fattrib & AM_DIR) )
 			continue; /* category rows are directories only */
+		if ( !m1_irb_cat_name_ok(fi->fname) )
+			continue; /* over-long category name: skipped during the scan
+						* (a truncated label would build an unopenable
+						* scan root), see docs/ir-provisioning.md */
 
 		if ( irb_cat_count >= M1_IR_BROWSER_CATS_MAX )
 		{
@@ -1182,13 +1214,13 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 		switch ( (S_M1_IR_File_Error_t)(-indexed) )
 		{
 			case M1_IR_FILE_ERR_IO:
-				irb_notice("Can't read file", "Check SD card", M1_IRB_NOTICE_MS_DEFAULT);
+				irb_notice("Read failed", "Check SD card", M1_IRB_NOTICE_MS_DEFAULT);
 				break;
 			case M1_IR_FILE_ERR_HEADER:
-				irb_notice("Not an .ir file", path, M1_IRB_NOTICE_MS_DEFAULT);
+				irb_notice("Not .ir file", path, M1_IRB_NOTICE_MS_DEFAULT);
 				break;
 			default:
-				irb_notice("Unreadable file", path, M1_IRB_NOTICE_MS_DEFAULT);
+				irb_notice("File error", path, M1_IRB_NOTICE_MS_DEFAULT);
 				break;
 		}
 		return 1;
@@ -1287,7 +1319,7 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 				switch ( tx_err )
 				{
 					case M1_IR_FILE_ERR_IO:
-						irb_notice("Can't read file", "Check SD card", M1_IRB_NOTICE_MS_DEFAULT);
+						irb_notice("Read failed", "Check SD card", M1_IRB_NOTICE_MS_DEFAULT);
 						break;
 					case M1_IR_FILE_ERR_MALFORMED:
 						irb_notice("File changed", "Reopen device", M1_IRB_NOTICE_MS_DEFAULT);
@@ -1296,7 +1328,7 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 						irb_notice("Raw signal", "too long", M1_IRB_NOTICE_MS_DEFAULT);
 						break;
 					case M1_IRB_TX_ERR_EMPTY_RAW:
-						irb_notice("Empty raw signal", "Nothing to send", M1_IRB_NOTICE_MS_DEFAULT);
+						irb_notice("Empty raw", "Nothing to send", M1_IRB_NOTICE_MS_DEFAULT);
 						break;
 					case M1_IR_FILE_ERR_UNKNOWN_PROTOCOL:
 						irb_notice("Unsupported", "protocol skipped", M1_IRB_NOTICE_MS_DEFAULT);
@@ -1340,7 +1372,7 @@ static void irb_screen_search(void)
 
 	if ( st == M1_IRB_SCAN_IO )
 	{
-		irb_notice("Search failed", "Check SD card", M1_IRB_NOTICE_MS_DEFAULT);
+		irb_notice("Search error", "Check SD card", M1_IRB_NOTICE_MS_DEFAULT);
 		return;
 	}
 	if ( st == M1_IRB_SCAN_EMPTY )
