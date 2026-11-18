@@ -505,6 +505,7 @@ set(M1_APP_SOURCES
     ../../m1_csrc/m1_capture_transport.c
     ../../m1_csrc/m1_cobs.c
     ../../m1_csrc/m1_crc32c.c
+    ../../m1_csrc/m1_crypto.c
     ../../m1_csrc/m1_display.c
     ../../m1_csrc/m1_display_data.c
     ../../m1_csrc/m1_esp32_flash_session.c
