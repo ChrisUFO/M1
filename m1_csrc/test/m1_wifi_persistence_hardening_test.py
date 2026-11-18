@@ -104,6 +104,9 @@ def build_run(tmp, name, text, extra_sources=None, extra_flags=None):
     cmd = [
         host_cc(),
         "-std=c11",
+        # The extracted store code calls strnlen(), which POSIX/glibc exposes
+        # only under a feature macro; -std=c11 alone hides it on Linux CI.
+        "-D_GNU_SOURCE",
         "-Wall",
         "-Wextra",
         "-Wno-unused-function",
