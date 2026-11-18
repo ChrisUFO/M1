@@ -132,7 +132,8 @@ int32_t m1_ir_file_parse_index(S_M1_IR_File_Read_fn read_fn, void *io_ctx,
  * through the single upstream map (ir_protocol_map_lookup); an unknown name
  * returns M1_IR_FILE_ERR_UNKNOWN_PROTOCOL without touching *sig_out.
  * Raw blocks fill sig_out->raw_ticks[0..raw_count-1] (leading pause included,
- * odd count enforced); a raw block larger than the buffer returns
+ * odd count enforced); a raw block that does not fit the buffer once the
+ * leading pause and odd-count pad are accounted for returns
  * M1_IR_FILE_ERR_RAW_OVERFLOW. */
 int32_t m1_ir_file_parse_signal(S_M1_IR_File_Read_fn read_fn, void *io_ctx,
 		S_M1_IR_File_Signal_t *sig_out, uint16_t *raw_ticks, uint16_t raw_ticks_cap);

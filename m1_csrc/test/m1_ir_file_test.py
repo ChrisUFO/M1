@@ -121,6 +121,13 @@ BIG_RAW_FILE = (
     "Filetype: IR signals file\r\nVersion: 1\r\n"
     "name: R\r\ntype: raw\r\ndata: 100 200 300 400 500 600 700 800\r\n"
 )
+# Odd sample count N=3: 1 leading pause + 3 samples = 4 (even) -> pad due at
+# finish time. With raw_ticks_cap == 4 the pad has no room (the cap-exact-even
+# boundary); with cap == 5 it pads to an odd count.
+EXACT_EVEN_RAW_FILE = (
+    "Filetype: IR signals file\r\nVersion: 1\r\n"
+    "name: E\r\ntype: raw\r\ndata: 100 200 300\r\n"
+)
 STRAY_DATA_FILE = (
     "Filetype: IR signals file\r\nVersion: 1\r\n"
     "name: A\r\ntype: parsed\r\nprotocol: SIRC\r\ndata: 1 2 3\r\n"
@@ -172,6 +179,7 @@ static const char *S_BAD_VERSION = "@BAD_VERSION@";
 static const char *S_NO_VERSION = "@NO_VERSION@";
 static const char *S_EXTRA_KEY = "@EXTRA_KEY@";
 static const char *S_BIG_RAW = "@BIG_RAW@";
+static const char *S_EXACT_EVEN_RAW = "@EXACT_EVEN_RAW@";
 static const char *S_STRAY_DATA = "@STRAY_DATA@";
 
 int main(void)
@@ -297,6 +305,27 @@ int main(void)
     CHECK_EQ(small[0], 10000, "bounded buffer holds the leading pause first");
     for (i = 1; i < 4; i++) CHECK(small[i] <= 80, "no out-of-bounds tick value");
 
+    /* cap-exact-even boundary: an odd sample count N that fills the buffer
+     * exactly (1 leading pause + N == cap) leaves no room for the odd-pad.
+     * Returning success there would publish an even raw_count, which every
+     * TX consumer reads as "entry 0 is a mark" and polarity-shifts the whole
+     * frame -- overflow is the only safe answer. */
+    memset(&sig, 0, sizeof sig);
+    str_io_t io10b = { S_EXACT_EVEN_RAW, 0 };
+    r = m1_ir_file_parse_signal(str_read, &io10b, &sig, small, 4); /* cap = 1 + N */
+    CHECK_EQ(r, -(long)M1_IR_FILE_ERR_RAW_OVERFLOW, "cap-exact-even raw overflows (pad has no room)");
+    CHECK_EQ(sig.raw_count, 0, "no even raw_count published");
+    CHECK_EQ(small[3], 30, "all N samples stored before the failed pad");
+
+    str_io_t io10c = { S_EXACT_EVEN_RAW, 0 };
+    memset(&sig, 0, sizeof sig);
+    r = m1_ir_file_parse_signal(str_read, &io10c, &sig, ticks, 5); /* cap = 2 + N */
+    CHECK_EQ(r, 0, "one slot of headroom: padded odd success");
+    CHECK_EQ(sig.raw_count, 5, "pause + 3 samples + pad");
+    CHECK_EQ(sig.raw_count & 1u, 1u, "odd OTA invariant upheld");
+    CHECK_EQ(ticks[0], 10000, "leading 100 ms pause first");
+    CHECK_EQ(ticks[4], 56, "trailing 560 us pad in ticks");
+
     str_io_t io11 = { S_STRAY_DATA, 0 };
     n = m1_ir_file_parse_index(str_read, &io11, entries, 8, &stats, NULL);
     CHECK_EQ(n, 1, "stray data in parsed block tolerated (line ignored)");
@@ -383,6 +412,7 @@ def main() -> int:
         ("@NO_VERSION@", NO_VERSION_FILE),
         ("@EXTRA_KEY@", EXTRA_KEY_FILE),
         ("@BIG_RAW@", BIG_RAW_FILE),
+        ("@EXACT_EVEN_RAW@", EXACT_EVEN_RAW_FILE),
         ("@STRAY_DATA@", STRAY_DATA_FILE),
     ):
         harness = harness.replace(token, c_escape(value))

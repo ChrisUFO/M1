@@ -590,9 +590,15 @@ static int32_t m1_ir_block_finish_load(const S_M1_IR_Block_t *blk, S_M1_IR_File_
 			return -(int32_t)M1_IR_FILE_ERR_MALFORMED;
 		m1_ir_copy_trunc(M1_IR_FILE_VAL_RAW, sig_out->protocol_name, (int32_t)sizeof(sig_out->protocol_name));
 		sig_out->protocol = 0; /* raw: consumers check the RAW flag first */
-		/* odd-length invariant of the raw OTA path (leading pause already in) */
-		if ( sink->ticks && !(sink->count & 0x01u) && (sink->count < sink->cap) )
+		/* odd-length invariant of the raw OTA path (leading pause already
+		 * in): if the pad is due but the buffer is full, the even count
+		 * would polarity-shift every TX consumer — fail instead */
+		if ( sink->ticks && !(sink->count & 0x01u) )
+		{
+			if ( sink->count >= sink->cap )
+				return -(int32_t)M1_IR_FILE_ERR_RAW_OVERFLOW;
 			sink->ticks[sink->count++] = (uint16_t)(M1_IR_FILE_RAW_PAD_USEC / M1_IR_FILE_RAW_TICK_US);
+		} // if ( sink->ticks && !(sink->count & 0x01u) )
 	} // else
 	sig_out->frequency = blk->frequency;
 	sig_out->duty_cycle = blk->duty_cycle;
