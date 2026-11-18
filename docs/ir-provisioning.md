@@ -56,12 +56,15 @@ can never stall the UI (constants live in `Infrared/m1_ir_browser.h`):
 | --- | --- | --- |
 | Scan depth | 4 directory levels below the scan root | Flipper IRDB needs 2 (`Brand/Device.ir`); deeper levels are ignored |
 | Categories | 24 | more categories truncate the list (title shows `+`) |
+| Category name length | 31 characters | longer category names are skipped during the scan (they cannot be re-opened from the bounded list) |
 | Devices per list | 64 | per category list and per search; truncation marked `+` |
 | Buttons per file | 128 indexed blocks | per-device index cap; truncation marked `+` |
 | Path length | 128 bytes | longer paths are skipped during the scan |
 | Raw signal length | 4096 ticks (10 µs each) | longer raw blocks surface a notice instead of transmitting |
 
-Hidden/system attributes and names beginning with `.` are skipped. When a
+Hidden/system attributes and names beginning with `.` are skipped, and so
+are category folder names too long for the bounded category list (a
+truncated name could not be re-opened). When a
 list hits a cap, its title gains a trailing `+` and everything past the cap
 is simply not scanned — nothing past a bound is read.
 
@@ -75,11 +78,12 @@ is simply not scanned — nothing past a bound is read.
 - **Unreadable file:** a notice; the browser stays on the device list.
 - **Empty raw signal:** a `.ir` entry whose raw `data:` line carries no samples
   (or a count the transmitter could not play safely) is refused with an
-  "Empty raw signal" notice — a bare pause is never transmitted.
+  "Empty raw" notice — a bare pause is never transmitted.
 - **Unknown protocol names inside a `.ir` file** (strict-skip): the affected
   buttons are skipped — never transmitted as garbage — and one aggregated
   notice names the count and the first offending protocol after the file is
-  indexed.
+  indexed. This includes a file whose every block is skipped: the aggregate
+  then replaces the plain no-usable-buttons notice and explains it.
 
 ## Transmit behavior
 

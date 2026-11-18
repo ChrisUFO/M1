@@ -24,10 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   correct NEC/NECext/RC5X/SIRC15/SIRC20/RCA encodings and raw timing
   playback — never a category-wide cycle. Empty states are actionable: a
   missing or empty `0:/IR` shows a hint telling the user what to copy
-  where, unreadable files and unsupported signals map to plain notices,
-  scan limits surface as a `+` truncation marker in the list title, and
-  unknown-protocol blocks strict-skip into one aggregated notice per file
-  (via the PR-4 hook), never a garbage transmit. Raw playback is gated on
+  where, unreadable files and unsupported signals map to plain notices
+  (every notice title is capped at 12 characters so line 1 fits beside the
+  icon on the 128-px display), scan limits surface as a `+` truncation
+  marker in the list title, and unknown-protocol blocks strict-skip into
+  one aggregated notice per file
+  (via the PR-4 hook), never a garbage transmit; when a file's every block
+  is skipped the aggregate replaces the bare no-usable-buttons notice and
+  explains it. Category folder names too long for the bounded category
+  list are skipped during the scan (like over-long paths), so the list can
+  never offer a directory it cannot re-open. Raw playback is gated on
   the loaded tick count: an empty or zero-sample `data:` line, a
   bare-leading-pause count or any even count (the loader edge cases
   tracked in issue #74), and a parsed block claiming `protocol: raw` are
@@ -40,12 +46,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no two IR functions can overlap (the guard is what extends the UI-task
   serialization to the CLI task). Static workspaces only — no dynamic
   allocation in screen loops. Host suite
-  `m1_csrc/test/m1_ir_browser_test.py` (56 checks): compiled pure-core
+  `m1_csrc/test/m1_ir_browser_test.py` (78 checks): compiled pure-core
   pagination/search/classification/label/notice math, a second harness
   compiling the REAL PR-4 loader + protocol map to prove the empty-data-line
   raw blocks land on the non-transmittable side of the TX gate, plus static
   seams for the menu wiring, the guard on every entry point, the
-  empty-library hint and the loader hookup. Favorites/recent and the
+  empty-library hint, the loader hookup, the 12-char notice-title cap
+  (beside-icon literals and the 9999 skip-count clamp), the over-long
+  category-name skip and the zero-usable-file aggregated skip notice. Favorites/recent and the
   explicit "cycle all in category" submenu action are deliberately left
   for the next unit.
 - Fork: IR data layer — streaming `.ir` loader, strict-skip policy and an

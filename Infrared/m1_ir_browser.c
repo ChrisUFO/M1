@@ -1228,14 +1228,12 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 	count = (uint16_t)indexed;
 	M1_LOG_I(M1_LOGDB_TAG, "%s: %u buttons, %u skipped\r\n", path,
 			(unsigned int)count, (unsigned int)irb_file_stats.skipped_unknown_protocol);
-	if ( count == 0u )
-	{
-		irb_notice("No usable", "buttons in file", M1_IRB_NOTICE_MS_DEFAULT);
-		return 1;
-	}
-	truncated = (irb_file_stats.index_full > 0u) ? 1u : 0u;
 
-	/* one aggregated strict-skip notice per file, never one per block */
+	/* one aggregated strict-skip notice per file, never one per block.
+	 * When the file indexed zero usable buttons the aggregated lines
+	 * REPLACE the bare "No usable" notice: every block strict-skipped is
+	 * exactly why there is nothing to list, and the count + first
+	 * protocol is the explanation docs/ir-provisioning.md promises. */
 	if ( irb_skip_acc.skipped > 0u )
 	{
 		char skip_l1[M1_IRB_COL_MAX + 1u];
@@ -1244,6 +1242,14 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 				skip_l2, (uint8_t)sizeof(skip_l2)) )
 			irb_notice(skip_l1, skip_l2, M1_IRB_NOTICE_MS_DEFAULT);
 	}
+
+	if ( count == 0u )
+	{
+		if ( irb_skip_acc.skipped == 0u )
+			irb_notice("No usable", "buttons in file", M1_IRB_NOTICE_MS_DEFAULT);
+		return 1;
+	}
+	truncated = (irb_file_stats.index_full > 0u) ? 1u : 0u;
 
 	infrared_encode_sys_init();
 	irb_draw_list(title, count, &w, irb_row_entry, truncated);

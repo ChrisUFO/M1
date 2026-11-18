@@ -650,6 +650,25 @@ def static_seam_tests():
         idx.count("m1_irb_skip_lines") == 0 and "irb_notice(skip_l1" in browser,
         "strict-skip notices render through the aggregated lines (one per file)",
     )
+    # the aggregated notice also fires when the file indexed ZERO usable
+    # buttons (count == 0 && skipped > 0): the skip lines replace the bare
+    # "No usable" notice there -- the count + first protocol is the
+    # explanation docs/ir-provisioning.md promises for that case too
+    btn_scr = fn_body(
+        browser,
+        "static uint8_t irb_screen_buttons(const char *path, const char *title)\n{",
+        "} // static uint8_t irb_screen_buttons(",
+    )
+    i_skip = btn_scr.find("if ( irb_skip_acc.skipped > 0u )")
+    i_zero = btn_scr.find("if ( count == 0u )")
+    i_nous = btn_scr.find('irb_notice("No usable", "buttons in file"')
+    CHECK(
+        -1 not in (i_skip, i_zero, i_nous)
+        and i_skip < i_zero
+        and "if ( irb_skip_acc.skipped == 0u )" in btn_scr,
+        "zero-usable-button files surface the aggregated skip notice "
+        "(gated 'No usable' fallback), not a suppressed explanation",
+    )
 
     # --- documented scan caps (docs/ir-provisioning.md table)
     caps = {
