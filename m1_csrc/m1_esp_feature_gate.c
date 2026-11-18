@@ -222,9 +222,10 @@ bool esp_fw_parse_version_reply(const char *reply, uint8_t out[4])
 
 bool esp_feature_minimum(esp_feature_t feature, uint8_t out[4])
 {
-    /* Casts keep the bounds check warning-clean: an enum with only
-     * non-negative values may have an unsigned underlying type. */
-    if (((int)feature < 0) || ((int)feature >= (int)ESP_FEATURE__COUNT) ||
+    /* Unsigned bounds check: a negative enum value wraps to a huge
+     * unsigned and is still refused, warning-clean on compilers that
+     * give non-negative enums an unsigned underlying type. */
+    if (((unsigned int)feature >= (unsigned int)ESP_FEATURE__COUNT) ||
         (out == NULL))
     {
         return false;
@@ -254,7 +255,7 @@ esp_fw_state_t esp_feature_gate_query(esp_feature_t feature,
      * while never letting it influence the decision. */
     local.cache_valid = m1cp_esp_version_get(local.cache_version);
 
-    if (((int)feature < 0) || ((int)feature >= (int)ESP_FEATURE__COUNT))
+    if ((unsigned int)feature >= (unsigned int)ESP_FEATURE__COUNT)
     {
         local.reason = ESP_GATE_REASON_BAD_FEATURE;
         if (detail_out != NULL) { *detail_out = local; }
