@@ -245,10 +245,13 @@ int main(void)
         CHECK(strcmp(g_m1_settings.device_name, "M1") == 0, "default device name M1");
         CHECK(g_m1_settings.subghz_freq_valid == 0 && g_m1_settings.subghz_freq_hz == 0, "default subghz override inactive");
         CHECK(g_m1_settings.bt_adv_name[0] == '\0', "default bt adv name empty");
-        CHECK(g_m1_settings.subghz_power_dbm == 0 && g_m1_settings.subghz_mod == 0
+        /* Radio Settings semantics (PR-7): mod/bw/dev 0 are the keep-preset
+         * sentinels and power +20 dBm maps to the stock PA_PWR_LVL 0x7F --
+         * together these reproduce pre-PR-7 RF behavior at defaults. */
+        CHECK(g_m1_settings.subghz_power_dbm == 20 && g_m1_settings.subghz_mod == 0
               && g_m1_settings.subghz_bw_khz == 0 && g_m1_settings.subghz_dev_khz == 0
               && g_m1_settings.bt_preset == 0 && g_m1_settings.bt_interval_ms == 0,
-              "remaining defaults zero");
+              "remaining defaults zero except stock-equivalent subghz power");
         (void)d;
     }
 
@@ -412,7 +415,7 @@ int main(void)
         CHECK(g_m1_settings.brightness_pct == 100, "non-numeric -> default");
         CHECK(g_m1_settings.led_notifications == 1, "empty numeric -> default");
         CHECK(g_m1_settings.screen_timeout_s == 45, "trailing garbage -> default");
-        CHECK(g_m1_settings.subghz_power_dbm == 0, "double sign -> default");
+        CHECK(g_m1_settings.subghz_power_dbm == 20, "double sign -> default (+20, PR-7)");
         CHECK(g_m1_settings.subghz_freq_hz == 0, "i64 overflow -> default");
         CHECK(g_settings_field_resets == 5u, "malformed numerals counted: 5 fields reset");
     }

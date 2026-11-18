@@ -233,6 +233,38 @@ virtual keyboard), so a stale or uninitialized event struct cannot
 trigger an action. Future settings screens (Sub-GHz radio,
 Bluetooth) copy this pattern.
 
+Sub-GHz Radio Settings (PR-7, issue #3) consumes the store's `subghz_*`
+fields and copies the same modal idiom (screen in
+`m1_csrc/m1_sub_ghz.c`, decision logic in its host-tested
+`M1_SUBGHZ_RADIO_SETTINGS_PURE_CORE` region):
+
+- *Parameter model*: modulation `Auto/OOK/2-FSK/2-GFSK/4-FSK/4-GFSK`,
+  RX bandwidth `Auto/10/100/200 kHz` (the three WDS-generated sets the
+  repo's `Sub_Ghz/radio_config/` headers actually contain; nominal
+  10.75/109.93/219.87 kHz as generated), FSK deviation
+  `Auto/2/20/47/200 kHz` (Auto = the band family's WDS FSK value), power
+  `-10..+20 dBm` nominal (default +20 ≡ the stock `PA_PWR_LVL 0x7F`),
+  frequency override = an exact-Hz entry of the Record-RAW list or Off.
+  Every default is behavior-identical to pre-PR-7 radio operation.
+- *Where the override lives*: `SI446x_Apply_Modem_Config()`
+  (`Sub_Ghz/m1_sub_ghz_api.c`) patches the SI4463 property API
+  (`MODEM_MOD_TYPE`, `MODEM_FREQ_DEV`, the decimation/AFC/spike/DSA/CHFLT
+  bandwidth set) on top of the just-loaded WDS base configuration; the
+  dBm→PA map and all encodings are documented at that implementation and
+  provenance-bound to the WDS headers by the host suite
+  (`m1_csrc/test/m1_subghz_radio_settings_test.py`).
+- *Apply hook*: `sub_ghz_apply_user_radio_overrides()` runs in
+  `subfunc_handler_task` (never ISR), invoked by both opmode setters —
+  the single funnel of Record/Replay/Scan/Frequency Reader — after every
+  preset load/tune and immediately before the radio enters RX/TX. An
+  active frequency override replaces the tune target
+  (`radio_tune_exact_hz()`); the region gate
+  (`sub_ghz_fcc_ism_band_check_hz()`) is enforced at save time in the
+  screen and re-enforced at apply time in the resolver, and the TX
+  boundary keeps its own region check on the effective frequency.
+  Power values are nominal: RF verification on a meter/receiver is the
+  hardware-acceptance follow-up.
+
 **Needs validation:** Document the remaining SD-card directory layout details,
 filename limits, concurrent USB/device access policy, and recovery behavior
 after removal or I/O failure.

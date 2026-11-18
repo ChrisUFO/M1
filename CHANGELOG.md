@@ -11,6 +11,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: Sub-GHz Radio Settings (issue #3) — the Sub-GHz menu gains a
+  *Radio Settings* leaf with a modal screen (the established 128×64
+  settings idiom) for modulation (Auto/OOK/2-FSK/2-GFSK/4-FSK/4-GFSK),
+  RX bandwidth (Auto/10/100/200 kHz), FSK deviation (Auto/2/20/47/200
+  kHz — the row is visible only for the FSK-family modulations),
+  nominal output power (−10…+20 dBm) and an exact-Hz frequency override
+  (Off or one of the Record-RAW frequencies). Values persist through the
+  SD settings store and are applied by `SI446x_Apply_Modem_Config()`
+  (new in `Sub_Ghz/m1_sub_ghz_api.c`: a generic SET_PROPERTY writer plus
+  a runtime modem patch on top of the loaded WDS base configuration) via
+  the idempotent `sub_ghz_apply_user_radio_overrides()` hook, invoked by
+  both opmode setters after every preset load/tune and immediately
+  before the radio enters RX/TX — task context only, never ISR. At the
+  compiled defaults (band-preset modulation/bandwidth/deviation, +20 dBm
+  ≡ the stock PA_PWR_LVL 0x7F, no frequency override) the hook writes
+  nothing and scan/record/replay behavior is unchanged. The frequency
+  override is region-gated by `sub_ghz_fcc_ism_band_check_hz()` at BOTH
+  save time (the screen refuses disallowed frequencies with a notice)
+  and apply time (the resolver ignores a now-disallowed override,
+  fail-closed), and the TX boundary keeps its own region check on the
+  effective frequency. Provenance is explicit: the bandwidth presets are
+  the repo's own WDS-generated 10/100/200 kHz filter+decimation sets
+  (copied verbatim, host-test-bound to the headers; nominal achieved
+  widths 10.75/109.93/219.87 kHz), the deviation encoding is verified
+  against the repo's WDS FSK headers (2 kHz→0x000083 @outdiv 8,
+  200 kHz→0x00199A @outdiv 4), and the dBm→PA map is a documented
+  NOMINAL linear-in-code approximation anchored at 0x7F≡+20 dBm —
+  absolute power accuracy is deferred to hardware acceptance (follow-up
+  issue). New host suite
+  `m1_csrc/test/m1_subghz_radio_settings_test.py` (98 checks: compiled
+  pure cores for the driver/screen decision logic, WDS-header provenance
+  binding, override-ordering/region-gate/no-ISR static seams, menu and
+  store-default wiring), wired into `scripts/run_host_tests.sh`;
+  `settings_exit_save()`/`settings_str_clip()` are exported through
+  `m1_settings.h` as the shared modal-screen helpers.
 - Fork: IR favorites and recent lists in the SD-card IR browser, plus the
   explicit "cycle all in category" submenu action (issue #43 part 3 —
   this completes #43 together with the earlier IR units). The browser
