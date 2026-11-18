@@ -159,8 +159,9 @@ esp_fw_state_t esp_feature_gate_query(esp_feature_t feature,
 bool esp_feature_gate_allows(esp_fw_state_t state);
 
 /* User-facing diagnostic text for an outcome (static string; never
- * NULL). ABSENT distinguishes its reasons; pass NULL for the generic
- * per-state text of a non-ABSENT state. */
+ * NULL). ABSENT distinguishes its reasons; passing NULL yields the
+ * generic ABSENT text ("ESP not responding"), so always pass the
+ * detail when you have a state to describe. */
 const char *esp_feature_gate_diag(const esp_feature_gate_result_t *detail);
 
 #ifdef __cplusplus
