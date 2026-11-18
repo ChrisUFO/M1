@@ -419,9 +419,11 @@ notably the echo — never classifies. The grammar is enforced on the
 STM32 before anything is sent (SSID 0..32 / PSK 8..63
 printable-no-quote chars, or the exact 64-hex PMK form), and the
 transport is gated through the live handshake above — the join
-minimum is pinned to `1.1.0.0`, exactly the version the paired
-in-repo ESP application source reports
-(`ESP32C6_FW_VERSION_LINE` in `Esp_spi_at/.../esp_at_list.h`), so an
+minimum is pinned to `1.1.0.0`, the version the paired console
+firmware is *required* to report (declared in-tree as
+`ESP32C6_FW_VERSION_LINE` in `Esp_spi_at/.../esp_at_list.h`; the
+console firmware itself is external — nothing in this repository
+emits the line), so an
 older or non-answering ESP32 shows the gate diagnostic and no join
 command is built or sent (the flash-gate: until the paired image is
 flashed, the feature refuses cleanly). The in-repo SPI-AT example

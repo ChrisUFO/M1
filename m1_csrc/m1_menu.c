@@ -477,7 +477,7 @@ S_M1_Menu_t menu_Capture_Network =
 };
 
 /* gui_menu_update = NULL uses the standard scrolling submenu renderer
- * (m1_gui_submenu_update). MonstaShark is third in the Wi-Fi menu. */
+ * (m1_gui_submenu_update). MonstaShark is fourth in the Wi-Fi menu. */
 S_M1_Menu_t menu_Wifi =
 {
     "Wi-Fi", menu_wifi_init, menu_wifi_exit, NULL, 7, 0, menu_m1_icon_wifi, NULL,

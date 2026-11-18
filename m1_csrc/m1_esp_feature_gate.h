@@ -108,8 +108,9 @@ typedef enum
 
 /* Gated ESP32-dependent features. The minimums below say which ESP32
  * firmware first shipped the matching handler. PR-11 pinned the join
- * minimum to 1.1.0.0 -- exactly the version the paired in-repo ESP
- * application source reports (ESP32C6_FW_VERSION_LINE) -- so the gate
+ * minimum to 1.1.0.0 -- the version the paired console firmware is
+ * required to report (declared in-tree as ESP32C6_FW_VERSION_LINE;
+ * the console firmware itself is external) -- so the gate
  * accepts only firmware that answers the live handshake with the join
  * handler aboard; PR-12 owns the advertise-command minimum (still at
  * the pre-pairing placeholder).*/

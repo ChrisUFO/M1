@@ -54,14 +54,16 @@
 #define ESP32C6_AT_RES_CONN_GOT_IP		"WIFI GOT IP"
 #define ESP32C6_AT_RES_FAIL				"FAIL"
 
-/* Paired-firmware version (PR-11). The ESP application built from this
- * tree reports this exact line for the read-only console `version` verb
- * -- the shared ESPFW handshake contract the STM32's live feature gate
- * parses (m1_csrc/m1_esp_feature_gate.h). ESP_FEATURE_WIFI_JOIN's
- * minimum is {major,minor,patch,rc} BELOW, so an image that does not
- * answer (older/foreign firmware) is refused and the join handler is
- * only reached on a version-paired image. m1_csrc/test/
- * m1_wifi_join_test.py pins these constants together. */
+/* Paired-firmware version (PR-11). This is the version the paired
+ * console firmware is REQUIRED to report for the read-only console
+ * `version` verb -- the shared ESPFW handshake contract the STM32's
+ * live feature gate parses (m1_csrc/m1_esp_feature_gate.h). It is
+ * DECLARED here (the console firmware itself is maintained outside
+ * this repository; nothing in-tree emits the line).
+ * ESP_FEATURE_WIFI_JOIN's minimum is {major,minor,patch,rc} BELOW, so
+ * an image that does not answer (older/foreign firmware) is refused
+ * and the join handler is only reached on a version-paired image.
+ * m1_csrc/test/m1_wifi_join_test.py pins these constants together. */
 #define ESP32C6_FW_VERSION_MAJOR		1
 #define ESP32C6_FW_VERSION_MINOR		1
 #define ESP32C6_FW_VERSION_PATCH		0

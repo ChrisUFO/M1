@@ -6134,12 +6134,18 @@ static uint8_t wifi_psk_entry(char *psk, size_t cap)
         {
             if (rotor == WIFI_PSK_ROTOR_END_IDX) /* '>' : save */
             {
-                if (len >= WIFI_JOIN_PSK_MIN_CHARS)
+                /* The REAL join grammar -- the same rule the command
+                 * builder enforces -- so every editor-producible PSK is
+                 * join-legal and the editor can never hand the flow a
+                 * secret the transport would refuse (notably: a 64-char
+                 * entry must be all-hex, the PMK form). The only other
+                 * reachable failure is a short length. */
+                if (wifi_join_psk_valid(psk))
                 {
                     xQueueReset(main_q_hdl);
                     return 1;
                 }
-                msg = "8-64";
+                msg = (len < WIFI_JOIN_PSK_MIN_CHARS) ? "8-64" : "64=hex";
             }
             else if (rotor == WIFI_PSK_ROTOR_DEL_IDX) /* '<' : delete */
             {

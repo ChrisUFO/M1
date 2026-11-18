@@ -397,7 +397,49 @@ static void test_classify(void)
     CHECKN(wifi_join_classify_reply("noise XJOIN_FAILX noise\r\nno markers here\r\n>> ")
            == WIFI_JOIN_RESULT_TIMEOUT,
            "mid-line-only occurrences never classify, suffix or not");
+    /* Both markers ANCHORED: FAIL must win regardless of order -- this
+     * pins the check ordering the harden fix relies on (a swap of the
+     * two anchored tests would otherwise still pass the suite). */
+    CHECKN(wifi_join_classify_reply("JOIN_FAIL 1\r\nJOINED\r\n>> ")
+           == WIFI_JOIN_RESULT_FAIL,
+           "both markers anchored: FAIL wins");
+    CHECKN(wifi_join_classify_reply("JOINED\r\nJOIN_FAIL 2\r\n>> ")
+           == WIFI_JOIN_RESULT_FAIL,
+           "both markers anchored, mirror order: FAIL still wins");
     printf("classify done (%d fails so far)\n", fails);
+}
+
+static void test_editor_builder_agreement(void)
+{
+    char probe[65];
+    char cmd[WIFI_JOIN_CMD_MAX];
+    size_t i;
+
+    /* The editor's save rule IS wifi_join_psk_valid (statically pinned
+     * in the static layer); these pin that the command builder agrees
+     * with the same rule on every probe class, so the editor can never
+     * hand the flow a secret the transport refuses -- including at
+     * length 64, where only the all-hex PMK form is legal. */
+    for (i = 0; i < 94u; i++)
+    {
+        memset(probe, WIFI_PSK_ROTOR[i], 63);
+        probe[63] = '\0';
+        if (!wifi_join_psk_valid(probe))
+            FAILF("63-char rotor probe '%c' must be valid", WIFI_PSK_ROTOR[i]);
+        if (wifi_join_build_cmd(cmd, sizeof(cmd), "N", probe, true) <= 0)
+            FAILF("63-char rotor probe '%c' must build", WIFI_PSK_ROTOR[i]);
+    }
+    memset(probe, 'z', 64); probe[64] = '\0';
+    CHECKN(wifi_join_psk_valid(probe) == false,
+           "64-char non-hex refused by the grammar rule");
+    CHECKN(wifi_join_build_cmd(cmd, sizeof(cmd), "N", probe, true) < 0,
+           "64-char non-hex refused by the builder (editor rejects it in-editor)");
+    for (i = 0; i < 64u; i++) probe[i] = "0123456789ABCDEF"[i % 16u];
+    probe[64] = '\0';
+    CHECKN(wifi_join_psk_valid(probe), "64-hex PMK accepted by the grammar rule");
+    CHECKN(wifi_join_build_cmd(cmd, sizeof(cmd), "N", probe, true) > 0,
+           "64-hex PMK accepted by the builder");
+    printf("editor/builder agreement done (%d fails so far)\n", fails);
 }
 
 static void test_reconnect_pick(void)
@@ -427,6 +469,7 @@ int main(void)
     test_ssid_grammar();
     test_build_cmd();
     test_classify();
+    test_editor_builder_agreement();
     test_reconnect_pick();
 
     if (fails == 0)
@@ -694,6 +737,14 @@ def static_checks():
         CHECK("m1_secure_zero(psk" in body, f"{fn} zeroizes its psk buffer")
     editor = function(join_section, "wifi_psk_entry")
     CHECK("m1_secure_zero(psk" in editor, "editor zeroizes on cancel")
+    # 3b. The editor's save branch validates with the REAL join grammar
+    #     (wifi_join_psk_valid -- the same rule the builder enforces),
+    #     so a 64-char non-hex entry is refused in-editor, not after the
+    #     gate round trip.
+    CHECK(
+        "wifi_join_psk_valid(psk)" in editor,
+        "editor save branch does not run the real join grammar",
+    )
 
     # 4. The PSK is never logged and never embedded in an error string:
     #    the join section contains no logging call at all.
@@ -759,6 +810,40 @@ def static_checks():
     CHECK(
         "volatile char *wipe = join_cmd" in handler,
         "handler does not wipe the join command before free",
+    )
+    # 8b. The SPI TX stream-buffer copy: the command (plaintext PSK)
+    #     rode into spi_master_tx_ring_buf via xStreamBufferSend and
+    #     FreeRTOS does not zero storage on read -- a bounded scrub
+    #     helper must ride the driver's single-flight semaphore, go
+    #     ONLY through the stream-buffer API (no blind memset of
+    #     driver internals), never notify the slave, and be invoked
+    #     from the join handler after the exchange.
+    scrub = function(esp_app, "esp_scrub_spi_tx_ring_buf")
+    CHECK(
+        "xSemaphoreTake(esp_ctrl_req_sem" in scrub,
+        "tx-ring scrub does not ride the single-flight semaphore",
+    )
+    CHECK(
+        "xStreamBufferSend(" in scrub and "xStreamBufferReceive(" in scrub,
+        "tx-ring scrub must go through the stream-buffer API",
+    )
+    CHECK("memset" not in scrub, "tx-ring scrub must not blind-memset driver internals")
+    CHECK(
+        "notify_slave_to_recv" not in scrub,
+        "tx-ring scrub must never trigger a transmission",
+    )
+    CHECK(
+        "esp_scrub_spi_tx_ring_buf();" in handler,
+        "join handler does not invoke the tx-ring scrub",
+    )
+    # 8c. The DMA staging region (trans_data) in the control task is a
+    #     second copy: it must be wiped right after the transmit.
+    after_send = esp_app.split("ret = spi_write_data(trans_data, plan_send_len);")[1][
+        :900
+    ]
+    CHECK(
+        "wipe[wi] = 0;" in after_send,
+        "DMA staging region not scrubbed after the transmit",
     )
     CHECK(
         "ESP32C6_AT_REQ_CONNECT_AP" in esp_list,

@@ -90,10 +90,11 @@ static bool esp_gate_console_version_reply_seam(char *buf, uint16_t buf_size,
 /*************************** T A B L E S **************************************/
 
 /* Per-feature minimum ESP32 firmware versions. PR-11 pins the join
- * minimum to 1.1.0.0 -- the version the paired in-repo ESP application
- * source first reports (ESP32C6_FW_VERSION_LINE in
+ * minimum to 1.1.0.0 -- the version the paired console firmware is
+ * required to report (declared in-tree as ESP32C6_FW_VERSION_LINE in
  * Esp_spi_at/.../esp_at_list.h, whose `AT+CWJAP` join handler is the
- * matching CTRL_REQ_CONNECT_AP implementation); the host suite pins
+ * matching CTRL_REQ_CONNECT_AP implementation; the console firmware
+ * itself is external); the host suite pins
  * the two constants together so they cannot drift. BLE stays at the
  * pre-pairing placeholder until PR-12 lands its advertise command. */
 static const uint8_t s_feature_min[ESP_FEATURE__COUNT][4] =

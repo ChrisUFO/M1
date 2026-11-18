@@ -69,9 +69,13 @@ verification.
   command `join "<ssid>" "<psk>"` then crosses the UART link in the
   clear and the ESP-side handler re-emits it as
   `AT+CWJAP="<ssid>","<pwd>"` to the radio — where it lives in ESP32
-  RAM (wiped by the handler before free, but not protected against an
-  ESP32-side attacker) and on the wire to the AP, which is exactly what
-  any Wi-Fi station does. A passive observer of the STM32↔ESP32 link,
+  RAM (the handler wipes its command buffer before free and, after the
+  exchange, scrubs the SPI driver's TX-path copies — the TX
+  stream-buffer storage under the driver's single-flight semaphore
+  and the DMA staging region wiped by the control task after each
+  transmit — but this is hygiene, not protection against an
+  ESP32-side attacker) and on the wire to the AP, which is exactly
+  what any Wi-Fi station does. A passive observer of the STM32↔ESP32 link,
   or code execution on either processor, recovers the PSK at join time.
   SPI/UART-link encryption is out of scope; the on-device plaintext
   window and the link are accepted exposures. The join verb never logs

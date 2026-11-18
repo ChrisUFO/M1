@@ -65,7 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and — transiently, when the console echoes the typed command — the
     reply buffer; each is zeroized with `m1_secure_zero()` on every
     exit path (the ESP-side handler wipes its `AT+CWJAP` command
-    before free). Reply classification matches `JOINED`/`JOIN_FAIL`
+    before free and, after the exchange, scrubs the driver's TX-path
+    copies that carried it — the SPI TX stream-buffer storage, under
+    the driver's single-flight semaphore, and the DMA staging region
+    wiped by the control task right after the transmit). Reply
+    classification matches `JOINED`/`JOIN_FAIL`
     only at a line start, so a marker substring inside an echoed SSID
     can never forge or mask a result. Credentials are sealed through
     the PR-9 store only after a successful join; the PSK is never
