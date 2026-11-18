@@ -15,6 +15,7 @@ release, and operational documentation.
 | New firmware developer | [Build and debug](build-and-debug.md) → [Architecture](architecture.md) → [Known issues](known-issues.md) |
 | Hardware or test engineer | [Hardware](hardware.md) → [Manufacturing and test](testing.md) |
 | Integration developer | [Interfaces and protocols](protocols/README.md) → [Firmware image and update](protocols/firmware-update.md) |
+| IR database user | [IR database provisioning](ir-provisioning.md) |
 | Release owner | [Release policy](releases.md) → [Testing](testing.md) → [Known issues](known-issues.md) |
 | Security reviewer | [Security architecture](security.md) → [Firmware update](protocols/firmware-update.md) |
 | Legal or compliance reviewer | [Legal notice](../LEGAL.md) → [Responsible use](responsible-use.md) → [Regulatory status](regulatory.md) |
