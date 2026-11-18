@@ -409,9 +409,13 @@ caller owns the ESP32 session, no dynamic allocation.
 *Wi-Fi join* (issue #42 completion, PR-11) rides the same UART
 console session: the verb `join "<ssid>" "<psk>"` + CRLF (empty SSID
 = hidden network, empty PSK = open), reply read to the `">> "` prompt
-and classified by markers — a line beginning `JOINED` (any suffix,
-e.g. an IP, ignored) means associated, `JOIN_FAIL` means refused,
-anything else is an honest timeout. The grammar is enforced on the
+and classified by **line-anchored** markers — a line beginning
+`JOINED` (any suffix, e.g. an IP, ignored) means associated, a line
+beginning `JOIN_FAIL` means refused, anything else is an honest
+timeout. Markers count only at a line start (buffer start or after
+`\n`): the console echoes the typed command, and a grammar-legal SSID
+may itself contain a marker substring, so a mid-line occurrence —
+notably the echo — never classifies. The grammar is enforced on the
 STM32 before anything is sent (SSID 0..32 / PSK 8..63
 printable-no-quote chars, or the exact 64-hex PMK form), and the
 transport is gated through the live handshake above — the join

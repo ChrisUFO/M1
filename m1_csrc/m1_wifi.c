@@ -171,8 +171,12 @@
  * grammar family as `scan -a` / `beacon "ssid"`; see
  * docs/architecture.md "ESP32 co-processor interface". Reply markers:
  * a line beginning "JOINED" = associated (any suffix, e.g. an IP, is
- * ignored); "JOIN_FAIL" = the AP/console refused; anything else (or a
- * prompt-only/timeout read) = no recognizable result.
+ * ignored); a line beginning "JOIN_FAIL" = the AP/console refused;
+ * anything else (or a prompt-only/timeout read) = no recognizable
+ * result. Markers are matched ONLY at a line start (buffer start or
+ * immediately after '\n'): the console echoes the typed command, and a
+ * grammar-legal SSID may itself contain a marker substring -- a
+ * mid-line occurrence must never classify (wifi_join_classify_reply).
  *
  * GATE (PR-10): no join command is ever built-for-send unless the LIVE
  * ESP32 firmware answers the ESPFW handshake with at least the
@@ -182,11 +186,12 @@
  *
  * PSK LIFECYCLE (docs/security/wifi-credential-threat-model.md): the
  * plaintext exists only in (a) the masked entry editor's buffer, (b)
- * the decrypted wifi_cred_get_psk() buffer, and (c) the static command
- * buffer below -- each zeroized with m1_secure_zero() on every exit
- * path. The PSK is never logged, never put in an error string, and
- * never rendered outside the masked editor (whose cursor cell alone
- * shows the character being edited). */
+ * the decrypted wifi_cred_get_psk() buffer, (c) the static command
+ * buffer below, and (d) the reply buffer while it may hold the console
+ * echo of the command line -- each zeroized with m1_secure_zero() on
+ * every exit path. The PSK is never logged, never put in an error
+ * string, and never rendered outside the masked editor (whose cursor
+ * cell alone shows the character being edited). */
 #define WIFI_JOIN_CMD_MAX           112u /* 6+32+3+64+1+2+1 = 109 worst case */
 #define WIFI_JOIN_REPLY_MAX         256u
 #define WIFI_JOIN_RESP_JOINED       "JOINED"
@@ -5938,14 +5943,33 @@ static int wifi_join_build_cmd(char *dst, size_t dstsz, const char *ssid,
     return n;
 }
 
-/* Map a console reply to a join outcome. FAIL is checked first so a reply
- * that somehow carried both markers can never read as success; the echoed
- * command text contains neither marker. */
+/* True iff resp carries the marker at a LINE START: at the buffer start
+ * or immediately after a '\n'. The console echoes the typed command, and
+ * a fully grammar-legal SSID may itself contain a marker substring (an
+ * AP named "XJOINEDX" or "JOIN_FAIL_TEST") -- a mid-line occurrence is
+ * echo, never a reply line, so it must not classify. */
+static bool wifi_join_reply_has_line(const char *resp, const char *marker)
+{
+    const char *p = strstr(resp, marker);
+
+    while (p != NULL)
+    {
+        if ((p == resp) || (p[-1] == '\n')) { return true; }
+        p = strstr(p + 1, marker);
+    }
+    return false;
+}
+
+/* Map a console reply to a join outcome. Markers count ONLY at a line
+ * start (buffer start or immediately after '\n' -- see
+ * wifi_join_reply_has_line); anything mid-line, notably the echoed
+ * command text, is ignored. Among anchored markers FAIL is checked
+ * first, so a reply carrying both can never read as success. */
 static wifi_join_result_t wifi_join_classify_reply(const char *resp)
 {
     if (!resp) { return WIFI_JOIN_RESULT_TIMEOUT; }
-    if (strstr(resp, WIFI_JOIN_RESP_FAIL) != NULL) { return WIFI_JOIN_RESULT_FAIL; }
-    if (strstr(resp, WIFI_JOIN_RESP_JOINED) != NULL) { return WIFI_JOIN_RESULT_JOINED; }
+    if (wifi_join_reply_has_line(resp, WIFI_JOIN_RESP_FAIL)) { return WIFI_JOIN_RESULT_FAIL; }
+    if (wifi_join_reply_has_line(resp, WIFI_JOIN_RESP_JOINED)) { return WIFI_JOIN_RESULT_JOINED; }
     return WIFI_JOIN_RESULT_TIMEOUT;
 }
 
@@ -6168,7 +6192,9 @@ static char g_wifi_join_cmd[WIFI_JOIN_CMD_MAX];
 /* Build + send the join command over the console session the CALLER owns,
  * then classify the reply. psk is NOT absorbed (the caller keeps its buffer
  * per the wifi_cred_get_psk() contract and zeroizes it); the command buffer
- * copy IS zeroized here on every path once the exchange is done. The gate
+ * copy IS zeroized here on every path once the exchange is done, and so is
+ * the reply buffer after classification -- the console echoes the typed
+ * command line, so resp can transiently hold the plaintext PSK. The gate
  * runs first: on ABSENT/OLDER the gate's own diagnostic is shown and
  * NOTHING is sent. */
 static wifi_join_result_t wifi_join_exec(const char *label, const char *ssid,
@@ -6195,20 +6221,23 @@ static wifi_join_result_t wifi_join_exec(const char *label, const char *ssid,
     wifi_ui_draw_scanning(label);
 
     m1_ringbuffer_reset(&esp32_rb_hdl);
+    memset(resp, 0, sizeof(resp));
     if (esp32_uart_write((const uint8_t *)g_wifi_join_cmd, (uint16_t)cmd_len, 100U) == 0U)
     {
         m1_secure_zero(g_wifi_join_cmd, sizeof(g_wifi_join_cmd));
+        m1_secure_zero(resp, sizeof(resp));
         return WIFI_JOIN_RESULT_SEND;
     }
 
-    memset(resp, 0, sizeof(resp));
     (void)esp32_uart_read_until_prompt(resp, (uint16_t)sizeof(resp),
                                        timeout_ms, ">> ");
     res = wifi_join_classify_reply(resp);
 
-    /* PSK hygiene: wipe the command buffer once the exchange is over (the
-     * reply itself never echoes the PSK). */
+    /* PSK hygiene: wipe BOTH plaintext holders once the exchange is over --
+     * the command buffer, and the reply buffer, which can hold the console
+     * echo of the command line (and with it the PSK). */
     m1_secure_zero(g_wifi_join_cmd, sizeof(g_wifi_join_cmd));
+    m1_secure_zero(resp, sizeof(resp));
     return res;
 }
 

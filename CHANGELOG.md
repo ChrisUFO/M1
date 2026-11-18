@@ -61,12 +61,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     unusable") and a silent zero-cost no-op when nothing is
     credentialed.
   - PSK hygiene: the plaintext exists only in the editor buffer, the
-    decrypted `wifi_cred_get_psk()` buffer, and the static command
-    buffer — each zeroized with `m1_secure_zero()` on every exit path
-    (the ESP-side handler wipes its `AT+CWJAP` command before free).
-    Credentials are sealed through the PR-9 store only after a
-    successful join; the PSK is never logged and never appears in an
-    error string.
+    decrypted `wifi_cred_get_psk()` buffer, the static command buffer,
+    and — transiently, when the console echoes the typed command — the
+    reply buffer; each is zeroized with `m1_secure_zero()` on every
+    exit path (the ESP-side handler wipes its `AT+CWJAP` command
+    before free). Reply classification matches `JOINED`/`JOIN_FAIL`
+    only at a line start, so a marker substring inside an echoed SSID
+    can never forge or mask a result. Credentials are sealed through
+    the PR-9 store only after a successful join; the PSK is never
+    logged and never appears in an error string.
   - Tests + docs: host suite `m1_csrc/test/m1_wifi_join_test.py`
     (real extracted join core linked with the real crypto zeroization:
     PSK/SSID grammar battery, rotor round trip proving every

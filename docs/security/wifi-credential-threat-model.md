@@ -61,18 +61,22 @@ verification.
   console path. The concrete exposure, end to end: the masked editor's
   buffer and the decrypted `wifi_cred_get_psk()` output exist briefly
   in STM32 RAM (both zeroized with `m1_secure_zero()` on every exit
-  path, the static join-command buffer included); the command
-  `join "<ssid>" "<psk>"` then crosses the UART link in the clear and
-  the ESP-side handler re-emits it as `AT+CWJAP="<ssid>","<pwd>"` to
-  the radio — where it lives in ESP32 RAM (wiped by the handler before
-  free, but not protected against an ESP32-side attacker) and on the
-  wire to the AP, which is exactly what any Wi-Fi station does. A
-  passive observer of the STM32↔ESP32 link, or code execution on
-  either processor, recovers the PSK at join time. SPI/UART-link
-  encryption is out of scope; the on-device plaintext window and the
-  link are accepted exposures. The join verb never logs the PSK and
-  the grammar refuses embedded quotes/CR/LF, so the secret cannot leak
-  into an unrelated console line through field confusion.
+  path), and the plaintext also transits two more short-lived holders —
+  the static join-command buffer and, because the console echoes the
+  typed command line, the reply buffer that captured the echo (both
+  zeroized after the exchange; the echo cannot mislead the reply
+  classification, which matches its markers only at a line start). The
+  command `join "<ssid>" "<psk>"` then crosses the UART link in the
+  clear and the ESP-side handler re-emits it as
+  `AT+CWJAP="<ssid>","<pwd>"` to the radio — where it lives in ESP32
+  RAM (wiped by the handler before free, but not protected against an
+  ESP32-side attacker) and on the wire to the AP, which is exactly what
+  any Wi-Fi station does. A passive observer of the STM32↔ESP32 link,
+  or code execution on either processor, recovers the PSK at join time.
+  SPI/UART-link encryption is out of scope; the on-device plaintext
+  window and the link are accepted exposures. The join verb never logs
+  the PSK and the grammar refuses embedded quotes/CR/LF, so the secret
+  cannot leak into an unrelated console line through field confusion.
 - **Side channels.** The soft AES in `m1_crypto.c` is a straight-table
   implementation with no side-channel hardening; only the CMAC tag
   comparison is constant-time.

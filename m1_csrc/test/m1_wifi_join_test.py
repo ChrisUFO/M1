@@ -26,7 +26,11 @@ Layers:
      grammar refusals, the no-truncation overflow refusal (dst fully
      zeroized), and the WIFI_JOIN_CMD_MAX worst-case fit;
    - reply classification: JOINED (+noise/+IP), JOIN_FAIL (+code),
-     prompt-only, NULL, FAIL-checked-first;
+     prompt-only, NULL, FAIL-checked-first, and the echo battery --
+     the console echoes the typed command, so a marker substring
+     inside a grammar-legal SSID must never classify (mid-line
+     JOINED/JOIN_FAIL ignored, line-anchored markers win, bare-\n and
+     \r\n anchors, buffer-start anchors);
    - reconnect pick: first credentialed row in store order; all
      ABSENT/INVALID -> -1.
 
@@ -167,6 +171,7 @@ def assemble_join_core():
         function(wifi, "wifi_join_psk_valid"),
         function(wifi, "wifi_join_ssid_valid"),
         function(wifi, "wifi_join_build_cmd"),
+        function(wifi, "wifi_join_reply_has_line"),
         function(wifi, "wifi_join_classify_reply"),
         function(wifi, "wifi_join_reconnect_pick"),
     ]
@@ -360,6 +365,38 @@ static void test_classify(void)
            "prompt only = timeout/unknown");
     CHECKN(wifi_join_classify_reply("") == WIFI_JOIN_RESULT_TIMEOUT, "empty");
     CHECKN(wifi_join_classify_reply(NULL) == WIFI_JOIN_RESULT_TIMEOUT, "NULL");
+
+    /* Echo-shaped cases: the console echoes the typed command line, and
+     * a grammar-legal SSID may itself contain a marker substring -- a
+     * mid-line occurrence must never classify (the harden fix). */
+    CHECKN(wifi_join_classify_reply("join \"JOIN_FAILX\" \"p\"\r\nJOIN_FAIL 3\r\n>> ")
+           == WIFI_JOIN_RESULT_FAIL,
+           "mid-line JOIN_FAIL in the echo ignored; anchored reply wins");
+    CHECKN(wifi_join_classify_reply("join \"JOINEDX\" \"p\"\r\n>> ")
+           == WIFI_JOIN_RESULT_TIMEOUT,
+           "mid-line JOINED in the echo is NOT a success");
+    CHECKN(wifi_join_classify_reply("join \"JOINED_TEST\" \"p\"\r\nJOINED 10.0.0.2\r\n>> ")
+           == WIFI_JOIN_RESULT_JOINED,
+           "marker-substring SSID echo + genuine anchored success");
+    CHECKN(wifi_join_classify_reply("join \"JOIN_FAIL_TEST\" \"p\"\r\nJOINED\r\n>> ")
+           == WIFI_JOIN_RESULT_JOINED,
+           "anchored success beats a mid-line FAIL in the echo");
+    CHECKN(wifi_join_classify_reply("JOINED\r\n") == WIFI_JOIN_RESULT_JOINED,
+           "marker at the very start of the buffer");
+    CHECKN(wifi_join_classify_reply("JOIN_FAIL 4\r\n") == WIFI_JOIN_RESULT_FAIL,
+           "FAIL marker at the very start of the buffer");
+    CHECKN(wifi_join_classify_reply("esp console v1\nJOINED\r\n>> ")
+           == WIFI_JOIN_RESULT_JOINED,
+           "marker anchored after a bare \\n");
+    CHECKN(wifi_join_classify_reply("esp console v1\r\nJOIN_FAIL 1\r\n>> ")
+           == WIFI_JOIN_RESULT_FAIL,
+           "marker anchored after \\r\\n");
+    CHECKN(wifi_join_classify_reply("XJOINEDX\r\nXJOIN_FAILX\r\n>> ")
+           == WIFI_JOIN_RESULT_TIMEOUT,
+           "mid-line-only occurrences never classify");
+    CHECKN(wifi_join_classify_reply("noise XJOIN_FAILX noise\r\nno markers here\r\n>> ")
+           == WIFI_JOIN_RESULT_TIMEOUT,
+           "mid-line-only occurrences never classify, suffix or not");
     printf("classify done (%d fails so far)\n", fails);
 }
 
@@ -632,6 +669,19 @@ def static_checks():
     CHECK(
         exec_fn.count("m1_secure_zero(g_wifi_join_cmd") == 2,
         "command buffer wiped on both send-path exits",
+    )
+
+    # 2b. Reply-buffer wipe: the console echoes the typed command line,
+    # so resp can transiently hold the plaintext PSK -- it must be
+    # m1_secure_zero()ed after classification on every post-send exit.
+    CHECK(
+        exec_fn.count("m1_secure_zero(resp") == 2,
+        "reply buffer wiped on both post-send exits",
+    )
+    CHECK(
+        exec_fn.rindex("m1_secure_zero(resp")
+        > exec_fn.index("esp32_uart_read_until_prompt"),
+        "reply-buffer wipe follows the read that captured the echo",
     )
 
     # 3. Caller-side PSK hygiene on every plaintext holder.
