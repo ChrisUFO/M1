@@ -4438,3 +4438,485 @@ static void sub_ghz_display_result(const char *name, uint64_t key, uint16_t bits
     sprintf(hexString, "0x%lX  %dbit", (unsigned long)key, bits);
     u8g2_DrawStr(&m1_u8g2, 2, 52, hexString);
     m1_u8g2_nextpage();
+}
+
+
+
+/*############################################################################*/
+/*#                                                                          #*/
+/*#  Radio Settings screen (issue #3 / PR-7)                                 #*/
+/*#                                                                          #*/
+/*############################################################################*/
+
+/* ================= M1_SUBGHZ_RADIO_SETTINGS_PURE_CORE BEGIN ================ */
+/* Value stepping, row-model and label logic for the Radio Settings screen.
+ * Plain C99 over stdint/stddef/stdio only -- no HAL, no FreeRTOS, no u8g2
+ * -- so the host unit test (m1_csrc/test/m1_subghz_radio_settings_test.py)
+ * extracts exactly this region and compiles it standalone. The screen
+ * keeps its decision logic here, not inlined in the draw/button code
+ * (same contract as M1_SETTINGS_SCREENS_PURE_CORE in m1_settings.c). */
+
+/* Selectable RX bandwidths: 0 = Auto (keep the loaded band preset's own
+ * filter set); 10/100/200 kHz are the three WDS-generated preset sets the
+ * repo actually has (see subghx_bw_presets in Sub_Ghz/m1_sub_ghz_api.c).
+ * WDS-nominal achieved widths: 10.75 / 109.93 / 219.87 kHz. */
+static const uint16_t subghz_rs_bw_list[] = { 0u, 10u, 100u, 200u };
+#define SUBGHZ_RS_BW_N      (sizeof(subghz_rs_bw_list)/sizeof(subghz_rs_bw_list[0]))
+
+/* Selectable FSK deviations (kHz): 0 = Auto (band-family WDS value:
+ * 200 kHz on the 900 MHz base config, 2 kHz below); 2 and 200 are the
+ * repo WDS FSK headers' own values, 20 and 47 are computed by the
+ * documented MODEM_FREQ_DEV formula at apply time. */
+static const uint16_t subghz_rs_dev_list[] = { 0u, 2u, 20u, 47u, 200u };
+#define SUBGHZ_RS_DEV_N     (sizeof(subghz_rs_dev_list)/sizeof(subghz_rs_dev_list[0]))
+
+/* Row ids of the Radio Settings screen. */
+#define SUBGHZ_RS_ROW_MOD     0
+#define SUBGHZ_RS_ROW_BW      1
+#define SUBGHZ_RS_ROW_DEV     2
+#define SUBGHZ_RS_ROW_POWER   3
+#define SUBGHZ_RS_ROW_FREQ    4
+
+uint8_t subghz_rs_dev_row_visible(uint8_t mod_preset)
+{
+	return ( (mod_preset>=M1_SUBGHZ_MODP_2FSK) && (mod_preset<=M1_SUBGHZ_MODP_4GFSK) ) ? 1u : 0u;
+} // uint8_t subghz_rs_dev_row_visible(uint8_t mod_preset)
+
+/* The Deviation row is visible only for the FSK-family modulations
+ * (2-FSK/2-GFSK/4-FSK/4-GFSK): OOK and the band default carry no
+ * deviation. Builds the visible-row table; returns the row count. */
+uint8_t subghz_rs_build_rows(uint8_t mod_preset, uint8_t *row_field)
+{
+	uint8_t n = 0u;
+
+	if ( row_field==NULL )
+		return 0u;
+	row_field[n++] = SUBGHZ_RS_ROW_MOD;
+	row_field[n++] = SUBGHZ_RS_ROW_BW;
+	if ( subghz_rs_dev_row_visible(mod_preset) )
+		row_field[n++] = SUBGHZ_RS_ROW_DEV;
+	row_field[n++] = SUBGHZ_RS_ROW_POWER;
+	row_field[n++] = SUBGHZ_RS_ROW_FREQ;
+	return n;
+} // uint8_t subghz_rs_build_rows(uint8_t mod_preset, uint8_t *row_field)
+
+/* Modulation cycles through Auto/OOK/2-FSK/2-GFSK/4-FSK/4-GFSK (wraps). */
+uint8_t subghz_rs_mod_step(uint8_t cur, int8_t dir)
+{
+	if ( dir > 0 )
+		return (uint8_t)((cur + 1u) % M1_SUBGHZ_MODP_EOL);
+	if ( dir < 0 )
+		return (uint8_t)((cur + M1_SUBGHZ_MODP_EOL - 1u) % M1_SUBGHZ_MODP_EOL);
+	return (cur < M1_SUBGHZ_MODP_EOL) ? cur : M1_SUBGHZ_MODP_BAND_DEFAULT;
+} // uint8_t subghz_rs_mod_step(uint8_t cur, int8_t dir)
+
+/* Generic wrap-around list stepper; an unknown current value snaps to the
+ * first entry (display-level clamp of a hand-edited store value). */
+uint16_t subghz_rs_list_step(const uint16_t *list, uint8_t n, uint16_t cur, int8_t dir)
+{
+	uint8_t i;
+
+	if ( (list==NULL) || (n==0u) )
+		return 0u;
+	for ( i=0; i<n; i++ )
+	{
+		if ( list[i]==cur )
+			break;
+	}
+	if ( i>=n )
+		i = 0u;
+	if ( dir > 0 )
+		i = (uint8_t)((i + 1u) % n);
+	else if ( dir < 0 )
+		i = (uint8_t)((i + n - 1u) % n);
+	return list[i];
+} // uint16_t subghz_rs_list_step(const uint16_t *list, uint8_t n, uint16_t cur, int8_t dir)
+
+/* Power steps by 1 dB between -10 and +20 (clamped at both ends). */
+int8_t subghz_rs_power_step(int8_t cur, int8_t dir)
+{
+	if ( (dir > 0) && (cur < M1_SUBGHZ_POWER_DBM_MAX) )
+		return (int8_t)(cur + 1);
+	if ( (dir < 0) && (cur > M1_SUBGHZ_POWER_DBM_MIN) )
+		return (int8_t)(cur - 1);
+	return cur;
+} // int8_t subghz_rs_power_step(int8_t cur, int8_t dir)
+
+/* Display-level clamps for values loaded from a hand-edited store: the
+ * store tolerates any storage-width value (by design); the screen only
+ * ever shows - and the apply path only ever honors - the selectable
+ * domain. Unknown modulation -> Auto, unknown bandwidth/deviation ->
+ * Auto, out-of-range power -> the nearest bound. */
+uint8_t subghz_rs_mod_clamp(uint8_t v)
+{
+	return (v < M1_SUBGHZ_MODP_EOL) ? v : M1_SUBGHZ_MODP_BAND_DEFAULT;
+} // uint8_t subghz_rs_mod_clamp(uint8_t v)
+
+uint16_t subghz_rs_bw_clamp(uint16_t v)
+{
+	uint8_t i;
+
+	for ( i=0; i<(uint8_t)SUBGHZ_RS_BW_N; i++ )
+		if ( subghz_rs_bw_list[i]==v )
+			return v;
+	return 0u;
+} // uint16_t subghz_rs_bw_clamp(uint16_t v)
+
+uint16_t subghz_rs_dev_clamp(uint16_t v)
+{
+	uint8_t i;
+
+	for ( i=0; i<(uint8_t)SUBGHZ_RS_DEV_N; i++ )
+		if ( subghz_rs_dev_list[i]==v )
+			return v;
+	return 0u;
+} // uint16_t subghz_rs_dev_clamp(uint16_t v)
+
+int8_t subghz_rs_power_clamp(int8_t v)
+{
+	if ( v < M1_SUBGHZ_POWER_DBM_MIN )
+		return M1_SUBGHZ_POWER_DBM_MIN;
+	if ( v > M1_SUBGHZ_POWER_DBM_MAX )
+		return M1_SUBGHZ_POWER_DBM_MAX;
+	return v;
+} // int8_t subghz_rs_power_clamp(int8_t v)
+
+/* Row labels. */
+const char *subghz_rs_mod_label(uint8_t mod_preset)
+{
+	static const char * const labels[M1_SUBGHZ_MODP_EOL] =
+	{
+		"Auto", "OOK", "2-FSK", "2-GFSK", "4-FSK", "4-GFSK"
+	};
+	return (mod_preset < M1_SUBGHZ_MODP_EOL) ? labels[mod_preset] : "Auto";
+} // const char *subghz_rs_mod_label(uint8_t mod_preset)
+
+const char *subghz_rs_khz_label(uint16_t khz, char *buf, size_t bufsize)
+{
+	if ( (buf==NULL) || (bufsize==0u) )
+		return "";
+	if ( khz==0u )
+		return "Auto";
+	snprintf(buf, bufsize, "%u kHz", (unsigned)khz);
+	return buf;
+} // const char *subghz_rs_khz_label(uint16_t khz, char *buf, size_t bufsize)
+
+const char *subghz_rs_power_label(int8_t dbm, char *buf, size_t bufsize)
+{
+	if ( (buf==NULL) || (bufsize==0u) )
+		return "";
+	snprintf(buf, bufsize, "%d dBm", (int)dbm);
+	return buf;
+} // const char *subghz_rs_power_label(int8_t dbm, char *buf, size_t bufsize)
+
+/* Frequency row value index: 0 = Off, else the entry number in the Record
+ * RAW exact-frequency list (the repo's known-good programmable set).
+ * Wraps through Off..N. */
+int8_t subghz_rs_freq_step(int8_t cur_idx, int8_t dir, int8_t list_n)
+{
+	if ( list_n <= 0 )
+		return 0;
+	if ( dir > 0 )
+		return (int8_t)((cur_idx + 1) % (list_n + 1));
+	if ( dir < 0 )
+		return (int8_t)((cur_idx + list_n) % (list_n + 1));
+	return cur_idx;
+} // int8_t subghz_rs_freq_step(int8_t cur_idx, int8_t dir, int8_t list_n)
+
+/* ================= M1_SUBGHZ_RADIO_SETTINGS_PURE_CORE END ================= */
+
+
+
+/* Radio Settings screen row geometry (128x64): bold title, up to five
+ * value rows with a 9 px pitch (the FSK-only Deviation row makes the
+ * fifth), and a small non-inverted hint line at the bottom - the inverted
+ * hint bar of the 3-row screens does not fit five rows plus title. */
+#define SUBGHZ_RS_TITLE_Y			8
+#define SUBGHZ_RS_ROW_FIRST_Y		16
+#define SUBGHZ_RS_ROW_SPACE			9
+#define SUBGHZ_RS_ROW_BOX_H			9
+#define SUBGHZ_RS_VALUE_RIGHT_X		124
+#define SUBGHZ_RS_HINT_Y				62
+
+/*============================================================================*/
+/**
+  * @brief  Draw the Radio Settings screen (see sub_ghz_radio_settings).
+  * @param  row_field: visible-row table from subghz_rs_build_rows()
+  * @param  rows_n: its length; freq_label: "Off" or the MHz label.
+  */
+/*============================================================================*/
+static void subghz_rs_gui_update(uint8_t sel_row, const uint8_t *row_field, uint8_t rows_n,
+		uint8_t mod, uint16_t bw, uint16_t dev, int8_t dbm, const char *freq_label)
+{
+	char val_str[12];
+	const char *val;
+	uint8_t i, row_y, field;
+
+	/* Graphic work starts here */
+	u8g2_FirstPage(&m1_u8g2);
+	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+	u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_B);
+	u8g2_DrawStr(&m1_u8g2, 0, SUBGHZ_RS_TITLE_Y, "Radio Settings");
+
+	for ( i=0; i<rows_n; i++ )
+	{
+		row_y = SUBGHZ_RS_ROW_FIRST_Y + i*SUBGHZ_RS_ROW_SPACE;
+		field = row_field[i];
+		switch ( field )
+		{
+			case SUBGHZ_RS_ROW_MOD:
+				val = subghz_rs_mod_label(mod);
+				break;
+			case SUBGHZ_RS_ROW_BW:
+				val = subghz_rs_khz_label(bw, val_str, sizeof(val_str));
+				break;
+			case SUBGHZ_RS_ROW_DEV:
+				val = subghz_rs_khz_label(dev, val_str, sizeof(val_str));
+				break;
+			case SUBGHZ_RS_ROW_POWER:
+				val = subghz_rs_power_label(dbm, val_str, sizeof(val_str));
+				break;
+			default: // SUBGHZ_RS_ROW_FREQ
+				val = freq_label;
+				break;
+		} // switch ( field )
+
+		if ( i==sel_row )
+		{
+			// Inverted selection bar with the bold font, like the submenu renderer
+			u8g2_DrawBox(&m1_u8g2, 0, row_y - 8, M1_LCD_DISPLAY_WIDTH, SUBGHZ_RS_ROW_BOX_H);
+			u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
+			u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_B);
+		} // if ( i==sel_row )
+		else
+		{
+			u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+			u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_N);
+		} // else
+
+		u8g2_DrawStr(&m1_u8g2, 4, row_y,
+			(field==SUBGHZ_RS_ROW_MOD) ? "Modulation" :
+			(field==SUBGHZ_RS_ROW_BW) ? "Bandwidth" :
+			(field==SUBGHZ_RS_ROW_DEV) ? "Deviation" :
+			(field==SUBGHZ_RS_ROW_POWER) ? "Power" : "Frequency");
+		u8g2_DrawStr(&m1_u8g2, SUBGHZ_RS_VALUE_RIGHT_X - u8g2_GetStrWidth(&m1_u8g2, val), row_y, val);
+	} // for (i=0; i<rows_n; i++)
+
+	/* Small hint line (LEFT/RIGHT adjust the selected value, BACK exits) */
+	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+	u8g2_SetFont(&m1_u8g2, M1_DISP_FUNC_MENU_FONT_N);
+	u8g2_DrawStr(&m1_u8g2, (M1_LCD_DISPLAY_WIDTH - u8g2_GetStrWidth(&m1_u8g2, "<> adjust   B back")) / 2,
+			SUBGHZ_RS_HINT_Y, "<> adjust   B back");
+	m1_u8g2_nextpage(); // Update display RAM
+} // static void subghz_rs_gui_update(...)
+
+
+
+/*============================================================================*/
+/**
+  * @brief  Short draw-only notice for a refused edit (region-blocked
+  *         frequency), matching the modal-notice semantics of
+  *         settings_exit_save(): shown, never hidden, ~1.2 s.
+  */
+/*============================================================================*/
+static void subghz_rs_notice(const char *line1, const char *line2)
+{
+	u8g2_FirstPage(&m1_u8g2);
+	u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+	u8g2_SetFont(&m1_u8g2, u8g2_font_resoledbold_tr);
+	u8g2_DrawStr(&m1_u8g2, (M1_LCD_DISPLAY_WIDTH - u8g2_GetStrWidth(&m1_u8g2, line1)) / 2, 24, line1);
+	u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_N);
+	u8g2_DrawStr(&m1_u8g2, (M1_LCD_DISPLAY_WIDTH - u8g2_GetStrWidth(&m1_u8g2, line2)) / 2, 38, line2);
+	m1_u8g2_nextpage(); // Update display RAM
+	vTaskDelay(pdMS_TO_TICKS(1200));
+} // static void subghz_rs_notice(const char *line1, const char *line2)
+
+
+
+/*============================================================================*/
+/**
+  * @brief  Apply the frequency row's selection through the SAVE-TIME
+  *         region gate: a frequency the active ISM region does not permit
+  *         is refused here (notice + override turned Off), using the SAME
+  *         sub_ghz_fcc_ism_band_check_hz() that re-checks the stored
+  *         override at apply time (sub_ghz_freq_override_hz). Synthesizer
+  *         coverage is a precondition (radio_freq_in_range). Returns the
+  *         (possibly reset to 0) row index.
+  */
+/*============================================================================*/
+static int8_t subghz_rs_freq_apply(int8_t freq_idx)
+{
+	uint32_t hz;
+
+	if ( freq_idx<=0 )
+	{
+		settings_set_subghz_freq_hz(0u, 0u);
+		return 0;
+	}
+	hz = subghz_rec_freqs[freq_idx - 1].hz;
+	if ( !radio_freq_in_range(hz) )
+	{
+		subghz_rs_notice("Out of range", "for this radio");
+		settings_set_subghz_freq_hz(0u, 0u);
+		return 0;
+	}
+	if ( sub_ghz_fcc_ism_band_check_hz(hz) )
+	{
+		subghz_rs_notice("Not allowed", "in this region");
+		settings_set_subghz_freq_hz(0u, 0u);
+		return 0;
+	}
+	settings_set_subghz_freq_hz(hz, 1u);
+	return freq_idx;
+} // static int8_t subghz_rs_freq_apply(int8_t freq_idx)
+
+
+
+/*============================================================================*/
+/**
+  * @brief  Sub-GHz Radio Settings screen (issue #3), following the modal
+  *         settings-screen idiom of m1_settings.c (see its header
+  *         comment): runs in subfunc_handler_task (the store's single
+  *         writer), UP/DOWN move the selection (wrapping), LEFT/RIGHT
+  *         move the selected row's value, BACK exits through
+  *         settings_exit_save() (one atomic save per edited session;
+  *         a browse-only visit never touches the card).
+  *
+  *         Rows: Modulation (Auto/OOK/2-FSK/2-GFSK/4-FSK/4-GFSK),
+  *         Bandwidth (Auto/10/100/200 kHz), Deviation (Auto/2/20/47/200
+  *         kHz - FSK-family modulations only, the row disappears
+  *         otherwise), Power (-10..+20 dBm, nominal), Frequency override
+  *         (Off or one of the Record RAW exact frequencies,
+  *         region-gated at this save boundary AND re-gated at apply).
+  *         Every edit updates the live settings image through the store
+  *         setters and re-syncs the row local from settings_get() (the
+  *         clamping-setter re-sync of the idiom); overrides take effect
+  *         at the NEXT preset load/tune - every Record/Replay/Scan entry
+  *         funnels through the opmode setters, which apply them right
+  *         before the radio enters RX/TX
+  *         (sub_ghz_apply_user_radio_overrides). Static row table only;
+  *         no dynamic allocation anywhere in the screen loop.
+  */
+/*============================================================================*/
+void sub_ghz_radio_settings(void)
+{
+	S_M1_Buttons_Status this_button_status;
+	S_M1_Main_Q_t q_item;
+	BaseType_t ret;
+	const S_M1_Settings_t *sett;
+	uint8_t row_field[5];
+	uint8_t rows_n, sel_row, session_dirty;
+	uint8_t mod;
+	uint16_t bw, dev;
+	int8_t dbm, freq_idx, i;
+	int8_t dir;
+	char freq_label[12];
+
+	/* Seed the row locals from the store, display-clamped (a hand-edited
+	 * store value outside the selectable domain shows - and applies - as
+	 * its clamped interpretation; the persisted value is untouched until
+	 * the user edits the row). */
+	sett = settings_get();
+	mod = subghz_rs_mod_clamp(sett->subghz_mod);
+	bw = subghz_rs_bw_clamp(sett->subghz_bw_khz);
+	dev = subghz_rs_dev_clamp(sett->subghz_dev_khz);
+	dbm = subghz_rs_power_clamp(sett->subghz_power_dbm);
+	freq_idx = 0;
+	if ( sett->subghz_freq_valid!=0u )
+	{
+		for ( i=0; i<(int8_t)SUBGHZ_REC_FREQ_COUNT; i++ )
+		{
+			if ( subghz_rec_freqs[i].hz==sett->subghz_freq_hz )
+			{
+				freq_idx = (int8_t)(i + 1);
+				break;
+			}
+		}
+	}
+
+	rows_n = subghz_rs_build_rows(mod, row_field);
+	sel_row = 0u;
+	session_dirty = 0u; // Set by any value edit; BACK saves only when set
+	settings_str_clip(freq_label, sizeof(freq_label),
+			(freq_idx>0) ? subghz_rec_freqs[freq_idx - 1].label : "Off");
+	subghz_rs_gui_update(sel_row, row_field, rows_n, mod, bw, dev, dbm, freq_label);
+
+	while (1 ) // Main loop of this task
+	{
+		;
+		; // Do other parts of this task here
+		;
+
+		ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
+		if (ret==pdTRUE)
+		{
+			if ( q_item.q_evt_type==Q_EVENT_KEYPAD )
+			{
+				// Notification is only sent to this task when there's any button activity,
+				// so it doesn't need to wait when reading the event from the queue
+				ret = xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+				if ( ret!=pdTRUE )
+				{
+					continue; // No event behind the notification: never act on a stale struct
+				} // if ( ret!=pdTRUE )
+				if ( this_button_status.event[BUTTON_BACK_KP_ID]==BUTTON_EVENT_CLICK ) // user wants to exit?
+				{
+					settings_exit_save(session_dirty); // Persist this session atomically
+					break; // Exit and return to the calling task (subfunc_handler_task)
+				} // if ( BACK == BUTTON_EVENT_CLICK )
+				else if ( this_button_status.event[BUTTON_UP_KP_ID]==BUTTON_EVENT_CLICK ) // Previous row?
+				{
+					sel_row = (uint8_t)((sel_row + rows_n - 1u) % rows_n);
+				} // else if ( UP == BUTTON_EVENT_CLICK )
+				else if ( this_button_status.event[BUTTON_DOWN_KP_ID]==BUTTON_EVENT_CLICK ) // Next row?
+				{
+					sel_row = (uint8_t)((sel_row + 1u) % rows_n);
+				} // else if ( DOWN == BUTTON_EVENT_CLICK )
+				else if ( this_button_status.event[BUTTON_LEFT_KP_ID]==BUTTON_EVENT_CLICK ||
+					this_button_status.event[BUTTON_RIGHT_KP_ID]==BUTTON_EVENT_CLICK ) // Adjust value?
+				{
+					dir = (this_button_status.event[BUTTON_RIGHT_KP_ID]==BUTTON_EVENT_CLICK) ? 1 : -1;
+					session_dirty = 1u; // A value edit happened: persist it on exit
+					switch ( row_field[sel_row] )
+					{
+						case SUBGHZ_RS_ROW_MOD: // Modulation (Deviation row appears for FSK)
+							mod = subghz_rs_mod_step(mod, dir);
+							settings_set_subghz_mod(mod);
+							mod = subghz_rs_mod_clamp(settings_get()->subghz_mod); // re-sync after the clamping setter
+							rows_n = subghz_rs_build_rows(mod, row_field);
+							if ( sel_row>=rows_n )
+								sel_row = (uint8_t)(rows_n - 1u);
+							break;
+						case SUBGHZ_RS_ROW_BW: // Bandwidth
+							bw = subghz_rs_list_step(subghz_rs_bw_list, (uint8_t)SUBGHZ_RS_BW_N, bw, dir);
+							settings_set_subghz_bw_khz(bw);
+							bw = subghz_rs_bw_clamp(settings_get()->subghz_bw_khz); // re-sync
+							break;
+						case SUBGHZ_RS_ROW_DEV: // Deviation (FSK only)
+							dev = subghz_rs_list_step(subghz_rs_dev_list, (uint8_t)SUBGHZ_RS_DEV_N, dev, dir);
+							settings_set_subghz_dev_khz((uint8_t)dev);
+							dev = subghz_rs_dev_clamp(settings_get()->subghz_dev_khz); // re-sync
+							break;
+						case SUBGHZ_RS_ROW_POWER: // Power (nominal dBm)
+							dbm = subghz_rs_power_step(dbm, dir);
+							settings_set_subghz_power_dbm(dbm);
+							dbm = subghz_rs_power_clamp(settings_get()->subghz_power_dbm); // re-sync
+							break;
+						default: // SUBGHZ_RS_ROW_FREQ: region-gated exact frequency
+							freq_idx = subghz_rs_freq_step(freq_idx, dir, (int8_t)SUBGHZ_REC_FREQ_COUNT);
+							freq_idx = subghz_rs_freq_apply(freq_idx);
+							break;
+					} // switch ( row_field[sel_row] )
+					settings_str_clip(freq_label, sizeof(freq_label),
+							(freq_idx>0) ? subghz_rec_freqs[freq_idx - 1].label : "Off");
+				} // else if ( LEFT/RIGHT == BUTTON_EVENT_CLICK )
+				subghz_rs_gui_update(sel_row, row_field, rows_n, mod, bw, dev, dbm, freq_label);
+			} // if ( q_item.q_evt_type==Q_EVENT_KEYPAD )
+			else
+			{
+				; // Do other things for this task, if needed
+			}
+		} // if (ret==pdTRUE)
+	} // while (1 ) // Main loop of this task
+
+} // void sub_ghz_radio_settings(void)

@@ -97,7 +97,7 @@ void settings_about(void);
 static void settings_about_display_choice(uint8_t choice);
 void settings_lcd_notifications(void);
 static void settings_lcd_gui_update(uint8_t sel_row, uint8_t bright, uint16_t timeout_s, uint8_t led_notify);
-static void settings_exit_save(uint8_t session_dirty);
+void settings_exit_save(uint8_t session_dirty);
 void settings_str_clip(char *dst, size_t dst_size, const char *src);
 void settings_system(void);
 static void settings_system_gui_update(uint8_t sel_row, const char *dev_name, uint8_t time_ok, const char *time_str, uint8_t storage_ok, uint64_t free_b, uint32_t total_kb);
@@ -415,10 +415,11 @@ static void settings_about_display_choice(uint8_t choice)
   * refused/failed save of real edits is already logged by the store --
   * here it is also shown to the user for ~1.5 s, never silently
   * swallowed, and the in-RAM/live-applied edits stay in effect for this
-  * power cycle.
+  * power cycle. Declared in m1_settings.h: shared by every modal
+  * settings screen (also the Sub-GHz Radio Settings screen).
   */
 /*============================================================================*/
-static void settings_exit_save(uint8_t session_dirty)
+void settings_exit_save(uint8_t session_dirty)
 {
 	if ( session_dirty && !settings_save() )
 	{

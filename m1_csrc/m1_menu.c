@@ -67,10 +67,15 @@ S_M1_Menu_t menu_Sub_GHz_GPIO_Remap =
     "Remap Tx pin", sub_ghz_gpio_remap, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
+S_M1_Menu_t menu_Sub_GHz_Radio_Settings =
+{
+    "Radio Settings", sub_ghz_radio_settings, NULL, NULL, 0, 0, NULL, NULL, {NULL}
+};
+
 S_M1_Menu_t menu_Sub_GHz =
 {
-    "Sub-GHz", NULL, NULL, NULL, 5, 0, menu_m1_icon_wave, NULL,
-    {&menu_Sub_GHz_Scan, &menu_Sub_GHz_Record, &menu_Sub_GHz_Replay, &menu_Sub_GHz_Frequency_Reader, &menu_Sub_GHz_GPIO_Remap}
+    "Sub-GHz", NULL, NULL, NULL, 6, 0, menu_m1_icon_wave, NULL,
+    {&menu_Sub_GHz_Scan, &menu_Sub_GHz_Record, &menu_Sub_GHz_Replay, &menu_Sub_GHz_Frequency_Reader, &menu_Sub_GHz_GPIO_Remap, &menu_Sub_GHz_Radio_Settings}
 };
 
 /*----------------------------- > 125KHz RFID --------------------------------*/
