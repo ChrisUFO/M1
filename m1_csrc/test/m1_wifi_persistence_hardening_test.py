@@ -799,7 +799,9 @@ def saved_networks_cred_tests(tmp):
     code += SAVED_NET_MAIN_START
     code += r"""
     wifi_scanlist_t ap;
-    char psk[WIFI_PSK_MAX_CHARS + 1];
+    /* +2: one NUL for the max PSK, and one more byte so the "65 chars is
+     * refused" over-length case can be built without overflowing. */
+    char psk[WIFI_PSK_MAX_CHARS + 2];
     char out[WIFI_PSK_MAX_CHARS + 1];
     char field[WIFI_CRED_FIELD_MAX];
     char field2[WIFI_CRED_FIELD_MAX];
