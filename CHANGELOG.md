@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   element, 802.1X; CMAC is integrity-not-confidentiality; UID-key
   limits), linked from `docs/security.md`. Host suite
   `m1_csrc/test/m1_wifi_persistence_hardening_test.py` extended with a
-  compiled 100-check encrypted-credential battery (real codec + real
+  compiled 114-check encrypted-credential battery (real codec + real
   `m1_crypto.c`, injectable device-UID and RNG seams: round-trip,
   7/8-column compatibility, ciphertext tamper, wrong CMAC, truncation,
   foreign-UID recovery, oversized/garbage fields, store-not-bricked,

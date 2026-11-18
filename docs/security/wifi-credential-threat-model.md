@@ -99,9 +99,21 @@ including attacker-supplied or foreign-device fields — is re-emitted
 verbatim in a CSV-quoted `credential` column: the quoting keeps every
 row at 8 columns even when the field text contains commas, and it
 preserves sealed data for a card moved back to its sealing device
-instead of destroying it. A quoted field so long that it cannot fit
-the writer's bounded line buffer fails that save fail-closed (the
-previous database stays in place), exactly like any other overflow.
+instead of destroying it. The writer's line bound is sized to the
+structural worst case a loadable row can reach: a 32-char SSID, a
+15-char security string, `INT_MIN` channel/RSSI and a 135-char
+credential — every free-text character a quote, so CSV escaping
+doubles each one — produce a 419-byte record, and both the writer
+(448-byte line buffer) and the loader (480-byte line cap,
+deliberately larger so a store can always read back a file it just
+wrote) clear that worst case with margin: no row the loader
+accepts can be rejected at save time. The length guard remains as
+a fail-closed backstop against future format drift: a row that
+ever exceeded the bound would refuse the whole-store save — a
+save rewrites every row — so every add/update/delete/set-PSK
+would keep failing, with the previous database left in place,
+until the offending row is gone (recovery: remove the file; the
+store then rebuilds empty and boot is unaffected).
 
 ## Residual limits of a UID-derived key
 

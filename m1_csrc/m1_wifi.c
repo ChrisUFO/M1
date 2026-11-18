@@ -140,12 +140,26 @@
 #define WIFI_CRED_B64_MAC_LEN       24u
 /* Line buffer for bounded line-by-line load: must comfortably exceed the
  * writer's own longest possible record (line[WIFI_SAVED_LINE_BUF] in
- * wifi_saved_write_recoverable(), worst case ~280 chars: max-quoted
- * ssid/security plus the full 133-char credential column) so a genuine
- * record is never mistaken for an overlong one. */
-#define WIFI_SAVED_LINE_MAX         384u
+ * wifi_saved_write_recoverable()) so a genuine record is never mistaken
+ * for an overlong one. Absolute structural worst case of a loadable row,
+ * every field at its maximum and quote-heavy so CSV doubling applies:
+ *   version "1"        =  1
+ *   quoted ssid        =  2*32 + 2 =  66  (char ssid[33])
+ *   canonical bssid    =             17
+ *   channel and rssi   =  11 each ("-2147483648", hostile ints)
+ *   quoted security    =  2*15 + 2 =  32  (char security[16])
+ *   timestamp          =   0 (always written empty)
+ *   quoted credential  = 2*135 + 2 = 272  (char psk_enc[WIFI_CRED_FIELD_MAX])
+ *   7 separators + CRLF =   9
+ *   total              = 419 bytes incl. CRLF, 420 with NUL.
+ * Invariants (a store must always read back a file it just wrote):
+ * writer max output 419 < WIFI_SAVED_LINE_BUF = 448 (worst row + NUL
+ * fits with 28 bytes spare), and f_gets(line, 480) reads up to 479
+ * chars, so the 419-char worst line incl. '\n' reloads complete with
+ * 59 bytes spare. */
+#define WIFI_SAVED_LINE_MAX         480u
 /* Writer-side row assembly buffer (see WIFI_SAVED_LINE_MAX above). */
-#define WIFI_SAVED_LINE_BUF         320u
+#define WIFI_SAVED_LINE_BUF         448u
 //************************** S T R U C T U R E S *******************************
 
 /***************************** V A R I A B L E S ******************************/
@@ -5531,11 +5545,16 @@ static uint8_t wifi_saved_write_recoverable(void)
     char line[WIFI_SAVED_LINE_BUF];
     char qssid[70];
     char qsec[36];
-    /* Worst-case quoted expansion of any psk_enc content (every char a
-     * '"') is 2*N + wrapper quotes + NUL, so this can never truncate:
-     * even hostile or foreign-device text loaded from a tampered card
-     * is re-emitted verbatim rather than destroyed. */
-    char qcred[(2U * WIFI_CRED_FIELD_MAX) + 1U];
+    /* Worst-case quoted expansion of any psk_enc content (every one of
+     * the max 135 chars a '"') is 2*135 doubled chars + 2 wrapper
+     * quotes + 1 NUL = 273 bytes; the declared 2*WIFI_CRED_FIELD_MAX+8
+     * = 280 leaves 7 bytes of slack beyond that exact bound, so this
+     * can never truncate: even hostile or foreign-device text loaded
+     * from a tampered card is re-emitted verbatim rather than
+     * destroyed. The size stays derived from WIFI_CRED_FIELD_MAX --
+     * psk_enc's own bound -- so widening one without the other is a
+     * visible mismatch, not silent data loss. */
+    char qcred[(2U * WIFI_CRED_FIELD_MAX) + 8U];
     bool had_prior_final;
     /* Optional 8th "credential" column: ALWAYS emitted (empty when the
      * network has no stored PSK) so the CSV shape is stable, exactly as

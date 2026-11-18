@@ -1072,6 +1072,103 @@ def saved_networks_cred_tests(tmp):
     CHECK(strcmp(g_saved[1].psk_enc, "a,b:c") == 0 && g_saved[1].cred_state == WIFI_CRED_INVALID,
           "hostile credential survives the load/save/load round trip unchanged");
 
+    /* 23c: the absolute structural worst case round-trips. A 32-quote
+     * SSID, a 15-quote security string, INT_MIN channel/RSSI and a
+     * 135-quote credential (the "" escape branch at its maximum, built
+     * by doubling inside this source) make a 419-byte row:
+     * 1 + 66 + 17 + 11 + 11 + 32 + 0 + 272 + 7 commas + CRLF. The old
+     * 320-byte writer bound rejected this shape and, because a save
+     * rewrites the whole store, disabled every subsequent save; the
+     * new bound must accept it AND the loader must re-read it, or the
+     * store could not read back a file it just wrote. */
+    {
+        char ws[33], wsec[16], wc[WIFI_CRED_FIELD_MAX];
+        char q_ws[2 * 33 + 2], q_sec[2 * 16 + 2];
+        char q_wc[(2 * WIFI_CRED_FIELD_MAX) + 8];
+        char *nl, *nl2;
+        int rowlen = -1;
+
+        memset(ws, '"', 32); ws[32] = '\0';    /* max-length all-quote SSID */
+        memset(wsec, '"', 15); wsec[15] = '\0';/* max-length all-quote security */
+        memset(wc, '"', 135); wc[135] = '\0';  /* max-length all-quote credential */
+        wifi_csv_quote(q_ws, sizeof(q_ws), ws);
+        wifi_csv_quote(q_sec, sizeof(q_sec), wsec);
+        wifi_csv_quote(q_wc, sizeof(q_wc), wc);
+        snprintf(filebuf, sizeof(filebuf),
+            "#M1SAVEDNET\r\n"
+            "1,%s,AA:BB:CC:DD:EE:42,-2147483648,-2147483648,%s,,%s\r\n",
+            q_ws, q_sec, q_wc);
+        vfs_reset(); fault_reset(); g_saved_count = 0;
+        vfs_put(WIFI_SAVED_PATH, filebuf);
+        CHECK(wifi_saved_load() == 0 && g_saved_count == 1, "worst-case quote-heavy file loads");
+        CHECK(strcmp(g_saved[0].ssid, ws) == 0,
+              "max-length all-quote SSID unescapes to its full 32 chars on load");
+        CHECK(strcmp(g_saved[0].security, wsec) == 0,
+              "max-length all-quote security unescapes to its full 15 chars on load");
+        CHECK(strcmp(g_saved[0].psk_enc, wc) == 0 && g_saved[0].cred_state == WIFI_CRED_INVALID,
+              "135-quote credential unescapes to its full text, INVALID");
+        CHECK(wifi_saved_write_recoverable() == 0,
+              "save of the 419-byte worst-case row does NOT fail");
+        strcpy(filebuf, vfs_get(WIFI_SAVED_PATH));
+        nl = strchr(filebuf, '\n');                 /* end of "#M1SAVEDNET" */
+        nl = nl ? strchr(nl + 1, '\n') : NULL;      /* end of column header */
+        nl2 = nl ? strchr(nl + 1, '\n') : NULL;     /* end of the data row */
+        CHECK(nl2 != NULL && (rowlen = (int)(nl2 - nl)) == 419,
+              "rewritten worst-case row is exactly 419 bytes incl. CRLF");
+        CHECK(rowlen + 1 <= (int)WIFI_SAVED_LINE_BUF && rowlen <= (int)WIFI_SAVED_LINE_MAX - 1,
+              "worst-case row fits the writer buffer and the loader cap (read-back invariant)");
+        g_saved_count = 0; fault_reset();
+        CHECK(wifi_saved_load() == 0 && g_saved_count == 1,
+              "reload after worst-case rewrite succeeds");
+        CHECK(strcmp(g_saved[0].psk_enc, wc) == 0 && strcmp(g_saved[0].ssid, ws) == 0,
+              "worst-case SSID and credential survive load/save/load verbatim");
+        {
+            int outside = 0, inq = 0, bad = 0;
+            for (hit = filebuf; *hit; hit++)
+            {
+                if (*hit == '"') { inq = !inq; }
+                else if ((*hit == ',') && !inq) { outside++; }
+                else if (*hit == '\n') { if (outside != 7 && outside != 0) { bad = 1; } outside = 0; inq = 0; }
+            }
+            CHECK(!bad && outside == 0, "worst-case rewrite keeps exactly 8 columns per row");
+        }
+    }
+
+    /* 23d: size-boundary tripwire. A 331-byte row (20-char plain SSID,
+     * ordinary channel/RSSI/security, 135-quote credential) lands
+     * between the old 320-byte writer bound, which rejected it and
+     * suspended every save, and the new 448-byte bound: it must save
+     * and reload successfully. */
+    {
+        char wc[WIFI_CRED_FIELD_MAX];
+        char q_wc[(2 * WIFI_CRED_FIELD_MAX) + 8];
+        char *nl, *nl2;
+
+        memset(wc, '"', 135); wc[135] = '\0';
+        wifi_csv_quote(q_wc, sizeof(q_wc), wc);
+        snprintf(filebuf, sizeof(filebuf),
+            "#M1SAVEDNET\r\n"
+            "1,\"01234567890123456789\",AA:BB:CC:DD:EE:43,6,-50,\"WPA2\",,%s\r\n",
+            q_wc);
+        vfs_reset(); fault_reset(); g_saved_count = 0;
+        vfs_put(WIFI_SAVED_PATH, filebuf);
+        CHECK(wifi_saved_load() == 0 && g_saved_count == 1
+                  && strcmp(g_saved[0].psk_enc, wc) == 0,
+              "boundary-size hostile file loads with the credential verbatim");
+        CHECK(wifi_saved_write_recoverable() == 0,
+              "331-byte row (old bound: save suspended) now saves successfully");
+        strcpy(filebuf, vfs_get(WIFI_SAVED_PATH));
+        nl = strchr(filebuf, '\n');                 /* end of "#M1SAVEDNET" */
+        nl = nl ? strchr(nl + 1, '\n') : NULL;      /* end of column header */
+        nl2 = nl ? strchr(nl + 1, '\n') : NULL;     /* end of the data row */
+        CHECK(nl2 != NULL && (int)(nl2 - nl) == 331,
+              "rewritten boundary row is exactly 331 bytes incl. CRLF");
+        g_saved_count = 0; fault_reset();
+        CHECK(wifi_saved_load() == 0 && g_saved_count == 1
+                  && strcmp(g_saved[0].psk_enc, wc) == 0,
+              "boundary row reloads with the credential verbatim");
+    }
+
     /* ---- Part E: tamper / wrong CMAC / truncation / foreign UID ---- */
 
     /* helper: re-seed one credentialed network and return its field text */
