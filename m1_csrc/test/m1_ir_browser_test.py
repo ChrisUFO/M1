@@ -683,6 +683,16 @@ def static_seam_tests():
         -1 not in (i_lclick, i_arm) and i_lclick < i_arm,
         "the favorites toggle arms the OK auto-repeat guard",
     )
+    # the arm must precede the in-flight refusal inside the LCLICK branch:
+    # an LCLICK landing while a frame is still on air skips the toggle, but
+    # that hold's repeats are still swallowed -- otherwise each one
+    # transmits after the frame completes (the machine-gun hole)
+    i_refuse = btn_scr.find("if ( tx_active )", i_lclick)
+    CHECK(
+        -1 not in (i_arm, i_refuse) and i_lclick < i_arm < i_refuse,
+        "the repeat guard is armed before the in-flight refusal (a toggle "
+        "attempt during a frame still swallows that hold's repeats)",
+    )
     i_chk = btn_scr.find("if ( ok_repeat_guard )")
     i_hold = btn_scr.find("== BUTTON_IS_LPRESSED")
     i_lift = btn_scr.find("ok_repeat_guard = 0", i_hold)

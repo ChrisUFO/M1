@@ -111,20 +111,25 @@ Behavior:
   other list, with the basename (`.ir` stripped) as the row label.
 - **Toggle a favorite** by holding OK in the device's button view for
   about a second. A short press transmits; the long-press mark toggles
-  the favorite exactly once — never while a frame is in flight — and the
-  auto-repeat clicks that follow the toggle are swallowed until OK is
-  released, so favoriting cannot re-send the selected button (holding a
-  button outside that toggle still auto-repeats it, everywhere in this
-  firmware). Favorited devices carry a `* ` marker in the button-view
-  title.
+  the favorite exactly once — never while a frame is in flight (a
+  long-press that lands mid-frame skips the toggle but still swallows
+  that hold's auto-repeat clicks) — and the auto-repeat clicks that
+  follow the toggle are swallowed until OK is released, so favoriting
+  cannot re-send the selected button (holding a button outside that
+  toggle still auto-repeats it, everywhere in this firmware). Favorited
+  devices carry a `* ` marker in the button-view title.
 - **Recent** records a device when its frame completes — sending (and
   finishing the send), not merely opening, is what makes a device
   recent; a send aborted with BACK mid-frame is not recorded.
 - Loads are tolerant: a missing or unreadable file, blank lines, corrupt
   lines and lines longer than the 128-byte path bound are skipped, and
   an unreadable store renders an empty list, never an error screen. A
-  stored path whose file has since disappeared from the card opens the
-  normal "Read failed" notice, exactly like any unreadable device.
+  stored line must also be a device path (`0:/IR/….ir`), so a rewrite
+  torn by a full or removed card — a path cut mid-line — is skipped at
+  load and dropped by the next rewrite instead of lingering as a
+  phantom row. A stored path whose file has since disappeared from the
+  card opens the normal "Read failed" notice, exactly like any
+  unreadable device.
 
 These stores are pure browser data: they are read and written only
 between transmits inside the browser session and never touch the

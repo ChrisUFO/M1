@@ -246,10 +246,12 @@ The IR file browser keeps two plain-text device lists (issue #43,
 - one full device path per line, newest first (the legacy fork format);
 - LRU caps enforced by rewriting the whole file on every change:
   20 favorites, 10 recent;
-- loads are tolerant (missing/unreadable file, blank, corrupt and
-  over-long lines are skipped; an unreadable store renders an empty
-  list), and the rewrite is bounded to the cap — no unbounded memory or
-  file growth;
+- loads are tolerant (missing/unreadable file, blank, corrupt, over-long
+  and mis-shaped lines are skipped; a stored line must be a `0:/IR/….ir`
+  device path, so a rewrite torn by card-full or card removal never
+  enters the workspace and the next bounded rewrite drops it; an
+  unreadable store renders an empty list), and the rewrite is bounded to
+  the cap — no unbounded memory or file growth;
 - integrity mechanism: none beyond tolerance (plain user data, no CRC);
   deleting the files is the supported reset;
 - writer ownership: the browser UI task only, between transmits inside

@@ -19,14 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   legacy fork format: one full device path per line, newest first, LRU
   caps 20/10, whole-file bounded rewrites, `0:/System` ensured lazily on
   first write). Loading is tolerant — a missing, unreadable, blank,
-  corrupt or over-long line is skipped and an unreadable store renders
-  an empty list, never an error screen — and stored rows open the same
+  corrupt, over-long or mis-shaped line is skipped (stored lines must be
+  `0:/IR/….ir` device paths, so a rewrite torn by card-full or card
+  removal is dropped at load and self-heals on the next rewrite) and an
+  unreadable store renders an empty list, never an error screen — and
+  stored rows open the same
   device → button flow as every other list (a vanished path surfaces the
   normal "Read failed" notice). Holding OK in the button view for about a
   second toggles a device in the favorites store (legacy `* ` title
   marker + short notice; the long-press mark fires exactly once per hold
-  and never while a frame is in flight, and the OK auto-repeat clicks
-  that follow the toggle are suppressed until the key is released, so
+  and never while a frame is in flight — a long-press landing mid-frame
+  skips the toggle but still swallows that hold's repeats — and the OK
+  auto-repeat clicks that follow the toggle are suppressed until the key
+  is released, so
   favoriting cannot machine-gun the selected button; the short-press
   transmit and LEFT/RIGHT paging are untouched); every completed frame
   records the device in the recent store (a send aborted with BACK is
@@ -43,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   press, END_OF_FILE wraps around), matching the browser's
   one-frame-per-button default. Static workspaces only (+3.2 KB BSS for
   the shared store workspace); no dynamic allocation in screen loops.
-  New host suite `m1_csrc/test/m1_ir_favorites_test.py` (66 checks):
+  New host suite `m1_csrc/test/m1_ir_favorites_test.py` (70 checks):
   compiled pure-core store model (trim, tolerant-load rule, LRU
   insert/dedup/eviction/removal, basename labels, favorite title
   marker) plus static seams for the store wiring, corruption tolerance,

@@ -8,10 +8,11 @@ mocks of the code under test):
 1. Compiled layer: the M1_IR_BROWSER_PURE_CORE region is extracted
    verbatim from Infrared/m1_ir_browser.c and compiled with a generated
    harness -- store-line parsing (in-place trim; the tolerant-load rule:
-   blank and over-long lines are skipped, never stored truncated), the
-   LRU list model (front insert, dedup, cap eviction, removal), the
-   legacy basename row labels of stored device paths, and the favorite
-   "* " title marker.
+   blank, over-long and mis-shaped lines are skipped, never stored
+   truncated -- only 0:/IR/.../.ir device paths are kept, so a torn
+   rewrite self-heals on the next one), the LRU list model (front
+   insert, dedup, cap eviction, removal), the legacy basename row labels
+   of stored device paths, and the favorite "* " title marker.
 2. Static layer: reads the real sources and verifies the wiring seams --
    the 0:/System store files and the LRU caps (20 favorites / 10 recent),
    the dashboard rows and their dispatch, the long-OK favorites toggle
@@ -172,23 +173,33 @@ def pure_core_tests():
         eq("trim all-ws", m1_irb_list_trim(buf), "");
         assert(m1_irb_list_trim(NULL) == NULL);
 
-        /* ---- tolerant-load rule ---- */
+        /* ---- tolerant-load rule: shape-gated device paths ---- */
         assert(m1_irb_list_line_ok("0:/IR/TVs/Samsung/BN59.ir") == 1);
-        assert(m1_irb_list_line_ok("x") == 1);              /* any non-empty
-                                                            * fitting line */
-        assert(m1_irb_list_line_ok("") == 0);               /* blank: skipped */
+        assert(m1_irb_list_line_ok("0:/IR/ACs/g.IR") == 1);  /* any-case ext */
+        assert(m1_irb_list_line_ok("x") == 0);               /* not under the
+                                                             * scan root */
+        assert(m1_irb_list_line_ok("1:/IR/TVs/a.ir") == 0);  /* wrong root */
+        assert(m1_irb_list_line_ok("0:/IR/TVs/Samsu") == 0); /* torn write:
+                                                             * prefix ok, no
+                                                             * .ir tail */
+        assert(m1_irb_list_line_ok("0:/IR/") == 0);          /* bare root */
+        assert(m1_irb_list_line_ok("0:/I") == 0);            /* torn prefix */
+        assert(m1_irb_list_line_ok("") == 0);                /* blank: skipped */
         assert(m1_irb_list_line_ok(NULL) == 0);
         memset(buf, 'a', sizeof(buf) - 1);
         buf[sizeof(buf) - 1] = '\\0';
         assert(strlen(buf) == 159);
-        assert(m1_irb_list_line_ok(buf) == 0);              /* over-long */
-        memset(buf, 'a', M1_IR_BROWSER_PATH_LEN_MAX);
+        assert(m1_irb_list_line_ok(buf) == 0);               /* over-long */
+        /* boundary in valid shape: cap-1 fits (room for the NUL), the
+         * exact cap does not -- never stored truncated */
+        strcpy(buf, "0:/IR/");
+        memset(buf + 6, 'a', M1_IR_BROWSER_PATH_LEN_MAX - 1u - 6u - 3u);
+        strcpy(buf + M1_IR_BROWSER_PATH_LEN_MAX - 1u - 3u, ".ir");
+        assert(strlen(buf) == M1_IR_BROWSER_PATH_LEN_MAX - 1u);
+        assert(m1_irb_list_line_ok(buf) == 1);
+        buf[M1_IR_BROWSER_PATH_LEN_MAX - 1u] = 'a';          /* exact cap */
         buf[M1_IR_BROWSER_PATH_LEN_MAX] = '\\0';
-        assert(m1_irb_list_line_ok(buf) == 0);              /* exactly cap: no
-                                                            * room for NUL */
-        memset(buf, 'a', M1_IR_BROWSER_PATH_LEN_MAX - 1);
-        buf[M1_IR_BROWSER_PATH_LEN_MAX - 1] = '\\0';
-        assert(m1_irb_list_line_ok(buf) == 1);              /* cap-1 fits */
+        assert(m1_irb_list_line_ok(buf) == 0);
 
         /* ---- LRU list model ---- */
         n = 0;
@@ -351,6 +362,11 @@ def static_seam_tests():
     CHECK(
         "m1_irb_list_trim(line)" in load and "m1_irb_list_line_ok(p)" in load,
         "every line goes through the host-tested trim + tolerant rule",
+    )
+    CHECK(
+        'strncmp(p, M1_IRB_SD_ROOT "/",' in browser,
+        "the tolerant rule shape-gates stored lines on the fixed scan-root "
+        "prefix, so torn rewrites are skipped and self-heal",
     )
     CHECK(
         "strchr(line, '\\n') == NULL" in load,

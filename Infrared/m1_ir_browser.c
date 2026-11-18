@@ -74,8 +74,6 @@
 
 #define M1_LOGDB_TAG	"IR_BROWSER"
 
-#define M1_IRB_SD_ROOT				"0:/IR"
-
 /* Favorites/recent stores (PR-6, legacy fork format): one full device
  * path per line under the canonical System folder. */
 #define M1_IRB_FAV_FILE				M1_SD_DIR_SYSTEM "/ir_favorites.txt"
@@ -96,6 +94,10 @@
 * (category dir vs .ir device, category-name fit for the bounded rows),
 * display-name derivation and the strict-skip notice aggregation.
 */
+
+/* The fixed IR device-tree root: the scans walk it, and the favorites/
+ * recent tolerant-load rule shape-gates stored lines on its prefix. */
+#define M1_IRB_SD_ROOT				"0:/IR"
 
 /* List window: selection + first visible row (6-row pagination). */
 typedef struct
@@ -480,9 +482,14 @@ static char *m1_irb_list_trim(char *s)
 /*============================================================================*/
 /**
   * @brief  Tolerant-load rule for one trimmed store line: keep it only
-  *         when non-empty and strictly shorter than a bounded workspace
-  *         row (NUL included). Blank/corrupt and over-long lines are
-  *         skipped, never stored truncated.
+  *         when it is a device path -- rooted under the fixed scan root
+  *         and carrying the .ir extension (any case, like the scan
+  *         filter) -- and strictly shorter than a bounded workspace row
+  *         (NUL included). Blank, corrupt, over-long and mis-shaped
+  *         lines are skipped, never stored truncated. A rewrite torn by
+  *         card-full or card removal (a mid-path prefix like
+  *         "0:/IR/TVs/Samsu") therefore never enters the workspace, and
+  *         the next bounded rewrite drops it for good.
   */
 /*============================================================================*/
 static uint8_t m1_irb_list_line_ok(const char *p)
@@ -493,7 +500,11 @@ static uint8_t m1_irb_list_line_ok(const char *p)
 		return 0;
 	while ( p[len] != '\0' )
 		len++;
-	return (uint8_t)(len < (size_t)M1_IR_BROWSER_PATH_LEN_MAX);
+	if ( len >= (size_t)M1_IR_BROWSER_PATH_LEN_MAX )
+		return 0;
+	if ( strncmp(p, M1_IRB_SD_ROOT "/", sizeof(M1_IRB_SD_ROOT "/") - 1u) != 0 )
+		return 0; /* not a path under the fixed scan root */
+	return m1_irb_is_ir_file(p); /* a .ir device name at the path end */
 } // static uint8_t m1_irb_list_line_ok(const char *p)
 
 /*============================================================================*/
@@ -1784,6 +1795,12 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 		}
 		else if ( bs.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_LCLICK )
 		{
+			/* Arm BEFORE the in-flight refusal: an LCLICK landing while
+			 * a frame is still on air skips the toggle, but this hold's
+			 * auto-repeat CLICKs must be swallowed as well -- otherwise
+			 * each repeat transmits once per completed frame, the exact
+			 * machine-gun the guard exists to prevent. */
+			ok_repeat_guard = 1; /* swallow this hold's auto-repeat (below) */
 			if ( tx_active )
 				continue; /* no store writes while a frame runs */
 
@@ -1793,7 +1810,6 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 			fav = irb_fav_toggle(dev_path);
 			m1_irb_dev_title(dev_title, (uint8_t)sizeof(dev_title), title, fav);
 			irb_draw_list(dev_title, count, &w, irb_row_entry, truncated);
-			ok_repeat_guard = 1; /* swallow this hold's auto-repeat (below) */
 		}
 		else if ( bs.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK )
 		{
