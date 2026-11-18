@@ -34,9 +34,11 @@
 * (ir_favorites.txt / ir_recent.txt, one device path per line, LRU caps
 * M1_IR_BROWSER_FAVORITES_MAX / M1_IR_BROWSER_RECENT_MAX). They are pure
 * filesystem data: loads and rewrites happen only in this UI task between
-* transmits -- never inside the transmit path itself -- so they can never
-* overlap IRMP TX/learn (the browser holds the session guard while it
-* runs, and no other path writes these files). Loads are tolerant: a
+* transmits -- never inside the transmit path itself, and never while a
+* frame is on air (recent is recorded where tx_active clears, after the
+* frame completes) -- so they can never overlap IRMP TX/learn (the
+* browser holds the session guard while it runs, and no other path
+* writes these files). Loads are tolerant: a
 * missing, corrupt or over-long line is skipped; an unreadable file
 * renders an empty list.
 * ===========================================================================

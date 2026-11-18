@@ -110,12 +110,16 @@ Behavior:
   files*/*Search*; entries open the same device → button flow as any
   other list, with the basename (`.ir` stripped) as the row label.
 - **Toggle a favorite** by holding OK in the device's button view for
-  about a second. A short press transmits; holding a button already
-  auto-repeats it (everywhere in this firmware), and the long-press mark
-  toggles the favorite exactly once — never while a frame is in flight.
-  Favorited devices carry a `* ` marker in the button-view title.
-- **Recent** records a device on every successful transmit — sending,
-  not merely opening, is what makes a device recent.
+  about a second. A short press transmits; the long-press mark toggles
+  the favorite exactly once — never while a frame is in flight — and the
+  auto-repeat clicks that follow the toggle are swallowed until OK is
+  released, so favoriting cannot re-send the selected button (holding a
+  button outside that toggle still auto-repeats it, everywhere in this
+  firmware). Favorited devices carry a `* ` marker in the button-view
+  title.
+- **Recent** records a device when its frame completes — sending (and
+  finishing the send), not merely opening, is what makes a device
+  recent; a send aborted with BACK mid-frame is not recorded.
 - Loads are tolerant: a missing or unreadable file, blank lines, corrupt
   lines and lines longer than the 128-byte path bound are skipped, and
   an unreadable store renders an empty list, never an error screen. A

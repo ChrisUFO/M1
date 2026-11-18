@@ -33,10 +33,12 @@
 * two text files under 0:/System (one device path per line, LRU caps in
 * m1_ir_browser.h), dashboard rows that list them, a favorites toggle on
 * a long OK press in the button view (title marker "* "), and a recent
-* entry per successful transmit. Store loads and rewrites are plain
-* filesystem work done between transmits in this UI task -- the transmit
-* path itself (irb_transmit) contains no file writes, so favorites/
-* recent handling can never overlap IRMP TX or learn.
+* entry per completed frame (recorded in the TX-completed branch where
+* tx_active clears, so a send aborted with BACK mid-frame is not
+* recorded). Store loads and rewrites are plain filesystem work done
+* between transmits in this UI task -- the transmit path itself
+* (irb_transmit) contains no file writes, so favorites/recent handling
+* can never overlap IRMP TX or learn.
 *
 * See m1_ir_browser.h for the ownership rule and the 0:/IR SD convention;
 * docs/ir-provisioning.md documents the side-load steps.
@@ -1178,8 +1180,11 @@ static void irb_store_save(const char *file, uint16_t count)
 
 /*============================================================================*/
 /**
-  * @brief  Record a transmit in the recent store (LRU: newest at the
-  *         front, dedup, cap M1_IR_BROWSER_RECENT_MAX).
+  * @brief  Record a completed transmit in the recent store (LRU: newest
+  *         at the front, dedup, cap M1_IR_BROWSER_RECENT_MAX). Called
+  *         only from the TX-completed branch where tx_active clears, so
+  *         the rewrite runs strictly between frames and a send aborted
+  *         with BACK mid-frame never lands in recent.
   */
 /*============================================================================*/
 static void irb_recent_add(const char *path)
@@ -1641,10 +1646,12 @@ static void irb_screen_stored_list(const char *title, const char *file, uint16_t
 /**
   * @brief  Button list screen of one device: the PR-4 index entries with
   *         6-row pagination; OK transmits the selected button through the
-  *         upstream play path (a successful transmit is recorded in the
-  *         recent store); OK held down toggles the device in the
-  *         favorites store (legacy "* " title marker); BACK returns to
-  *         the calling list.
+  *         upstream play path (a completed frame is recorded in the
+  *         recent store where tx_active clears -- not the press that
+  *         started it); OK held down toggles the device in the favorites
+  *         store (legacy "* " title marker) and suppresses that hold's
+  *         auto-repeat CLICKs until OK is released; BACK returns to the
+  *         calling list.
   * @retval always 1 (BACK), kept explicit for the legacy call shape.
   */
 /*============================================================================*/
@@ -1656,7 +1663,7 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 	BaseType_t ret;
 	int32_t indexed;
 	uint16_t count;
-	uint8_t truncated, tx_err, fav, tx_active = 0;
+	uint8_t truncated, tx_err, fav, tx_active = 0, ok_repeat_guard = 0;
 	char dev_path[M1_IR_BROWSER_PATH_LEN_MAX];
 	char dev_title[M1_IR_BROWSER_NAME_LEN_MAX + 2u]; /* "* " + label */
 
@@ -1728,6 +1735,11 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 			{
 				m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
 				tx_active = 0;
+				/* recent = a frame that actually completed: recorded here,
+				 * where tx_active clears, so the SD rewrite runs strictly
+				 * between frames and a send aborted with BACK mid-frame
+				 * never lands in recent */
+				irb_recent_add(dev_path);
 				irb_draw_list(dev_title, count, &w, irb_row_entry, truncated);
 			}
 			continue;
@@ -1781,11 +1793,28 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 			fav = irb_fav_toggle(dev_path);
 			m1_irb_dev_title(dev_title, (uint8_t)sizeof(dev_title), title, fav);
 			irb_draw_list(dev_title, count, &w, irb_row_entry, truncated);
+			ok_repeat_guard = 1; /* swallow this hold's auto-repeat (below) */
 		}
 		else if ( bs.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK )
 		{
 			if ( tx_active )
 				continue; /* ignore OK while transmitting */
+
+			if ( ok_repeat_guard )
+			{
+				/* m1_system's BUTTON_IS_LPRESSED state re-emits
+				 * BUTTON_EVENT_CLICK every BUTTON_REPEATED_PRESS for the
+				 * rest of the hold, so without this guard the natural
+				 * "hold OK through the toggle notice" would machine-gun
+				 * the selected button (often "Power"). Swallow every
+				 * CLICK until that hold ends; only the first CLICK of a
+				 * NEW press (a fresh debounce cycle) transmits again. */
+				if ( buttons_ctl[BUTTON_OK_KP_ID].status == BUTTON_IS_LPRESSED )
+					continue; /* still the same hold: repeat artifact */
+				ok_repeat_guard = 0; /* the hold ended */
+				if ( buttons_ctl[BUTTON_OK_KP_ID].status != BUTTON_IS_PRESSED )
+					continue; /* stale tail of the ended hold, not a new press */
+			}
 
 			irb_draw_sending(irb_entries[w.sel].name);
 			m1_buzzer_notification();
@@ -1822,10 +1851,6 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 			else
 			{
 				tx_active = 1;
-				irb_recent_add(dev_path); /* recent updated on transmit;
-											* filesystem-only, between
-											* frames -- never inside the
-											* transmit path */
 			}
 		}
 	}

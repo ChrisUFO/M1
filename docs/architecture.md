@@ -253,7 +253,8 @@ The IR file browser keeps two plain-text device lists (issue #43,
 - integrity mechanism: none beyond tolerance (plain user data, no CRC);
   deleting the files is the supported reset;
 - writer ownership: the browser UI task only, between transmits inside
-  its IR-session (the transmit path itself performs no store writes);
+  its IR-session (the transmit path itself performs no store writes; the
+  recent store is written when a frame completes, not when it starts);
   no other module reads or writes these files.
 
 ## Real-time clock

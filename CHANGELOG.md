@@ -25,9 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   normal "Read failed" notice). Holding OK in the button view for about a
   second toggles a device in the favorites store (legacy `* ` title
   marker + short notice; the long-press mark fires exactly once per hold
-  and never while a frame is in flight, so the short-press transmit,
-  auto-repeat and LEFT/RIGHT paging are untouched); every successful transmit records the device in the recent
-  store. Store loads/rewrites are filesystem-only and run between frames
+  and never while a frame is in flight, and the OK auto-repeat clicks
+  that follow the toggle are suppressed until the key is released, so
+  favoriting cannot machine-gun the selected button; the short-press
+  transmit and LEFT/RIGHT paging are untouched); every completed frame
+  records the device in the recent store (a send aborted with BACK is
+  not recorded). Store loads/rewrites are filesystem-only and run between frames
   in the browser session — the transmit path itself performs no store or
   filesystem writes, so favorites/recent handling can never overlap IRMP
   TX/learn. The upstream cycle-through-every-device session

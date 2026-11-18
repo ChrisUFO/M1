@@ -16,7 +16,7 @@ mocks of the code under test):
    the 0:/System store files and the LRU caps (20 favorites / 10 recent),
    the dashboard rows and their dispatch, the long-OK favorites toggle
    with the title-marker refresh (gated off active transmits), the
-   recent entry per successful transmit, corruption tolerance (missing
+   recent entry per completed frame, corruption tolerance (missing
    or unreadable store renders an empty list), the serialization rules
    (no store/fatfs writes inside the transmit path; store operations are
    browser-session-only and touch no IRMP/irsnd API), and the cycle-all
@@ -497,12 +497,25 @@ def static_seam_tests():
         "if ( tx_active )" in lclick_block and "continue;" in lclick_block,
         "the favorites toggle is refused while a frame is in flight",
     )
+    # recent is recorded when the frame COMPLETES (where tx_active
+    # clears), not when it starts: the SD rewrite runs strictly between
+    # frames, and a send aborted with BACK mid-frame never lands in recent
     i_tx = btn.find("tx_err = irb_transmit(dev_path, w.sel);")
-    i_active = btn.find("tx_active = 1;", i_tx)
-    i_rec = btn.find("irb_recent_add(dev_path);", i_tx)
+    i_txbr = btn.find("q_item.q_evt_type == Q_EVENT_IRRED_TX")
+    i_txdone = btn.find("IR_TX_COMPLETED")
+    i_txclr = btn.find("tx_active = 0;")
+    i_rec = btn.find("irb_recent_add(dev_path);")
     CHECK(
-        -1 not in (i_tx, i_active, i_rec) and i_tx < i_active < i_rec,
-        "a successful transmit records the device in the recent store",
+        -1 not in (i_txbr, i_txdone, i_txclr, i_rec)
+        and i_txbr < i_txdone < i_txclr < i_rec,
+        "recent is recorded in the TX-completed branch where tx_active "
+        "clears (frame completion, not transmit start)",
+    )
+    CHECK(
+        btn.find("irb_recent_add(dev_path);", i_tx) == -1
+        and btn.count("irb_recent_add(") == 1,
+        "the OK CLICK path no longer records recent at transmit start "
+        "(exactly one recent write in the screen, on completion)",
     )
 
     # --- serialization: store writes stay out of the transmit path, and
