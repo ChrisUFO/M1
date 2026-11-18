@@ -29,6 +29,8 @@
 #include "m1_sdcard_man.h"
 #include "m1_sdcard_provision.h"
 #include "m1_file_util.h"
+#include "m1_settings_store.h"
+#include "m1_settings.h"
 #include "uiView.h"
 #include "m1_subghz_recordraw_draw.h"
 #include "m1_subghz_scan_draw.h"
@@ -478,6 +480,7 @@ static void sub_ghz_remap_status_update(uint8_t gpio_remapped);
 static void sub_ghz_set_opmode(uint8_t opmode, uint8_t band, uint8_t channel, uint8_t tx_power);
 static uint8_t sub_ghz_set_opmode_hz(uint8_t opmode, uint32_t hz, uint8_t channel, uint8_t tx_power);
 static uint8_t sub_ghz_fcc_ism_band_check_hz(uint32_t hz);
+static uint8_t sub_ghz_freq_override_hz(uint32_t *out_hz);
 static void subghz_format_freq_mhz(uint32_t hz, char *buf, int buflen);
 static void sub_ghz_display_result(const char *name, uint64_t key, uint16_t bits);
 static uint8_t sub_ghz_raw_samples_init(void);
@@ -645,7 +648,19 @@ static void sub_ghz_set_opmode(uint8_t opmode, uint8_t band, uint8_t channel, ui
 {
 	uint8_t mod_type;
 	S_M1_SubGHz_Band freq;
+	uint32_t ovr_hz;
 	//struct si446x_reply_PART_INFO_map *pinfo;
+
+	/* Frequency override (Radio Settings): when active it replaces the
+	 * legacy band preset entirely - exact-Hz tuning on the override path,
+	 * which applies the same region gate and the user's modem overrides.
+	 * ISOLATED requests are never rerouted: putting the radio to sleep
+	 * must not retune it. */
+	if ( (opmode!=SUB_GHZ_OPMODE_ISOLATED) && sub_ghz_freq_override_hz(&ovr_hz) )
+	{
+		sub_ghz_set_opmode_hz(opmode, ovr_hz, channel, tx_power);
+		return;
+	}
 
 	switch(band)
 	{
@@ -674,6 +689,14 @@ static void sub_ghz_set_opmode(uint8_t opmode, uint8_t band, uint8_t channel, ui
 
 	radio_init_rx_tx(freq, mod_type, SI446x_Get_Reset_Stat());
 	SI446x_Select_Frontend(freq);
+
+	/* Radio Settings (issue #3): patch the user's modem overrides on top
+	 * of the just-loaded preset - the LAST configuration step before the
+	 * radio enters RX/TX below. At compiled defaults this writes nothing
+	 * (stock behavior); otherwise it may replace mod_type (re-encoded by
+	 * the TX branch below for direct mode) and tx_power (written right
+	 * before Radio_Start_Tx). */
+	sub_ghz_apply_user_radio_overrides(&mod_type, &tx_power);
 
 	//pinfo = SI446x_PartInfo();
 	//M1_LOG_I(M1_LOGDB_TAG, "Init done.\r\nPart %d Rev. %d Rom ID %d\r\n", pinfo->PART, pinfo->CHIPREV, pinfo->ROMID);
@@ -755,8 +778,18 @@ static uint8_t sub_ghz_set_opmode_hz(uint8_t opmode, uint32_t hz, uint8_t channe
 	uint8_t mod_type;
 	uint8_t tune;
 
+	/* Frequency override (Radio Settings): an active override replaces the
+	 * caller's exact frequency too - record, replay and scan all operate
+	 * on the user's explicit frequency. ISOLATED requests keep the given
+	 * hz (sleeping must not retune). */
+	if ( (opmode!=SUB_GHZ_OPMODE_ISOLATED) && sub_ghz_freq_override_hz(&hz) )
+	{
+		M1_LOG_I(M1_LOGDB_TAG, "Freq override active: %lu Hz\r\n", (unsigned long)hz);
+	}
+
 	/* Modulation follows the base band (parity with sub_ghz_set_opmode:
-	 * the 900 MHz band uses FSK, all lower bands use OOK). */
+	 * the 900 MHz band uses FSK, all lower bands use OOK). The user's
+	 * modulation override (if any) replaces this below, after tuning. */
 	mod_type = ( hz >= 705000000UL ) ? MODEM_MOD_TYPE_FSK : MODEM_MOD_TYPE_OOK;
 
 	/* Program the synthesizer to the EXACT frequency. A non-zero result is an
@@ -768,6 +801,14 @@ static uint8_t sub_ghz_set_opmode_hz(uint8_t opmode, uint32_t hz, uint8_t channe
 		M1_LOG_E(M1_LOGDB_TAG, "TUNE FAIL hz=%lu code=%d\r\n", (unsigned long)hz, tune);
 		return tune;
 	}
+
+	/* Radio Settings (issue #3): patch the user's modem overrides on top
+	 * of the just-loaded base config - the LAST configuration step before
+	 * the radio enters RX/TX below (the overrides must survive this tune,
+	 * and the direct-mode TX re-encoding + PA level below then carry the
+	 * user's modulation and power). At compiled defaults this writes
+	 * nothing (stock behavior). */
+	sub_ghz_apply_user_radio_overrides(&mod_type, &tx_power);
 
 	M1_LOG_D(M1_LOGDB_TAG, "Rx_Tx(hz) mode %d hz %lu channel %d\r\n", opmode, (unsigned long)hz, channel);
 
@@ -846,6 +887,111 @@ static uint8_t sub_ghz_fcc_ism_band_check_hz(uint32_t hz)
 
 	return ret;
 } // static uint8_t sub_ghz_fcc_ism_band_check_hz(uint32_t hz)
+
+
+
+/*============================================================================*/
+/**
+  * @brief  Frequency-override resolver (Radio Settings, issue #3). Returns 1
+  *         with *out_hz set when the user's explicit-frequency override is
+  *         active AND passes the apply-time gates: the stored validity flag,
+  *         the synthesizer coverage test (radio_freq_in_range) and the
+  *         regional TX-permission check (sub_ghz_fcc_ism_band_check_hz).
+  *         The SAME region check gated the value at SAVE time in the Radio
+  *         Settings screen; it is re-enforced here because the region
+  *         configuration may have changed since the value was persisted.
+  *         A refused override is logged and ignored: the caller keeps its
+  *         stock band/frequency behavior (fail-closed, never a retune to a
+  *         frequency that is now disallowed).
+  * @retval 1 = override active and usable, 0 = keep stock behavior.
+  */
+/*============================================================================*/
+static uint8_t sub_ghz_freq_override_hz(uint32_t *out_hz)
+{
+	const S_M1_Settings_t *sett = settings_get();
+
+	if ( sett->subghz_freq_valid==0u )
+		return 0;
+	if ( !radio_freq_in_range(sett->subghz_freq_hz) )
+	{
+		M1_LOG_W(M1_LOGDB_TAG, "Freq override %lu Hz out of synth range, ignored\r\n",
+				(unsigned long)sett->subghz_freq_hz);
+		return 0;
+	}
+	if ( sub_ghz_fcc_ism_band_check_hz(sett->subghz_freq_hz) )
+	{
+		M1_LOG_W(M1_LOGDB_TAG, "Freq override %lu Hz not permitted in this region, ignored\r\n",
+				(unsigned long)sett->subghz_freq_hz);
+		return 0;
+	}
+	if ( out_hz!=NULL )
+		*out_hz = sett->subghz_freq_hz;
+	return 1;
+} // static uint8_t sub_ghz_freq_override_hz(uint32_t *out_hz)
+
+
+
+/*============================================================================*/
+/**
+  * @brief  Apply the user's Radio Settings (issue #3) on top of the radio
+  *         configuration that was JUST loaded by radio_init_rx_tx() /
+  *         radio_tune_exact_hz(). Called after every preset load/tune and
+  *         immediately before the radio is placed into RX or TX (see the
+  *         two opmode setters below - every Record/Replay/Scan/Frequency
+  *         Reader path funnels through them). Idempotent: repeated calls
+  *         with unchanged settings emit identical SI4463 property writes.
+  *         Task context ONLY (subfunc_handler_task) - never call from an
+  *         ISR; the SI4463 property API this uses is blocking SPI.
+  *
+  *         Fast-out at defaults: when every modem field sits at its
+  *         compiled default (band-preset modulation, preset bandwidth,
+  *         preset deviation, default power +20 dBm == the stock PA_PWR_LVL
+  *         0x7F), NOTHING is written and stock scan/record/replay behavior
+  *         is bit-for-bit unchanged.
+  *
+  *         When any field is non-default, SI446x_Apply_Modem_Config()
+  *         patches the modem properties; on return *mod_type holds the raw
+  *         MODEM_MOD_TYPE code when the user overrode the modulation (so a
+  *         TX caller re-encodes its direct-mode 0xC8|mod_type with the
+  *         user's modulation) and *tx_power holds the nominal PA_PWR_LVL
+  *         byte (written by the TX path right before Radio_Start_Tx).
+  *         Either pointer may be NULL.
+  */
+/*============================================================================*/
+void sub_ghz_apply_user_radio_overrides(uint8_t *mod_type, uint8_t *tx_power)
+{
+	const S_M1_Settings_t *sett = settings_get();
+	S_M1_Si446x_ModemCfg_t cfg;
+	uint8_t raw_mod;
+	uint8_t pa_lvl;
+
+	/* Defaults fast-out (see header comment): stock RF behavior. */
+	if ( (sett->subghz_mod==M1_SUBGHZ_MODP_BAND_DEFAULT)
+		&& (sett->subghz_bw_khz==0u)
+		&& (sett->subghz_dev_khz==0u)
+		&& (sett->subghz_power_dbm==M1_SUBGHZ_POWER_DBM_DEFAULT) )
+	{
+		return;
+	}
+
+	cfg.mod_preset      = sett->subghz_mod;
+	cfg.bw_khz          = sett->subghz_bw_khz;
+	cfg.dev_khz         = sett->subghz_dev_khz;
+	cfg.power_dbm       = sett->subghz_power_dbm;
+	/* The 900 MHz base configuration (the only outdiv-4 one) carries the
+	 * 200 kHz WDS FSK deviation; every other band family's FSK reference
+	 * is the 2 kHz one. Used only for the FSK "Auto" deviation. */
+	cfg.base_band_900mhz = ( radio_get_last_outdiv()==4u ) ? 1u : 0u;
+
+	raw_mod = 0;      /* 0 = modulation not overridden (raw codes are 1..5) */
+	pa_lvl  = 0xFF;   /* sentinel: Apply writes only 0..127 when in range   */
+	(void)SI446x_Apply_Modem_Config(&cfg, &raw_mod, &pa_lvl);
+	if ( (raw_mod!=0u) && (mod_type!=NULL) )
+		*mod_type = raw_mod;
+	if ( (pa_lvl!=0xFFu) && (tx_power!=NULL) )
+		*tx_power = pa_lvl;
+} // void sub_ghz_apply_user_radio_overrides(uint8_t *mod_type, uint8_t *tx_power)
+
 
 
 
@@ -4292,4 +4438,3 @@ static void sub_ghz_display_result(const char *name, uint64_t key, uint16_t bits
     sprintf(hexString, "0x%lX  %dbit", (unsigned long)key, bits);
     u8g2_DrawStr(&m1_u8g2, 2, 52, hexString);
     m1_u8g2_nextpage();
-}

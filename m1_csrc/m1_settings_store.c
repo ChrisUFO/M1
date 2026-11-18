@@ -55,7 +55,11 @@
 
 /* Single source of truth for the compiled defaults: both the const default
  * image and the (writable) live image are initialized from this macro, so
- * the live struct is valid BEFORE settings_init() runs. */
+ * the live struct is valid BEFORE settings_init() runs. Sub-GHz semantics
+ * are owned by the Radio Settings unit (PR-7): mod 0 / bw 0 / dev 0 are
+ * the "keep the loaded band preset" sentinels, power +20 dBm maps to the
+ * stock PA_PWR_LVL 0x7F, and freq_valid 0 means no frequency override --
+ * together these reproduce pre-PR-7 RF behavior bit-for-bit. */
 #define SETTINGS_DEFAULTS_INIT {                                       \
     .brightness_pct    = 100u,                                         \
     .screen_timeout_s  = 45u,                                          \
@@ -64,7 +68,7 @@
     .subghz_mod        = 0u,                                           \
     .subghz_bw_khz     = 0u,                                           \
     .subghz_dev_khz    = 0u,                                           \
-    .subghz_power_dbm  = 0,                                            \
+    .subghz_power_dbm  = 20,                                           \
     .subghz_freq_hz    = 0u,                                           \
     .subghz_freq_valid = 0u,                                           \
     .bt_adv_name       = "",                                           \
@@ -122,7 +126,13 @@ static const S_M1_Settings_t s_settings_defaults = SETTINGS_DEFAULTS_INIT;
  *  - brightness 0..100, timeout 0(Off)/10..120 s, LED 0/1 are product
  *    semantics (PR-2 screens enforce the same bounds);
  *  - subghz_/bt_ fields round-trip at full storage-type width until their
- *    consuming units define tighter ranges (documented in the header). */
+ *    consuming units define tighter ranges (documented in the header).
+ *    The subghz_ semantics are defined by the Radio Settings unit (PR-7):
+ *    mod 0..5 preset ids, bw 0/10/100/200 kHz, dev 0/2/20/47/200 kHz,
+ *    power -10..+20 dBm (default +20 == stock PA), freq an exact-Hz
+ *    override gated by region at save AND apply; the screen enforces
+ *    these, the store keeps tolerating any storage-width value so a
+ *    hand-edited file still loads (clamped only by the type width). */
 static const settings_field_desc_t s_settings_fields[] =
 {
     { "brightness_pct",   SETTINGS_T_U8,  offsetof(S_M1_Settings_t, brightness_pct),   sizeof(s_settings_defaults.brightness_pct),   0,      100u,          false, NULL   },
