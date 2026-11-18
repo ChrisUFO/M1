@@ -5531,12 +5531,22 @@ static uint8_t wifi_saved_write_recoverable(void)
     char line[WIFI_SAVED_LINE_BUF];
     char qssid[70];
     char qsec[36];
+    /* Worst-case quoted expansion of any psk_enc content (every char a
+     * '"') is 2*N + wrapper quotes + NUL, so this can never truncate:
+     * even hostile or foreign-device text loaded from a tampered card
+     * is re-emitted verbatim rather than destroyed. */
+    char qcred[(2U * WIFI_CRED_FIELD_MAX) + 1U];
     bool had_prior_final;
     /* Optional 8th "credential" column: ALWAYS emitted (empty when the
      * network has no stored PSK) so the CSV shape is stable, exactly as
-     * the timestamp column is always emitted empty. The credential text
-     * is base64(iv||ct)":"base64(cmac) — no commas or quotes, so it is
-     * written as a bare field. */
+     * the timestamp column is always emitted empty. Genuinely sealed
+     * text is base64(iv||ct)":"base64(cmac) -- no commas or quotes --
+     * but psk_enc may also hold attacker-supplied or foreign-device
+     * text the loader deliberately preserves, so the column is quoted
+     * like every other free-text field: an embedded comma cannot grow
+     * the row past 8 columns, and wifi_csv_quote()'s "" escaping makes
+     * the round trip byte-exact (the loader unquotes this column
+     * through the same wifi_csv_next_field() used for the SSID). */
     static const char hdr[] =
         "#M1SAVEDNET\r\nversion,ssid,bssid,channel,rssi,security,timestamp,credential\r\n";
 
@@ -5553,10 +5563,11 @@ static uint8_t wifi_saved_write_recoverable(void)
         int n;
         wifi_csv_quote(qssid, sizeof(qssid), g_saved[i].ssid);
         wifi_csv_quote(qsec, sizeof(qsec), g_saved[i].security);
+        wifi_csv_quote(qcred, sizeof(qcred), g_saved[i].psk_enc);
         n = snprintf(line, sizeof(line), "%d,%s,%s,%d,%d,%s,,%s\r\n",
                      WIFI_SAVED_FMT_VER, qssid, g_saved[i].bssid,
                      g_saved[i].channel, g_saved[i].rssi, qsec,
-                     g_saved[i].psk_enc);
+                     qcred);
         if ((n <= 0) || (n >= (int)sizeof(line))) { f_close(&f); f_unlink(WIFI_SAVED_TMP_PATH); return 1U; }
         fr = f_write(&f, line, (UINT)n, &bw);
         if ((fr != FR_OK) || (bw != (UINT)n)) { f_close(&f); f_unlink(WIFI_SAVED_TMP_PATH); return 1U; }

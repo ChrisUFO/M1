@@ -94,6 +94,15 @@ Plaintext PSK buffers are zeroized with `m1_secure_zero()` on every
 path (absorbed input after sealing, decrypted frame and output buffer
 after use/failure, derived keys after each use).
 
+When the store is rewritten, whatever text the loader accepted —
+including attacker-supplied or foreign-device fields — is re-emitted
+verbatim in a CSV-quoted `credential` column: the quoting keeps every
+row at 8 columns even when the field text contains commas, and it
+preserves sealed data for a card moved back to its sealing device
+instead of destroying it. A quoted field so long that it cannot fit
+the writer's bounded line buffer fails that save fail-closed (the
+previous database stays in place), exactly like any other overflow.
+
 ## Residual limits of a UID-derived key
 
 The UID is *unique per device* but *not secret*. It is also the input

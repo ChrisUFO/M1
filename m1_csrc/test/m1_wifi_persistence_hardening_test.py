@@ -937,7 +937,8 @@ def saved_networks_cred_tests(tmp):
     CHECK(strstr(filebuf, field) != NULL, "persisted CSV contains the sealed field text");
     CHECK(strstr(filebuf, "hunter2networks") == NULL, "plaintext PSK never appears in the CSV");
     hit = strstr(filebuf, field);
-    CHECK(hit > filebuf && hit[-1] == ',' , "credential is the trailing 8th column");
+    CHECK(hit > filebuf && hit[-1] == '"' && hit[strlen(field)] == '"',
+          "credential is the trailing 8th column, emitted quoted");
     for (commas = 0, hit = filebuf; *hit; hit++) { if (*hit == ',') { commas++; } }
     CHECK(commas == 14, "header (7) + data row (7) each separate 8 columns");
     CHECK(strstr(filebuf, "timestamp,credential") != NULL, "header names the credential column");
@@ -1024,6 +1025,52 @@ def saved_networks_cred_tests(tmp):
     vfs_put(WIFI_SAVED_PATH, filebuf);
     CHECK(wifi_saved_load() == 0 && g_saved_count == 1 && g_saved[0].cred_state == WIFI_CRED_OK,
           "fields beyond the credential column are ignored");
+    /* 23b: the writer quotes the credential column, so hostile text with
+     * an embedded comma round-trips verbatim (load -> save -> load) and
+     * every rewritten row keeps exactly 8 columns. A bare re-emission
+     * would turn the quoted 8th field "a,b:c" into a 9-column row and
+     * silently truncate the stored text to "a" on the next load. */
+    strcpy(psk, "roundtrip-1");
+    CHECK(wifi_cred_seal(psk, field, sizeof(field)), "seal canonical field for round trip");
+    snprintf(filebuf, sizeof(filebuf),
+        "#M1SAVEDNET\r\n"
+        "1,\"Canon\",AA:BB:CC:DD:EE:40,6,-50,\"WPA2\",,%s\r\n"
+        "1,\"Hostile\",AA:BB:CC:DD:EE:41,6,-50,\"WPA2\",,\"a,b:c\"\r\n",
+        field);
+    vfs_reset(); fault_reset(); g_saved_count = 0;
+    vfs_put(WIFI_SAVED_PATH, filebuf);
+    CHECK(wifi_saved_load() == 0 && g_saved_count == 2, "comma-bearing hostile file loads");
+    CHECK(strcmp(g_saved[0].psk_enc, field) == 0 && g_saved[0].cred_state == WIFI_CRED_OK,
+          "canonical sealed field parses from a bare column");
+    CHECK(strcmp(g_saved[1].psk_enc, "a,b:c") == 0 && g_saved[1].cred_state == WIFI_CRED_INVALID,
+          "hostile comma-bearing field unquotes to its full text, INVALID");
+    CHECK(wifi_saved_write_recoverable() == 0, "rewrite of the hostile row succeeds");
+    strcpy(filebuf, vfs_get(WIFI_SAVED_PATH));
+    hit = strstr(filebuf, field);
+    CHECK(hit != NULL && hit[-1] == '"' && hit[strlen(field)] == '"',
+          "canonical credential re-emitted verbatim, quoted");
+    CHECK(strstr(filebuf, ",\"a,b:c\"\r\n") != NULL,
+          "hostile credential re-emitted verbatim as the quoted last column");
+    {
+        /* every comma-bearing line (column header + both rows) must carry
+         * exactly 7 commas outside quoted regions -> a stable 8-column
+         * shape; the comma inside "a,b:c" must not count as a separator,
+         * and only the comma-less "#M1SAVEDNET" magic line is exempt */
+        int outside = 0, inq = 0, bad = 0;
+        for (hit = filebuf; *hit; hit++)
+        {
+            if (*hit == '"') { inq = !inq; }
+            else if ((*hit == ',') && !inq) { outside++; }
+            else if (*hit == '\n') { if (outside != 7 && outside != 0) { bad = 1; } outside = 0; inq = 0; }
+        }
+        CHECK(!bad && outside == 0, "rewritten file keeps exactly 8 columns per row");
+    }
+    g_saved_count = 0; fault_reset();
+    CHECK(wifi_saved_load() == 0 && g_saved_count == 2, "reload after rewrite succeeds");
+    CHECK(strcmp(g_saved[0].psk_enc, field) == 0 && g_saved[0].cred_state == WIFI_CRED_OK,
+          "canonical credential survives the load/save/load round trip unchanged");
+    CHECK(strcmp(g_saved[1].psk_enc, "a,b:c") == 0 && g_saved[1].cred_state == WIFI_CRED_INVALID,
+          "hostile credential survives the load/save/load round trip unchanged");
 
     /* ---- Part E: tamper / wrong CMAC / truncation / foreign UID ---- */
 

@@ -38,12 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   element, 802.1X; CMAC is integrity-not-confidentiality; UID-key
   limits), linked from `docs/security.md`. Host suite
   `m1_csrc/test/m1_wifi_persistence_hardening_test.py` extended with a
-  compiled 89-check encrypted-credential battery (real codec + real
+  compiled 100-check encrypted-credential battery (real codec + real
   `m1_crypto.c`, injectable device-UID and RNG seams: round-trip,
   7/8-column compatibility, ciphertext tamper, wrong CMAC, truncation,
   foreign-UID recovery, oversized/garbage fields, store-not-bricked,
   zeroization contracts) plus 10 static source checks, and wired into
-  `scripts/run_host_tests.sh`.
+  `scripts/run_host_tests.sh`. The credential column is written
+  CSV-quoted (like every other free-text column), so hostile or
+  foreign-device field text round-trips verbatim and every rewritten
+  row keeps exactly 8 columns.
 - Fork: crypto + hardware RNG foundation (issue #42 part 1, PR-8 of the
   Merge 3 series) — new pure-core module `m1_csrc/m1_crypto.c/.h`
   (software AES-256 block/CBC per FIPS-197/NIST SP 800-38A with
