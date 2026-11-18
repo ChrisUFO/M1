@@ -28,7 +28,9 @@ Layers:
          the first Tlen bytes of the full tag.
    - Argument-contract negatives (NULL, key/iv lengths, len % 16).
    - Constant-time compare semantics.
-   - UID-KDF properties (determinism, UID sensitivity, counter
+   - UID-KDF golden known-answer vector (independently computed with
+     Python `cryptography` AES-CMAC per the documented construction)
+     plus properties (determinism, UID sensitivity, counter
      divergence, all-zero-UID nondegeneracy).
    - Zeroization: functional zeroing (odd sizes), and an
      escape-hatched buffer test compiled and run at -O0 AND -O2 so the
@@ -60,16 +62,19 @@ Layers:
    - m1_secure_zero carries the compiler memory barrier;
    - no-fallback grep proof: the crypto consumers/potential consumers
      (m1_crypto*, m1_rng*, m1_wifi*) contain no srand/rand and no
-     HAL_GetTick-seeded randomness. The tree's three pre-existing
-     decorative srand(HAL_GetTick())/rand() sites (saved-file name
-     suffixes in m1_save_filename.c, synthetic NFC tag UIDs and file
-     names in m1_nfc.c) are NOT keys/IVs/credentials and are pinned
-     here as the complete, tolerated set.
+     HAL_GetTick-seeded randomness. The tree's pre-existing decorative
+     srand(HAL_GetTick())/rand() sites (saved-file name suffixes in
+     m1_save_filename.c, synthetic NFC tag UIDs and file names in
+     m1_nfc.c) are NOT keys/IVs/credentials; the set of files with
+     ACTIVE srand calls is pinned exactly (comments stripped first),
+     so re-enabling m1_sdcard_man.c's commented-out srand -- or
+     adding any new site -- fails the pin.
 
 Usage: python3 m1_csrc/test/m1_crypto_test.py
 """
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -92,6 +97,15 @@ def CHECK(cond, msg):
 
 def source(path):
     return (ROOT / path).read_text()
+
+
+def strip_c_comments(src):
+    """Drop /* */ block and // line comments (approximate -- string
+    literals are not parsed, which cannot invent or hide an srand call
+    in these firmware sources). Used by the no-fallback srand pin so a
+    re-enabled (uncommented) site fails the pin."""
+    src = re.sub(r"/\*.*?\*/", " ", src, flags=re.DOTALL)
+    return re.sub(r"//[^\n]*", " ", src)
 
 
 def host_cc():
@@ -402,12 +416,26 @@ static void test_kdf(void)
 {
     uint8_t uid[12] = {0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xAA,0xBB,0xCC};
     uint8_t k1[32], k2[32], kz[32];
+    /* Golden known-answer vector: construction-drift tripwire for the
+     * counter byte, label, 0x00 separator, and L encoding -- none of
+     * which the string-presence pins can catch. Expected bytes were
+     * computed independently of this codebase with Python
+     * `cryptography` 46.0.3 AES-CMAC per the m1_crypto.h construction
+     * (PRK = UID || 0^20; i || "m1-wifi-cred-v1" || 0x00 || 0x00000100)
+     * and cross-checked in the PR #82 review. */
+    static const uint8_t golden[32] = {
+        0xd4,0x8a,0x45,0x99,0xe4,0x9f,0x69,0x0c,
+        0x6d,0x99,0x85,0xd0,0x9c,0xff,0xa3,0x3e,
+        0xfb,0xd6,0x3a,0x58,0x26,0x78,0x67,0x62,
+        0x4a,0x4a,0x18,0xbb,0xa5,0x5d,0x9b,0x02,
+    };
     size_t i;
     int nz = 0, halves_differ = 0;
 
     if (!m1_crypto_derive_wifi_key(uid, k1)) FAILF("kdf returned false");
     if (!m1_crypto_derive_wifi_key(uid, k2)) FAILF("kdf returned false (2nd)");
     CHECKN(memcmp(k1, k2, 32) == 0, "kdf deterministic");
+    CHECKN(memcmp(k1, golden, 32) == 0, "kdf golden KAT (SP 800-108 CMAC)");
 
     uid[0] ^= 0x01; /* one-bit UID change */
     if (!m1_crypto_derive_wifi_key(uid, k2)) FAILF("kdf returned false (3rd)");
@@ -415,7 +443,6 @@ static void test_kdf(void)
 
     memset(uid, 0, sizeof(uid));
     if (!m1_crypto_derive_wifi_key(uid, kz)) FAILF("kdf returned false (zero uid)");
-    for (i = 0; i < 32; i++) { if (kz[i] != 0) nz = 1; if (kz[i] != kz[i + 16 < 32 ? i : i]) { } }
     for (i = 0; i < 32; i++) if (kz[i] != 0) { nz = 1; break; }
     CHECKN(nz, "kdf all-zero-UID not degenerate");
     for (i = 0; i < 16; i++) if (kz[i] != kz[i + 16]) { halves_differ = 1; break; }
@@ -772,10 +799,12 @@ def static_checks():
     )
 
     # 8. No-fallback grep proof over the crypto layer and the (current
-    #    and future) crypto consumers. The tree's three decorative
+    #    and future) crypto consumers. The tree's decorative
     #    srand(HAL_GetTick()) sites (file-name suffixes, synthetic NFC
-    #    UIDs) are pinned as the complete tolerated set: they never
-    #    touch keys/IVs/credentials.
+    #    UIDs) never touch keys/IVs/credentials; the files with ACTIVE
+    #    srand calls are pinned EXACTLY, after stripping comments, so a
+    #    re-enabled srand in m1_sdcard_man.c (whose only site is
+    #    commented out) or any new site anywhere fails the pin.
     guarded = [
         "m1_crypto.c",
         "m1_crypto.h",
@@ -795,16 +824,17 @@ def static_checks():
             "srand" not in s and "rand(" not in s,
             f"{f} contains rand()/srand (fallback risk)",
         )
-    known = {"m1_save_filename.c", "m1_nfc.c", "m1_sdcard_man.c"}
+    active = {"m1_save_filename.c", "m1_nfc.c"}
     found = set()
     for p in (ROOT / "m1_csrc").glob("*.c"):
-        s = p.read_text(encoding="utf-8", errors="replace")
-        if "srand" in s:
+        code = strip_c_comments(p.read_text(encoding="utf-8", errors="replace"))
+        if "srand" in code:
             found.add(p.name)
     CHECK(
-        found <= known,
-        f"unexpected srand sites: {sorted(found - known)} "
-        "(decorative set is pinned: file names / synthetic NFC UIDs)",
+        found == active,
+        f"srand site drift: {sorted(found ^ active)} "
+        "(active decorative set pinned exactly: file names / synthetic "
+        "NFC UIDs; m1_sdcard_man.c's site must stay commented out)",
     )
 
     # 9. KDF layout is pinned in-source: counter byte, label, 0x00,
