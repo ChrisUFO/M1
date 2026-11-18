@@ -11,6 +11,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: IR data layer — streaming `.ir` loader, strict-skip policy and an
+  IRMP golden-decode regression suite (issue #43 part 1; no user-visible UX
+  yet, the browser lands in the next units). The protocol table in
+  `Infrared/m1_ir_remotes.c` is audited against the official Flipper
+  vocabulary (NEC, NECext, RC5X, SIRC15, SIRC20, RCA all present with
+  correct encoders; nothing added), recorded in the module header together
+  with the intentional omissions (NEC42ext, Samsung48/64, Cassette have no
+  encoder in the vendored IRMP), and exposed as the single-map lookup
+  `ir_protocol_map_lookup()`; the fork's `ir_proto_map` aliasing (which
+  transmitted wrong codes for NEC/NECext, RC5X and SIRC15/20) stays
+  unported. New `Infrared/m1_ir_file.{c,h}`: an index pass records each
+  block's name/type/protocol/address/command-presence/raw-presence and file
+  offset without buffering commands (no whole-file-in-RAM parsing, no
+  legacy 64-command cap), and `m1_ir_file_signal_load()` re-parses one
+  block on demand for transmit through the same `ir_remote_function_play`
+  data path; raw `data:` lines are token-streamed so unbounded line
+  lengths parse with a fixed 512-byte chunk reader, and raw samples land
+  in a caller-provided 10-µs tick buffer with the legacy leading-pause and
+  odd-count OTA invariants. Tolerance: blank lines, `#` comments, CRLF,
+  fields in any order and unknown keys; overlong keyword lines, bad values
+  and incomplete blocks are skipped and counted as malformed — never a
+  crash. Strict-skip: an unknown protocol name skips its block, increments
+  the skipped counter and fires the visible-notice hook the PR-5 browser
+  will render; garbage is never transmitted. The module header pins the IR
+  subsystem ownership rules (IRMP/IRSND single-owner in the UI task only)
+  and the `0:/IR/...` SD convention. Host tests: the loader suite
+  (`m1_csrc/test/m1_ir_file_test.py`, real pure core + real table) and the
+  golden-decode suite (`m1_csrc/test/m1_ir_golden_decode_test.py`), which
+  compiles the untouched vendored IRMP/IRSND verbatim on the host, plays
+  the previously-wrong protocols through the full
+  .ir→loader→map→irsnd→OTA→irmp pipeline asserting protocol-definition-level
+  wire facts (NEC inverted 8/8 copies, NECext 16-bit address verbatim,
+  SIRC15/SIRC20 address widths, RC5X family, RCA demodulated by an
+  independent reference), and validates 582 frames across 25 real-world
+  IR-Data captures with a documented two-tier coverage policy (stale
+  2004-2013 expectation conventions and upstream decoder-conflict skips
+  are itemized in the test header).
 - Fork: RTC date/time setting (issue #7 completion) — Settings grows an
   eighth entry, *Date & Time*: a two-line clock editor ("YYYY-MM-DD" /
   "HH:MM", selected field on an inverted segment) where LEFT/RIGHT pick
