@@ -206,10 +206,36 @@ S_M1_Menu_t menu_Infrared_Universal_ACs =
     "AC remotes", infrared_universal_ac_remotes, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
+/* Explicit "cycle all in category" actions (issue #43 part 3 / PR-6): the
+ * upstream cycle-through-every-device session (pause/resume + progress),
+ * kept out of the default per-press behavior -- the remote entries above
+ * transmit one frame per OK press, the IR File Browser one frame per
+ * button. */
+S_M1_Menu_t menu_Infrared_Universal_Cycle_TVs =
+{
+    "Cycle all TVs", infrared_universal_cycle_all_tv, NULL, NULL, 0, 0, NULL, NULL, {NULL}
+};
+
+S_M1_Menu_t menu_Infrared_Universal_Cycle_Audios =
+{
+    "Cycle all Audio", infrared_universal_cycle_all_audio, NULL, NULL, 0, 0, NULL, NULL, {NULL}
+};
+
+S_M1_Menu_t menu_Infrared_Universal_Cycle_Projectors =
+{
+    "Cycle all Projectors", infrared_universal_cycle_all_projector, NULL, NULL, 0, 0, NULL, NULL, {NULL}
+};
+
+S_M1_Menu_t menu_Infrared_Universal_Cycle_ACs =
+{
+    "Cycle all ACs", infrared_universal_cycle_all_ac, NULL, NULL, 0, 0, NULL, NULL, {NULL}
+};
+
 S_M1_Menu_t menu_Infrared_Universal_Remotes =
 {
-    "Universal Remotes", NULL, NULL, NULL, 4, 0, NULL, NULL,
-	{&menu_Infrared_Universal_TVs, &menu_Infrared_Universal_Audios, &menu_Infrared_Universal_Projectors, &menu_Infrared_Universal_ACs}
+    "Universal Remotes", NULL, NULL, NULL, 8, 0, NULL, NULL,
+	{&menu_Infrared_Universal_TVs, &menu_Infrared_Universal_Audios, &menu_Infrared_Universal_Projectors, &menu_Infrared_Universal_ACs,
+	 &menu_Infrared_Universal_Cycle_TVs, &menu_Infrared_Universal_Cycle_Audios, &menu_Infrared_Universal_Cycle_Projectors, &menu_Infrared_Universal_Cycle_ACs}
 };
 
 S_M1_Menu_t menu_Infrared_Learn_New_Remote =

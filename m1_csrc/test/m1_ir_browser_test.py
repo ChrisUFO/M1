@@ -162,6 +162,7 @@ def pure_core_tests():
     )
     rows = define_of(browser_h, "M1_IR_BROWSER_ROWS")
     name_len = define_of(browser_h, "M1_IR_BROWSER_NAME_LEN_MAX")
+    path_len = define_of(browser_h, "M1_IR_BROWSER_PATH_LEN_MAX")
     proto_len = define_of(ir_file_h, "M1_IR_FILE_PROTO_LEN_MAX")
 
     harness = (
@@ -172,6 +173,7 @@ def pure_core_tests():
         "#include <assert.h>\n"
         f"#define M1_IR_BROWSER_ROWS {rows}\n"
         f"#define M1_IR_BROWSER_NAME_LEN_MAX {name_len}\n"
+        f"#define M1_IR_BROWSER_PATH_LEN_MAX {path_len}\n"
         f"#define M1_IR_FILE_PROTO_LEN_MAX {proto_len}\n"
         "\n"
         + core
@@ -545,8 +547,8 @@ def static_seam_tests():
         (
             "infrared_universal_all_remotes",
             remotes_c,
-            "static void infrared_universal_all_remotes(uint8_t remote_type)\n{",
-            "} // static void infrared_universal_all_remotes(uint8_t remote_type)",
+            "void infrared_universal_all_remotes(uint8_t remote_type, uint8_t cycle_all)\n{",
+            "} // void infrared_universal_all_remotes(uint8_t remote_type, uint8_t cycle_all)",
             "ir_remote_file_header_check(",
         ),
         (
