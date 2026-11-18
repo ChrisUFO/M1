@@ -580,6 +580,7 @@ set(M1_APP_SOURCES
     ../../m1_csrc/privateprofilestring.c
     ../../m1_csrc/uiView.c
     ../../Infrared/m1_ir_file.c
+    ../../Infrared/m1_ir_browser.c
 )
 
 target_sources(m1_01 INTERFACE ${M1_APP_SOURCES})
