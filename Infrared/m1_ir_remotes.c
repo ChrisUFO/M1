@@ -803,6 +803,19 @@ void infrared_universal_all_remotes(uint8_t remote_type, uint8_t cycle_all)
 								* restarts from the first device without leaving the
 								* screen */
 								ir_remote_state = ( cycle_all ) ? IR_REMOTES_STATE_COMPLETE : IR_REMOTES_STATE_STANDBY;
+								if ( !cycle_all )
+								{
+									/* wrap to the first device: the same reset the
+									* next_transmission_req EOF handling below performs
+									* (header_checked is the only rewind trigger -- the
+									* next OK re-opens the file and starts from device
+									* one) plus the grid redraw over the progress
+									* overlay */
+									header_checked = 0; // Reset
+									ir_remote_file_deinit();
+									ir_button_icons_update(remote_type);
+									ir_button_icon_redraw(&ir_buttons_info[remote_type].button_post[this_button_row*this_remote_col_n + this_button_col], true); // Highlight the button
+								}
 								m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF); // Turn off
 							} // if ( sys_error==IR_ERROR_CODE_END_OF_FILE )
 							else

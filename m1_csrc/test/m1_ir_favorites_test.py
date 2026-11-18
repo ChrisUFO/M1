@@ -619,6 +619,32 @@ def static_seam_tests():
         in session,
         "END_OF_FILE ends cycle mode as COMPLETE, single-frame as STANDBY",
     )
+    # the wrap must actually work in the single-frame mode: the direct-OK EOF
+    # branch (unreachable for the L2 handling below when cycle_all == 0, since
+    # the next-device request is gated on cycle_all) has to perform the same
+    # reset the L2 EOF branch does -- header_checked is the only rewind
+    # trigger (its re-check re-opens the file), and it must go together with
+    # the file deinit plus the grid redraw over the progress overlay
+    i_eof1 = session.index("sys_error==IR_ERROR_CODE_END_OF_FILE")
+    i_eof1_end = session.index(
+        "} // if ( sys_error==IR_ERROR_CODE_END_OF_FILE )", i_eof1
+    )
+    eof1 = session[i_eof1:i_eof1_end]
+    i_arm = eof1.find("if ( !cycle_all )")
+    i_hc = eof1.find("header_checked = 0")
+    i_dd = eof1.find("ir_remote_file_deinit()")
+    i_ic = eof1.find("ir_button_icons_update")
+    i_rd = eof1.find("ir_button_icon_redraw")
+    CHECK(
+        -1 not in (i_arm, i_hc, i_dd, i_ic, i_rd) and i_arm < i_hc < i_dd < i_ic < i_rd,
+        "single-frame END_OF_FILE wraps: the !cycle_all arm resets "
+        "header_checked, deinits the db file and redraws the grid "
+        "(the L2 branch shape, in the direct-OK EOF branch)",
+    )
+    CHECK(
+        eof1.count("ir_remote_file_deinit()") == 1,
+        "the EOF wrap closes the db file exactly once",
+    )
     # the default remote entries pass cycle_all = 0
     for w, cat in (
         ("infrared_universal_tv_remotes", "IR_REMOTETYPE_TV"),
