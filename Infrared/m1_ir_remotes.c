@@ -597,6 +597,18 @@ static void infrared_universal_all_remotes(uint8_t remote_type)
 	if ( remote_type >= IR_REMOTETYPE_UNKNOWN )
 		return;
 
+	if ( !m1_ir_subsys_acquire() ) /* single-owner IRMP rule */
+	{
+		m1_u8g2_firstpage();
+		u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+		u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
+		u8g2_DrawXBMP(&m1_u8g2, 2, 2, 48, 25, remote_48x25);
+		u8g2_DrawStr(&m1_u8g2, 60, 20, "IR busy");
+		m1_u8g2_nextpage(); // Update display RAM
+		vTaskDelay(pdMS_TO_TICKS(1500));
+		return;
+	} // if ( !m1_ir_subsys_acquire() )
+
 	header_checked = 0;
 	next_transmission_req = 0;
 	this_button_row = 0;
@@ -877,6 +889,8 @@ static void infrared_universal_all_remotes(uint8_t remote_type)
 
 		} // if (ret==pdTRUE)
 	} // while (1 ) // Main loop of this task
+
+	m1_ir_subsys_release(); // single-owner IRMP rule
 } // static void infrared_universal_all_remotes(uint8_t remote_type)
 
 

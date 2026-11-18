@@ -1376,6 +1376,13 @@ void m1_ir_browser_run(void)
 		return;
 	}
 
+	if ( !m1_ir_subsys_acquire() ) /* single-owner IRMP rule */
+	{
+		irb_notice("IR busy", "Try again later", M1_IRB_NOTICE_MS_DEFAULT);
+		return;
+	} // if ( !m1_ir_subsys_acquire() )
+
 	irb_screen_dashboard();
 	xQueueReset(main_q_hdl);
+	m1_ir_subsys_release(); // single-owner IRMP rule
 } // void m1_ir_browser_run(void)

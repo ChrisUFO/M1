@@ -31,6 +31,7 @@
 #include "m1_wifi.h"
 #include "m1_bt.h"
 #include "m1_ir_remotes.h"
+#include "m1_ir_browser.h"
 #include "m1_capture_link.h"
 
 /*************************** D E F I N E S ************************************/
@@ -177,6 +178,14 @@ S_M1_Menu_t menu_NFC =
 
 /*----------------------------- > Infrared -----------------------------------*/
 
+/* SD-card IR database browser (issue #43 part 2): Flipper IRDB layout under
+ * 0:/IR, category -> device -> button lists. Sits alongside the upstream
+ * curated-category entries below; see docs/ir-provisioning.md. */
+S_M1_Menu_t menu_Infrared_File_Browser =
+{
+    "IR File Browser", m1_ir_browser_run, NULL, NULL, 0, 0, NULL, NULL, {NULL}
+};
+
 S_M1_Menu_t menu_Infrared_Universal_TVs =
 {
     "TV remotes", infrared_universal_tv_remotes, NULL, NULL, 0, 0, NULL, NULL, {NULL}
@@ -220,8 +229,8 @@ S_M1_Menu_t menu_Infrared_Remap_GPIO =
 
 S_M1_Menu_t menu_Infrared =
 {
-    "Infrared", menu_infrared_init, NULL, NULL, 4, 0, menu_m1_icon_infrared, NULL,
-    {&menu_Infrared_Universal_Remotes, &menu_Infrared_Learn_New_Remote, &menu_Infrared_Saved_Remotes, &menu_Infrared_Remap_GPIO}
+    "Infrared", menu_infrared_init, NULL, NULL, 5, 0, menu_m1_icon_infrared, NULL,
+    {&menu_Infrared_File_Browser, &menu_Infrared_Universal_Remotes, &menu_Infrared_Learn_New_Remote, &menu_Infrared_Saved_Remotes, &menu_Infrared_Remap_GPIO}
 };
 
 /*------------------------------- > GPIO -------------------------------------*/

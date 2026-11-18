@@ -927,6 +927,12 @@ void cmd_m1_mtest_infrared(char *pconsole, char *input_params[], uint8_t n_param
     		irmp_data.command  = input3_val;
     		irmp_data.flags    = input4_val;
 
+    		if ( !m1_ir_subsys_acquire() ) /* single-owner IRMP rule */
+    		{
+    			strcpy(pconsole, "Error: IR subsystem busy!\r\n");
+    			break;
+    		} // if ( !m1_ir_subsys_acquire() )
+
     		// must be in this order
     		infrared_encode_sys_init();
     		irsnd_generate_tx_data(irmp_data); // make ota data
@@ -963,6 +969,7 @@ void cmd_m1_mtest_infrared(char *pconsole, char *input_params[], uint8_t n_param
 							free(pir_ota_data_tx_buffer);
 
 						infrared_encode_sys_deinit();
+						m1_ir_subsys_release(); // single-owner IRMP rule
 
 						xQueueReset(main_q_hdl); // Reset main q before return
 						break;

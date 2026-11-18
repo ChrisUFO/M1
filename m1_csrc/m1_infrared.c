@@ -66,6 +66,7 @@ uint16_t *pir_ota_data_tx_buffer;
 static IRMP_DATA 			irmp_loopback_data;
 static uint8_t				new_remote_learned;
 static uint8_t				ir_encode_sys_active = 0;
+static volatile uint8_t	m1_ir_subsys_busy = 0; /* single-owner guard */
 /* Menu option: IR Tx mapped to an external GPIO - TIM8_CH4N */
 static uint8_t ir_tx_on_ext_gpio = 0;
 static GPIO_TypeDef *ir_tx_remap_port = IR_GPIO_PORT;
@@ -90,6 +91,33 @@ void infrared_encode_sys_deinit(void);
 static void infrared_remap_status_update(uint8_t gpio_remapped);
 
 /*************** F U N C T I O N   I M P L E M E N T A T I O N ****************/
+
+/*============================================================================*/
+/*
+ * IR subsystem ownership guard (single-owner IRMP rule, issue #43).
+ * See m1_infrared.h for the binding convention.
+ */
+/*============================================================================*/
+uint8_t m1_ir_subsys_acquire(void)
+{
+	uint8_t got = 0;
+
+	taskENTER_CRITICAL();
+	if ( !m1_ir_subsys_busy )
+	{
+		m1_ir_subsys_busy = 1;
+		got = 1;
+	} // if ( !m1_ir_subsys_busy )
+	taskEXIT_CRITICAL();
+	return got;
+} // uint8_t m1_ir_subsys_acquire(void)
+
+void m1_ir_subsys_release(void)
+{
+	m1_ir_subsys_busy = 0;
+} // void m1_ir_subsys_release(void)
+
+
 
 /*============================================================================*/
 /*
@@ -227,6 +255,18 @@ void infrared_learn_new_remote(void)
 	char ir_data[20], prev_protocol;
 	uint32_t ir_rx_frame_tn;
 
+	if ( !m1_ir_subsys_acquire() ) /* single-owner IRMP rule */
+	{
+		u8g2_FirstPage(&m1_u8g2);
+		u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+		u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
+		u8g2_DrawXBMP(&m1_u8g2, 2, 2, 48, 25, remote_48x25);
+		u8g2_DrawStr(&m1_u8g2, 60, 20, "IR busy");
+		m1_u8g2_nextpage(); // Update display RAM
+		vTaskDelay(pdMS_TO_TICKS(1500));
+		return;
+	} // if ( !m1_ir_subsys_acquire() )
+
 	infrared_decode_sys_init();
 	irmp_init();
 	prev_protocol = 0xFF;
@@ -314,6 +354,8 @@ void infrared_learn_new_remote(void)
 			}
 		} // if (ret==pdTRUE)
 	} // while (1 ) // Main loop of this task
+
+	m1_ir_subsys_release(); // single-owner IRMP rule
 } // void infrared_learn_new_remote(void)
 
 
@@ -331,6 +373,18 @@ void infrared_saved_remotes(void)
 	S_M1_Main_Q_t q_item;
 	BaseType_t ret;
 	uint8_t ir_tx_complete; char ir_data[20];
+
+	if ( !m1_ir_subsys_acquire() ) /* single-owner IRMP rule */
+	{
+		u8g2_FirstPage(&m1_u8g2);
+		u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+		u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
+		u8g2_DrawXBMP(&m1_u8g2, 2, 2, 48, 25, remote_48x25);
+		u8g2_DrawStr(&m1_u8g2, 60, 20, "IR busy");
+		m1_u8g2_nextpage(); // Update display RAM
+		vTaskDelay(pdMS_TO_TICKS(1500));
+		return;
+	} // if ( !m1_ir_subsys_acquire() )
 
 	// m1_gui_let_update_fw();
 
@@ -350,6 +404,7 @@ void infrared_saved_remotes(void)
     }
 	else
 	{
+		m1_ir_subsys_release(); // nothing to replay: exit the guarded session
 		return;
 /*
 		//IRMP_KASEIKYO_PROTOCOL;//IRMP_NEC42_PROTOCOL; //IRMP_RC6_PROTOCOL;//IRMP_SAMSUNG32_PROTOCOL; // IRMP_NEC_PROTOCOL;//IRMP_RC5_PROTOCOL;
@@ -437,6 +492,7 @@ void infrared_saved_remotes(void)
 		} // if (ret==pdTRUE)
 	} // while (1 ) // Main loop of this task
 
+	m1_ir_subsys_release(); // single-owner IRMP rule
 } // void infrared_saved_remotes(void)
 
 
