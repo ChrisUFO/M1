@@ -11,6 +11,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: Sub-GHz Radio Settings (issue #3) — the Sub-GHz menu gains a
+  *Radio Settings* leaf with a modal screen (the established 128×64
+  settings idiom) for modulation (Auto/OOK/2-FSK/2-GFSK/4-FSK/4-GFSK),
+  RX bandwidth (Auto/10/100/200 kHz), FSK deviation (Auto/2/20/47/200
+  kHz — the row is visible only for the FSK-family modulations),
+  nominal output power (−10…+20 dBm) and an exact-Hz frequency override
+  (Off or one of the Record-RAW frequencies). Values persist through the
+  SD settings store and are applied by `SI446x_Apply_Modem_Config()`
+  (new in `Sub_Ghz/m1_sub_ghz_api.c`: a generic SET_PROPERTY writer plus
+  a runtime modem patch on top of the loaded WDS base configuration) via
+  the idempotent `sub_ghz_apply_user_radio_overrides()` hook, invoked by
+  both opmode setters after every preset load/tune and immediately
+  before the radio enters RX/TX — task context only, never ISR. At the
+  compiled defaults (band-preset modulation/bandwidth/deviation, +20 dBm
+  ≡ the stock PA_PWR_LVL 0x7F, no frequency override) the hook writes
+  nothing and scan/record/replay behavior is unchanged. The frequency
+  override is region-gated by `sub_ghz_fcc_ism_band_check_hz()` at BOTH
+  save time (the screen refuses disallowed frequencies with a notice)
+  and apply time (the resolver ignores a now-disallowed override,
+  fail-closed), and the TX boundary keeps its own region check on the
+  effective frequency. Provenance is explicit: the bandwidth presets are
+  the repo's own WDS-generated 10/100/200 kHz filter+decimation sets
+  (copied verbatim, host-test-bound to the headers; nominal achieved
+  widths 10.75/109.93/219.87 kHz), the deviation encoding is verified
+  against the repo's WDS FSK headers (2 kHz→0x000083 @outdiv 8,
+  200 kHz→0x00199A @outdiv 4), the per-band outdiv table is bound to
+  the base headers' own MODEM_CLKGEN_BAND bytes for all nine bands
+  (0x0B→12, 0x09→6, 0x0A→8, 0x08→4 — pinning the previously inferred
+  0x09→6 as header-consistent evidence), and the dBm→PA map is a
+  documented NOMINAL linear-in-code approximation anchored at
+  0x7F≡+20 dBm —
+  absolute power accuracy is deferred to hardware acceptance (follow-up
+  issue). New host suite
+  `m1_csrc/test/m1_subghz_radio_settings_test.py` (118 checks: compiled
+  pure cores for the driver/screen decision logic, WDS-header provenance
+  binding, override-ordering/region-gate/no-ISR static seams, menu and
+  store-default wiring), wired into `scripts/run_host_tests.sh`;
+  `settings_exit_save()`/`settings_str_clip()` are exported through
+  `m1_settings.h` as the shared modal-screen helpers. The settings file
+  format is bumped to `#ver=2` with a load-time migration for legacy v1
+  files (PR-1…PR-6 firmware serialized the then-inert
+  `subghz_power_dbm=0` wholesale; on load it maps to the +20 dBm
+  default, every other field is kept, and the next save rewrites the
+  file as v2 — under which an explicit 0 dBm choice loads verbatim), so
+  devices upgraded across the PR-7 boundary keep stock TX power.
 - Fork: IR favorites and recent lists in the SD-card IR browser, plus the
   explicit "cycle all in category" submenu action (issue #43 part 3 —
   this completes #43 together with the earlier IR units). The browser
@@ -201,8 +246,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout, LED notifications, device name, plus round-trip-only Sub-GHz
   radio and Bluetooth advertisement fields their future screens will
   define) loaded once at boot from `0:/System/settings.cfg` after SD init
-  and before any consumer task starts. The file format is `#ver=1` +
-  `key=value` lines + a trailing `crc=<8 hex>` CRC-32C (Castagnoli,
+  and before any consumer task starts. The file format is a versioned
+  `#ver=N` first line (v1 at introduction; bumped to v2 by the Radio
+  Settings unit, whose power semantics required a load-time migration —
+  see the Sub-GHz Radio Settings entry) + `key=value` lines + a trailing `crc=<8 hex>` CRC-32C (Castagnoli,
   0x1EDC6F41, the shared `m1_crc32c.c`) over all preceding bytes. Loading
   is tolerant and bounded (missing file → compiled defaults; CRC
   mismatch/truncation/unsupported version makes the file unreadable →

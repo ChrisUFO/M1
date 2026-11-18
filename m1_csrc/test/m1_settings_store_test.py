@@ -245,10 +245,13 @@ int main(void)
         CHECK(strcmp(g_m1_settings.device_name, "M1") == 0, "default device name M1");
         CHECK(g_m1_settings.subghz_freq_valid == 0 && g_m1_settings.subghz_freq_hz == 0, "default subghz override inactive");
         CHECK(g_m1_settings.bt_adv_name[0] == '\0', "default bt adv name empty");
-        CHECK(g_m1_settings.subghz_power_dbm == 0 && g_m1_settings.subghz_mod == 0
+        /* Radio Settings semantics (PR-7): mod/bw/dev 0 are the keep-preset
+         * sentinels and power +20 dBm maps to the stock PA_PWR_LVL 0x7F --
+         * together these reproduce pre-PR-7 RF behavior at defaults. */
+        CHECK(g_m1_settings.subghz_power_dbm == 20 && g_m1_settings.subghz_mod == 0
               && g_m1_settings.subghz_bw_khz == 0 && g_m1_settings.subghz_dev_khz == 0
               && g_m1_settings.bt_preset == 0 && g_m1_settings.bt_interval_ms == 0,
-              "remaining defaults zero");
+              "remaining defaults zero except stock-equivalent subghz power");
         (void)d;
     }
 
@@ -271,7 +274,7 @@ int main(void)
         ref = g_m1_settings;
 
         CHECK(settings_serialize(buf, sizeof(buf), &len), "serialize extremes succeeds");
-        CHECK(len > 0 && strncmp(buf, "#ver=1\r\n", 8) == 0, "file starts with #ver=1 header");
+        CHECK(len > 0 && strncmp(buf, "#ver=2\r\n", 8) == 0, "file starts with #ver=2 header");
         CHECK(strncmp(buf + len - 2, "\r\n", 2) == 0, "file ends with CRLF");
         CHECK(strstr(buf, "\r\ncrc=") != NULL, "trailer line present");
         CHECK(settings_buffer_crc_valid(buf, len), "own serialization passes CRC check");
@@ -412,7 +415,7 @@ int main(void)
         CHECK(g_m1_settings.brightness_pct == 100, "non-numeric -> default");
         CHECK(g_m1_settings.led_notifications == 1, "empty numeric -> default");
         CHECK(g_m1_settings.screen_timeout_s == 45, "trailing garbage -> default");
-        CHECK(g_m1_settings.subghz_power_dbm == 0, "double sign -> default");
+        CHECK(g_m1_settings.subghz_power_dbm == 20, "double sign -> default (+20, PR-7)");
         CHECK(g_m1_settings.subghz_freq_hz == 0, "i64 overflow -> default");
         CHECK(g_settings_field_resets == 5u, "malformed numerals counted: 5 fields reset");
     }
@@ -448,11 +451,16 @@ int main(void)
         CHECK(g_settings_field_resets == 2u, "control-byte strings counted: 2 fields reset");
     }
 
-    /* 12: version gate */
+    /* 12: version gate -- v1 (legacy, migrated) and v2 (current) are
+     * accepted; anything newer is an unsupported version */
     {
-        len = build_file(buf, sizeof(buf), "#ver=2\r\nbrightness_pct=1\r\n");
+        len = build_file(buf, sizeof(buf), "#ver=3\r\nbrightness_pct=1\r\n");
         CHECK(!settings_parse_buffer(buf, len), "unsupported version rejected");
         CHECK(g_m1_settings.brightness_pct == 100, "rejected version leaves defaults");
+        len = build_file(buf, sizeof(buf), "#ver=0\r\nbrightness_pct=1\r\n");
+        CHECK(!settings_parse_buffer(buf, len), "version 0 rejected");
+        len = build_file(buf, sizeof(buf), "#ver=x\r\nbrightness_pct=1\r\n");
+        CHECK(!settings_parse_buffer(buf, len), "malformed version rejected");
     }
 
     /* 13: serializer refuses control characters in strings (never emit a
@@ -562,6 +570,55 @@ int main(void)
         CHECK(view->brightness_pct == 100 && view->screen_timeout_s == 45
               && view->led_notifications == 1,
               "canary leaves untouched neighbors at defaults");
+    }
+
+    /* 16: format-version migration (v1 -> v2, Radio Settings power
+     * semantics): PR-1..PR-6 firmware serialized subghz_power_dbm
+     * wholesale with the then-inert default 0, so a legacy file's 0
+     * maps to the +20 dBm default it always meant (stock TX power
+     * survives the upgrade) while a v2 file preserves an explicit
+     * 0 dBm choice; every other field is untouched either way. */
+    {
+        len = build_file(buf, sizeof(buf),
+            "#ver=1\r\n"
+            "brightness_pct=33\r\n"
+            "screen_timeout_s=60\r\n"
+            "device_name=Legacy\r\n"
+            "subghz_mod=2\r\n"
+            "subghz_bw_khz=100\r\n"
+            "subghz_dev_khz=20\r\n"
+            "subghz_power_dbm=0\r\n"
+            "subghz_freq_hz=433920000\r\n"
+            "subghz_freq_valid=1\r\n");
+        CHECK(settings_parse_buffer(buf, len),
+              "legacy v1 file parses (never rejected merely for its version)");
+        CHECK(g_m1_settings.subghz_power_dbm == 20,
+              "legacy inert 0 dBm migrates to the +20 dBm default");
+        CHECK(g_m1_settings.brightness_pct == 33 && g_m1_settings.screen_timeout_s == 60
+              && strcmp(g_m1_settings.device_name, "Legacy") == 0
+              && g_m1_settings.subghz_mod == 2 && g_m1_settings.subghz_bw_khz == 100
+              && g_m1_settings.subghz_dev_khz == 20 && g_m1_settings.subghz_freq_hz == 433920000u
+              && g_m1_settings.subghz_freq_valid == 1,
+              "migration preserves every other field");
+        CHECK(g_settings_field_resets == 0u,
+              "migration is not a field reset (nothing was lost)");
+
+        /* a hand-edited non-zero legacy value is an explicit choice */
+        len = build_file(buf, sizeof(buf), "#ver=1\r\nsubghz_power_dbm=5\r\n");
+        CHECK(settings_parse_buffer(buf, len), "legacy v1 with non-zero power parses");
+        CHECK(g_m1_settings.subghz_power_dbm == 5, "legacy non-zero power kept verbatim");
+
+        /* v2 (current): an explicit 0 dBm is a deliberate user choice */
+        len = build_file(buf, sizeof(buf), "#ver=2\r\nsubghz_power_dbm=0\r\n");
+        CHECK(settings_parse_buffer(buf, len), "v2 file parses");
+        CHECK(g_m1_settings.subghz_power_dbm == 0, "v2 explicit 0 dBm preserved (no migration)");
+
+        /* and it survives its own serialization round-trip */
+        CHECK(settings_serialize(buf, sizeof(buf), &len), "explicit-0 image serializes");
+        CHECK(strncmp(buf, "#ver=2\r\n", 8) == 0, "serializer writes the current format version");
+        settings_reset_defaults();
+        CHECK(settings_parse_buffer(buf, len), "explicit-0 file reloads");
+        CHECK(g_m1_settings.subghz_power_dbm == 0, "explicit 0 dBm survives the round-trip");
     }
 
     printf("settings pure core: %d/%d checks passed\n", g_pass, g_pass + g_fail);
@@ -950,12 +1007,12 @@ int main(void)
     CHECK(g_m1_settings.brightness_pct == 100, "no .bak to fall back on -> defaults");
     CHECK(!vfs_exists(SETTINGS_BAK_PATH), "no .bak appears on disk");
 
-    /* 4d: unsupported version at the file-IO level: a CRC-valid #ver=2
+    /* 4d: unsupported version at the file-IO level: a CRC-valid #ver=3
      *     file takes the parse_buffer==false -> CORRUPT branch (defaults,
      *     one warn), not the CRC gate */
     vfs_reset(); fault_reset();
     g_settings_ready = false; g_settings_loaded_ok = false;
-    vfs_put_valid(SETTINGS_PATH, "#ver=2\r\nbrightness_pct=41\r\n");
+    vfs_put_valid(SETTINGS_PATH, "#ver=3\r\nbrightness_pct=41\r\n");
     CHECK(settings_load_file() == SETTINGS_LOAD_CORRUPT, "unsupported version -> CORRUPT at file level");
     CHECK(g_m1_settings.brightness_pct == 100, "unsupported version leaves defaults");
     CHECK(settings_init() == false, "init reports defaults for unsupported version");
@@ -1386,6 +1443,28 @@ int main(void)
     CHECK(g_m1_settings.brightness_pct == 100, "malformed numeral reset to default");
     CHECK(strcmp(g_m1_settings.device_name, "M1") == 0, "control-byte string reset to default");
     CHECK(g_m1_settings.screen_timeout_s == 30, "healthy fields unaffected");
+
+    /* 13: legacy v1 upgrade path -- a settings.cfg written by PR-1..PR-6
+     *     firmware carries the then-inert subghz_power_dbm=0; the boot
+     *     load migrates it to the +20 dBm default (stock TX power, no
+     *     diagnostic: nothing was lost), and the next save rewrites the
+     *     file as v2 so the semantics become durable. */
+    vfs_reset(); fault_reset();
+    g_settings_ready = false; g_settings_loaded_ok = false; g_settings_save_permitted = false;
+    vfs_put_valid(SETTINGS_PATH,
+                  "#ver=1\r\nbrightness_pct=64\r\ndevice_name=Legacy\r\nsubghz_power_dbm=0\r\n");
+    CHECK(settings_init() == true, "legacy v1 file loads (never rejected for its version)");
+    CHECK(g_m1_settings.subghz_power_dbm == 20, "boot load migrates the inert legacy 0 to +20 dBm");
+    CHECK(g_m1_settings.brightness_pct == 64 && strcmp(g_m1_settings.device_name, "Legacy") == 0,
+          "legacy content otherwise intact");
+    CHECK(s_log_warn == 0, "migration is silent (a semantic upgrade, not data loss)");
+    CHECK(settings_save(), "save after migration succeeds");
+    {
+        const char *cfg = vfs_get(SETTINGS_PATH);
+        CHECK(cfg != NULL && strncmp(cfg, "#ver=2\r\n", 8) == 0, "saved file is now format v2");
+        CHECK(cfg != NULL && strstr(cfg, "subghz_power_dbm=20\r\n") != NULL,
+              "migrated power persisted explicitly");
+    }
 
     printf("settings file IO: %d/%d checks passed\n", g_pass, g_pass + g_fail);
     return g_fail ? 1 : 0;

@@ -42,6 +42,19 @@
 #define SI446X_GROUP_MODEM_PROPERTY_MODEM_MOD_TYPE  0x00
 #define SI446X_GROUP_MODEM_PROPERTY_MODEM_OOK_PDTC	0x40
 
+/* Property offsets used by the runtime modem config (AN633 / WDS emits):
+ * MODEM group 0x20: MOD_TYPE 0x00, FREQ_DEV 0x0A:0x0C, DECIMATION_CFG1/0/2
+ * 0x1E:0x20, AFC_LIMITER 0x30:0x31, SPIKE_DET 0x54, DSA_QUAL 0x5D;
+ * CHFLT group 0x21: RX1/RX2_CHFLT_COE13..0 + COEM3..0 = 0x00:0x23. */
+#define SI446X_MODEM_PROP_FREQ_DEV                  0x0A
+#define SI446X_MODEM_PROP_DECIMATION_CFG1           0x1E
+#define SI446X_MODEM_PROP_AFC_LIMITER_1             0x30
+#define SI446X_MODEM_PROP_SPIKE_DET                 0x54
+#define SI446X_MODEM_PROP_DSA_QUAL                  0x5D
+#define SI446X_GROUP_CHFLT                          0x21
+#define SI446X_MODEM_CHFLT_COE_N                    36 /* 0x2100..0x2123 */
+
+
 #define RADIO_COMM_BUFFER_MAX          30
 
 
@@ -109,6 +122,27 @@ volatile uint8_t si446x_nIRQ_active = FALSE; // Updated by interrupt
 volatile uint8_t radio_state_flag = RADIO_STATE_IDLE; // Updated by interrupt
 static uint8_t radio_init_done = FALSE;
 static uint8_t radio_mod_type = MODEM_MOD_TYPE_OOK;
+
+/* outdiv of the most recently loaded configuration (see
+ * radio_get_last_outdiv()). Set by radio_init_rx_tx() from the WDS base
+ * headers' own MODEM_CLKGEN_BAND values and by radio_tune_exact_hz()
+ * (whose range->outdiv selection is the verified authority). The
+ * 0x08/0x0A/0x0B encodings (outdiv 4/8/12) are cross-verified by the FSK
+ * deviation words in the repo's WDS FSK headers and radio_tune_exact_hz();
+ * the 0x09 encoding used by the 345/372/390 MHz headers is mapped to
+ * outdiv 6 per the consecutive BAND enum {4,6,8,12,16} -> {0x08..0x0C}
+ * (inferred - flagged for hardware acceptance in the deviation path).
+ * This table is host-test-bound to the MODEM_CLKGEN_BAND bytes those
+ * headers emit for every band (m1_csrc/test/
+ * m1_subghz_radio_settings_test.py), so neither an edited table nor a
+ * regenerated radio_config/ header can drift past the suite. */
+static uint32_t radio_last_outdiv = 0;
+static const uint8_t radio_band_outdiv[SUB_GHZ_BAND_EOL] =
+{
+	/*300*/12, /*310*/12, /*315*/12, /*345*/6, /*372*/6, /*390*/6,
+	/*433*/8,  /*433_92*/8, /*915*/4,
+};
+
 
 static S_M1_SPI_Trans_Inf radio_spi_trans_inf = {
 													.dev_id = SPI_DEVICE_SUBGHZ,
@@ -1017,6 +1051,8 @@ void radio_init_rx_tx(S_M1_SubGHz_Band freq, uint8_t mod_type, bool do_reset)
 	pradioconfig = RadioConfigList[freq];
 	assert(pradioconfig!=NULL);
 	radio_mod_type = mod_type & MODEM_MOD_TYPE_MASK;
+	radio_last_outdiv = radio_band_outdiv[freq];
+
     /* Load radio configuration */
     while (SI446X_SUCCESS != SI446x_ConfigInit(pradioconfig->Radio_ConfigurationArray) )
     {
@@ -1108,6 +1144,7 @@ uint8_t radio_tune_exact_hz(uint32_t hz, uint8_t mod_type, bool do_reset)
     /* 3) Load the base config (outdiv + modem), then override FREQ_CONTROL. */
     radio_init_rx_tx(base_band, mod_type, do_reset);
     SI446x_Select_Frontend(base_band);
+    radio_last_outdiv = outdiv; /* exact-tune's range->outdiv is authoritative */
 
     si446x_cmd_buffer[0] = SI446X_CMD_ID_SET_PROPERTY;         /* 0x11             */
     si446x_cmd_buffer[1] = 0x40;                               /* FREQ_CONTROL grp */
@@ -1124,6 +1161,336 @@ uint8_t radio_tune_exact_hz(uint32_t hz, uint8_t mod_type, bool do_reset)
              (unsigned long)hz, (unsigned long)outdiv, fc_inte, (unsigned long)fc_frac);
     return RADIO_TUNE_OK;
 } // uint8_t radio_tune_exact_hz(uint32_t hz, uint8_t mod_type, bool do_reset)
+
+
+/* ================= M1_SUBGHZ_MODEM_PURE_CORE BEGIN ================= */
+/* Runtime modem-config decision math (Radio Settings, issue #3). Plain
+ * C99 over stdint only -- no HAL, no FreeRTOS, no logging -- so the host
+ * unit test (m1_csrc/test/m1_subghz_radio_settings_test.py) extracts
+ * exactly this region and compiles it standalone. Encodings, formulas and
+ * the provenance of every constant are documented here and asserted by
+ * that test. */
+
+/* Modulation preset -> raw MODEM_MOD_TYPE (property 0x2000 MOD_TYPE[2:0],
+ * AN633): 1=OOK, 2=2-FSK, 3=2-GFSK, 4=4-FSK, 5=4-GFSK. Returns 0 for the
+ * BAND_DEFAULT sentinel (keep the loaded preset's modulation) and for
+ * unknown ids (refuse rather than guess). */
+int8_t subghx_modem_mod_raw_code(uint8_t mod_preset)
+{
+	switch ( mod_preset )
+	{
+		case M1_SUBGHZ_MODP_OOK:   return 0x01;
+		case M1_SUBGHZ_MODP_2FSK:  return 0x02;
+		case M1_SUBGHZ_MODP_2GFSK: return 0x03;
+		case M1_SUBGHZ_MODP_4FSK:  return 0x04;
+		case M1_SUBGHZ_MODP_4GFSK: return 0x05;
+		default:                   return 0;
+	}
+} // int8_t subghx_modem_mod_raw_code(uint8_t mod_preset)
+
+/* FSK-family presets carry a frequency deviation; OOK/BAND_DEFAULT do not. */
+uint8_t subghx_modem_mod_is_fsk(uint8_t mod_preset)
+{
+	return ( mod_preset>=M1_SUBGHZ_MODP_2FSK && mod_preset<=M1_SUBGHZ_MODP_4GFSK ) ? 1u : 0u;
+} // uint8_t subghx_modem_mod_is_fsk(uint8_t mod_preset)
+
+/* MODEM_FREQ_DEV (0x200A:200C, 17-bit) encoding, verified against the
+ * repo's own WDS-generated FSK headers:
+ *   Fdev = FreqDev * (Npresc * fxo) / (2^19 * outdiv), Npresc=2, fxo=32 MHz
+ *     => FreqDev = round( Fdev * 2^19 * outdiv / (Npresc * fxo) )
+ * Verified points: 2000 Hz @ outdiv 8 -> 131 (m1_sub_ghz_433_rxtx_...
+ * dev2_e1_10_fsk.h emits 0x000083) and 200000 Hz @ outdiv 4 -> 6554
+ * (m1_sub_ghz_915_..._dev200_e1_10_fsk.h emits 0x00199A). Returns 1 and
+ * the word when representable, 0 otherwise (never clamps a deviation:
+ * an unrepresentable request is refused). */
+uint8_t subghx_modem_dev_word(uint32_t dev_hz, uint32_t outdiv, uint32_t *p_word)
+{
+	uint64_t word;
+
+	if ( (p_word==NULL) || (dev_hz==0u) )
+		return 0;
+	switch ( outdiv )
+	{
+		case 4: case 6: case 8: case 12: case 16:
+			break;
+		default:
+			return 0; /* unknown loaded divider: refuse, never guess */
+	}
+	word = ( (uint64_t)dev_hz * 524288uLL * (uint64_t)outdiv + 32000000uLL ) / 64000000uLL;
+	if ( (word==0uLL) || (word>0x1FFFFuLL) )
+		return 0; /* 17-bit field */
+	*p_word = (uint32_t)word;
+	return 1;
+} // uint8_t subghx_modem_dev_word(uint32_t dev_hz, uint32_t outdiv, uint32_t *p_word)
+
+/* "Auto" deviation for an FSK modulation on top of a non-FSK base preset
+ * (the OOK base presets carry FREQ_DEV = 0, which would make a 2-FSK
+ * override transmit with zero deviation): fall back to the deviation the
+ * repo's own WDS FSK headers generated for that band family - 200 kHz on
+ * the 900 MHz config (m1_sub_ghz_915_..._dev200_e1_10_fsk.h), 2 kHz below
+ * (m1_sub_ghz_433_..._dev2_e1_10_fsk.h). Values are WDS-generated facts,
+ * not computed here. */
+uint32_t subghx_modem_dev_auto_hz(uint8_t base_band_900mhz)
+{
+	return base_band_900mhz ? 200000UL : 2000UL;
+} // uint32_t subghx_modem_dev_auto_hz(uint8_t base_band_900mhz)
+
+/* Nominal dBm -> PA_PWR_LVL (property 0x2201, DDAC[6:0] 0..127) map.
+ * There is no public dBm formula for the Si4463 PA (AN648 publishes
+ * measured curves only), so this is a documented NOMINAL approximation:
+ * linear in code between the two anchors
+ *   PA_PWR_LVL 0x7F (127) <-> +20 dBm  -- every WDS +20 dBm config in
+ *                                         radio_config/ writes 0x7F, and
+ *                                         the stock TX path's 0xFF hits
+ *                                         the same 7-bit DDAC
+ *   PA_PWR_LVL 0x00       <-> -10 dBm  -- nominal floor of the range
+ * so lvl = round((dbm + 10) * 127 / 30). Intermediate points are labelled
+ * approximate (measured output departs from linear-in-code); absolute
+ * accuracy is a hardware-acceptance item (follow-up issue). Returns -1
+ * outside M1_SUBGHZ_POWER_DBM_MIN..MAX. */
+int16_t subghx_power_dbm_to_pa_lvl(int8_t power_dbm)
+{
+	if ( (power_dbm < M1_SUBGHZ_POWER_DBM_MIN) || (power_dbm > M1_SUBGHZ_POWER_DBM_MAX) )
+		return -1;
+	return (int16_t)( ( (int32_t)(power_dbm - M1_SUBGHZ_POWER_DBM_MIN) * 127 + 15 ) / 30 );
+} // int16_t subghx_power_dbm_to_pa_lvl(int8_t power_dbm)
+
+/* RX-bandwidth preset table -- every constant below is copied VERBATIM
+ * from the repo's WDS-generated headers in Sub_Ghz/radio_config/ (WDS GUI
+ * 3.2.11.0, Si4463 Rev C2); none is computed or invented here. The three
+ * selectable bandwidths are the three distinct filter+decimation sets the
+ * repo actually has. WDS varies, with RXBW: the CIC decimation trio
+ * (MODEM_DECIMATION_CFG1/0/2), the AFC limiter, the (G)FSK spike-detector
+ * threshold, the DSA eye-opening qualifier, and the 36 channel-filter
+ * coefficients -- proven by cross-band diffs of otherwise-identical
+ * headers (e.g. the bw100 vs bw200 433/300/915 OOK configs differ in
+ * exactly these properties). The 100 kHz and 200 kHz sets share the same
+ * FIR coefficients and differ in decimation, exactly as WDS emitted them.
+ *
+ * WDS-nominal achieved bandwidths (each source header's own comment):
+ *   10 kHz request  -> "WB filter 7 (BW = 10.75 kHz)"
+ * 100 kHz request  -> "WB filter 2 (BW = 109.93 kHz)"
+ * 200 kHz request  -> "WB filter 2 (BW = 219.87 kHz)"
+ *
+ * Source headers:
+ *  10 kHz : si4463_revc2_433_075_rxtx_spacing25_bw10_baud4_8_error1_10_OOK.h
+ *           (identical BW fields in m1_sub_ghz_304_rxtx_spc25_bw10_..._ook.h
+ *           and si4463_revc2_915_00_rxtx_spacing25_bw10_..._OOK.h)
+ * 100 kHz : si4463_revc2_433_92_rxtx_spacing250_bw100_baud10_error1_10_OOK.h
+ *           (identical in the 310/315/390 bw100 headers)
+ * 200 kHz : si4463_revc2_433_rxtx_spacing250_bw200_baud10_error1_10_OOK.h
+ *           (identical in the 300/372/915 bw200 headers)
+ * Known quirks, documented not hidden: the bw10 sets were generated at
+ * 4.8 kbaud (their BCR_OSR stays with the loaded preset - baud-coupled,
+ * deliberately NOT patched here); the 345 MHz "bw100" header actually
+ * carries the 200k-style tuple (WDS generation quirk) - the table keys on
+ * the tuple, not the filename; the AFC limiter varies by a few LSB across
+ * outdivs at equal BW (0x0709/0x0712 @100k, 0x0DD6/0x0DE7 @200k) and AFC
+ * is disabled in every source config, so the majority value is used; the
+ * bw10 AFC limiter is the 433.075 value (the 304.5 header emits 0x0175,
+ * 3 LSB lower). MODEM_RAW_CONTROL / RAW_EYE differ across bands for
+ * non-BW reasons and stay with the loaded preset. 4-FSK/4-GFSK reuse the
+ * loaded preset's FSK4 slicer gains/thresholds (hardware acceptance). */
+typedef struct
+{
+	uint16_t bw_khz;                                  /* nominal request        */
+	uint8_t  decimation_cfg1, decimation_cfg0, decimation_cfg2; /* 0x201E:20 */
+	uint8_t  afc_limiter_1, afc_limiter_0;            /* 0x2030:31              */
+	uint8_t  spike_det;                               /* 0x2054                 */
+	uint8_t  dsa_qual;                                /* 0x205D                 */
+	uint8_t  chflt[SI446X_MODEM_CHFLT_COE_N];         /* 0x2100..0x2123         */
+} S_Si446xBwPreset_t;
+
+static const S_Si446xBwPreset_t subghx_bw_presets[] =
+{
+	{ 10u, 0x72, 0x10, 0x0C, 0x01, 0x78, 0x3B, 0x7F,
+		{ 0x39, 0x2B, 0x00, 0xC3, 0x7F, 0x3F, 0x0C, 0xEC, 0xDC, 0xDC, 0xE3, 0xED,
+		  0xF6, 0xFD, 0x15, 0xC0, 0xFF, 0x0F,
+		  0x39, 0x2B, 0x00, 0xC3, 0x7F, 0x3F, 0x0C, 0xEC, 0xDC, 0xDC, 0xE3, 0xED,
+		  0xF6, 0xFD, 0x15, 0xC0, 0xFF, 0x0F } },
+	{ 100u, 0x24, 0x20, 0x00, 0x07, 0x09, 0x14, 0x34,
+		{ 0xFF, 0xC4, 0x30, 0x7F, 0xF5, 0xB5, 0xB8, 0xDE, 0x05, 0x17, 0x16, 0x0C,
+		  0x03, 0x00, 0x15, 0xFF, 0x00, 0x00,
+		  0xFF, 0xC4, 0x30, 0x7F, 0xF5, 0xB5, 0xB8, 0xDE, 0x05, 0x17, 0x16, 0x0C,
+		  0x03, 0x00, 0x15, 0xFF, 0x00, 0x00 } },
+	{ 200u, 0x16, 0x20, 0x00, 0x0D, 0xD6, 0x0A, 0x1E,
+		{ 0xFF, 0xC4, 0x30, 0x7F, 0xF5, 0xB5, 0xB8, 0xDE, 0x05, 0x17, 0x16, 0x0C,
+		  0x03, 0x00, 0x15, 0xFF, 0x00, 0x00,
+		  0xFF, 0xC4, 0x30, 0x7F, 0xF5, 0xB5, 0xB8, 0xDE, 0x05, 0x17, 0x16, 0x0C,
+		  0x03, 0x00, 0x15, 0xFF, 0x00, 0x00 } },
+};
+#define SUBGHX_BW_PRESET_N   (sizeof(subghx_bw_presets)/sizeof(subghx_bw_presets[0]))
+
+/* Selectable-bandwidth lookup: index into subghx_bw_presets[], or -1 when
+ * bw_khz is 0 (keep the loaded preset's own filter set) or unknown. */
+int16_t subghx_modem_bw_preset_index(uint16_t bw_khz)
+{
+	uint16_t i;
+
+	if ( bw_khz==0u )
+		return -1;
+	for ( i=0; i<(uint16_t)SUBGHX_BW_PRESET_N; i++ )
+	{
+		if ( subghx_bw_presets[i].bw_khz==bw_khz )
+			return (int16_t)i;
+	}
+	return -1;
+} // int16_t subghx_modem_bw_preset_index(uint16_t bw_khz)
+
+/* ================= M1_SUBGHZ_MODEM_PURE_CORE END =================== */
+
+
+
+/******************************************************************************/
+/*
+ * Generic SET_PROPERTY (0x11) writer. num_props is capped at 12 exactly as
+ * the command specifies (SI446X_CMD_SET_PROPERTY_ARG_NUM_PROPS_MAX) and as
+ * WDS chunks its own property writes; the radio comm buffer (30 bytes)
+ * bounds a single command to 4 + 12 bytes anyway.
+ *
+ */
+/******************************************************************************/
+uint8_t SI446x_Set_Properties(uint8_t group, uint8_t start_prop, uint8_t num_props, const uint8_t *p_values)
+{
+	uint8_t i;
+
+	if ( (num_props==0u) || (num_props>12u) || (p_values==NULL) )
+		return 1;
+
+	si446x_cmd_buffer[0] = SI446X_CMD_ID_SET_PROPERTY;
+	si446x_cmd_buffer[1] = group;
+	si446x_cmd_buffer[2] = num_props;
+	si446x_cmd_buffer[3] = start_prop;
+	for ( i=0; i<num_props; i++ )
+		si446x_cmd_buffer[4u+i] = p_values[i];
+
+	if ( SI446x_Send_Cmd((uint8_t)(num_props + 4u), si446x_cmd_buffer)!=0 )
+		return 1;
+	if ( SI446x_Get_Resp(0, NULL)!=SI4463_CTS_READY )
+		return 1;
+	return 0;
+} // uint8_t SI446x_Set_Properties(...)
+
+
+
+/******************************************************************************/
+/*
+ * SI446x_Apply_Modem_Config() -- apply the user's Radio Settings on top of
+ * the just-loaded WDS base configuration. See m1_sub_ghz_api.h for the
+ * contract and M1_SUBGHZ_MODEM_PURE_CORE above for every encoding.
+ * Ordering: modulation first (so a deviation lands under the requested
+ * modulation), then deviation (FSK presets only), then the RX-bandwidth
+ * preset (decimation trio, AFC limiter, spike/DSA thresholds, 36 CHFLT
+ * coefficients in three 12-property writes exactly like WDS). Power is
+ * NOT written here: the mapped PA_PWR_LVL byte is returned through
+ * *tx_power_out and the TX path writes it right after Radio_Start_Tx
+ * (this path's existing ordering; the PA property stays writable in
+ * TX state), which also keeps CW/direct-mode callers on their own
+ * sequencing.
+ * Returns the number of refused property writes (0 = fully applied).
+ *
+ */
+/******************************************************************************/
+uint8_t SI446x_Apply_Modem_Config(const S_M1_Si446x_ModemCfg_t *cfg, uint8_t *mod_type_out, uint8_t *tx_power_out)
+{
+	int8_t   raw_mod;
+	int16_t  bw_idx;
+	int16_t  pa_lvl;
+	uint8_t  faults;
+	uint8_t  i;
+	uint8_t  v[3];
+	uint32_t dev_hz;
+	uint32_t dev_word;
+
+	if ( cfg==NULL )
+		return 1;
+	faults = 0;
+
+	/* Modulation: plain MODEM_MOD_TYPE (a TX direct-mode caller re-encodes
+	 * 0xC8|raw itself with the returned code). */
+	raw_mod = subghx_modem_mod_raw_code(cfg->mod_preset);
+	if ( raw_mod > 0 )
+	{
+		SI446x_Change_ModType((uint8_t)raw_mod);
+		if ( mod_type_out!=NULL )
+			*mod_type_out = (uint8_t)raw_mod;
+	}
+
+	/* Deviation: FSK presets only (OOK ignores MODEM_FREQ_DEV). "Auto"
+	 * falls back to the band-family WDS FSK deviation so an FSK override
+	 * on an OOK base preset never transmits zero deviation. */
+	if ( subghx_modem_mod_is_fsk(cfg->mod_preset)!=0u )
+	{
+		dev_hz = ( cfg->dev_khz!=0u ) ? (uint32_t)cfg->dev_khz * 1000UL
+		                              : subghx_modem_dev_auto_hz(cfg->base_band_900mhz);
+		if ( subghx_modem_dev_word(dev_hz, radio_last_outdiv, &dev_word)!=0u )
+		{
+			v[0] = (uint8_t)((dev_word >> 16) & 0xFFUL);
+			v[1] = (uint8_t)((dev_word >>  8) & 0xFFUL);
+			v[2] = (uint8_t)( dev_word        & 0xFFUL);
+			faults += SI446x_Set_Properties(SI446X_GROUP_MODEM, SI446X_MODEM_PROP_FREQ_DEV, 3, v);
+		}
+		else
+		{
+			M1_LOG_E(M1_LOGDB_TAG, "Modem cfg: dev %lu kHz @outdiv %lu refused\r\n",
+			         (unsigned long)((cfg->dev_khz!=0u) ? cfg->dev_khz : (dev_hz / 1000UL)),
+			         (unsigned long)radio_last_outdiv);
+			faults++;
+		}
+	}
+
+	/* RX bandwidth preset (skipped for the 0 kHz "keep" sentinel). */
+	bw_idx = subghx_modem_bw_preset_index(cfg->bw_khz);
+	if ( bw_idx >= 0 )
+	{
+		const S_Si446xBwPreset_t *bp = &subghx_bw_presets[bw_idx];
+
+		v[0] = bp->decimation_cfg1;
+		v[1] = bp->decimation_cfg0;
+		v[2] = bp->decimation_cfg2;
+		faults += SI446x_Set_Properties(SI446X_GROUP_MODEM, SI446X_MODEM_PROP_DECIMATION_CFG1, 3, v);
+		v[0] = bp->afc_limiter_1;
+		v[1] = bp->afc_limiter_0;
+		faults += SI446x_Set_Properties(SI446X_GROUP_MODEM, SI446X_MODEM_PROP_AFC_LIMITER_1, 2, v);
+		v[0] = bp->spike_det;
+		faults += SI446x_Set_Properties(SI446X_GROUP_MODEM, SI446X_MODEM_PROP_SPIKE_DET, 1, v);
+		v[0] = bp->dsa_qual;
+		faults += SI446x_Set_Properties(SI446X_GROUP_MODEM, SI446X_MODEM_PROP_DSA_QUAL, 1, v);
+		for ( i=0; i<(SI446X_MODEM_CHFLT_COE_N/12u); i++ )
+		{
+			faults += SI446x_Set_Properties(SI446X_GROUP_CHFLT, (uint8_t)(i*12u), 12, &bp->chflt[i*12u]);
+		}
+	}
+
+	/* Nominal power: map dBm to the PA DDAC byte for the TX path. */
+	pa_lvl = subghx_power_dbm_to_pa_lvl(cfg->power_dbm);
+	if ( (pa_lvl >= 0) && (tx_power_out!=NULL) )
+	{
+		*tx_power_out = (uint8_t)pa_lvl;
+	}
+	else if ( pa_lvl < 0 )
+	{
+		M1_LOG_E(M1_LOGDB_TAG, "Modem cfg: power %d dBm out of range, stock PA kept\r\n", (int)cfg->power_dbm);
+	}
+
+	if ( faults!=0u )
+		M1_LOG_E(M1_LOGDB_TAG, "Modem cfg: %u property write(s) refused\r\n", (unsigned)faults);
+	return faults;
+} // uint8_t SI446x_Apply_Modem_Config(...)
+
+
+
+/******************************************************************************/
+/*
+ * outdiv of the most recently loaded configuration (0 = unknown); see the
+ * radio_last_outdiv declaration above for the provenance of the mapping.
+ *
+ */
+/******************************************************************************/
+uint32_t radio_get_last_outdiv(void)
+{
+	return radio_last_outdiv;
+} // uint32_t radio_get_last_outdiv(void)
 
 
 

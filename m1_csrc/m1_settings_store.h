@@ -33,7 +33,10 @@
  *    load runs before any other task exists.
  *
  * Persistence format (see docs/architecture.md "Storage model"):
- *  - line 1: "#ver=1"
+ *  - line 1: "#ver=2" (v1 files written by pre-Radio-Settings firmware
+ *    are still accepted on load: their then-inert subghz_power_dbm=0
+ *    migrates to the +20 dBm default, and the next save rewrites the
+ *    file as v2)
  *  - one "key=value" line per field, CRLF endings
  *  - final line: "crc=XXXXXXXX" (8 uppercase hex digits) carrying the
  *    CRC-32C (Castagnoli, poly 0x1EDC6F41 -- m1_crc32c.c, reused) over

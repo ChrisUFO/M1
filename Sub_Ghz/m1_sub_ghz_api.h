@@ -83,6 +83,73 @@ typedef enum
 	RADIO_ANTENNA_MODE_TX,
 } tRadioAntennaMode;
 
+/* ------------------- Runtime modem config (issue #3) -------------------
+ *
+ * SI446x_Apply_Modem_Config() patches the RevC2 property API on top of a
+ * loaded WDS base configuration (radio_init_rx_tx / radio_tune_exact_hz),
+ * so the user's Radio Settings survive every preset load/tune. Modulation
+ * presets, selectable RX-bandwidth presets and the nominal dBm->PA map are
+ * defined here; the encodings and the coefficient provenance are documented
+ * at the implementation in m1_sub_ghz_api.c (M1_SUBGHZ_MODEM_PURE_CORE).
+ *
+ * Modulation preset ids (settings-store subghz_mod field). The raw
+ * MODEM_MOD_TYPE (property 0x2000) encodings per AN633 are
+ * 1=OOK, 2=2-FSK, 3=2-GFSK, 4=4-FSK, 5=4-GFSK. NOTE: the legacy defines
+ * MODEM_MOD_TYPE_2FSK/2GFSK further up carry swapped names for 0x04/0x05
+ * (those are 4-FSK/4-GFSK per AN633); the M1_SUBGHZ_MODP_* names below
+ * carry the documented meanings.
+ */
+#define M1_SUBGHZ_MODP_BAND_DEFAULT	0	/* follow band preset: OOK, 2-FSK@915 */
+#define M1_SUBGHZ_MODP_OOK			1
+#define M1_SUBGHZ_MODP_2FSK			2
+#define M1_SUBGHZ_MODP_2GFSK		3
+#define M1_SUBGHZ_MODP_4FSK			4
+#define M1_SUBGHZ_MODP_4GFSK		5
+#define M1_SUBGHZ_MODP_EOL			6
+
+/* Nominal TX-power range (settings-store subghz_power_dbm field) in dBm.
+ * Values are NOMINAL: the dBm->PA_PWR_LVL (DDAC) map has no public
+ * formula; the anchors and the approximation are documented at
+ * subghx_power_dbm_to_pa_lvl() and verified by hardware acceptance. */
+#define M1_SUBGHZ_POWER_DBM_MIN		(-10)
+#define M1_SUBGHZ_POWER_DBM_MAX		20
+#define M1_SUBGHZ_POWER_DBM_DEFAULT	20	/* == PA_PWR_LVL 0x7F == stock */
+
+/* One radio-settings request. Fields at their "keep" sentinels (mod
+ * BAND_DEFAULT, bw/dev 0 kHz) leave the loaded preset's value in place;
+ * power is always mapped (the default +20 dBm reproduces the stock
+ * PA_PWR_LVL 0x7F exactly, see M1_SUBGHZ_POWER_DBM_DEFAULT). */
+typedef struct
+{
+	uint8_t  mod_preset;      /* M1_SUBGHZ_MODP_*                                  */
+	uint16_t bw_khz;          /* 0 = keep preset filter set; else 10/100/200       */
+	uint16_t dev_khz;         /* 0 = Auto (band-family WDS value); else FSK dev    */
+	int8_t   power_dbm;       /* nominal dBm, M1_SUBGHZ_POWER_DBM_MIN..MAX         */
+	uint8_t  base_band_900mhz;/* 1 when the loaded base config is the 900 MHz one   */
+} S_M1_Si446x_ModemCfg_t;
+
+/* Generic SET_PROPERTY (command 0x11) writer. Returns 0 on success, 1 on
+ * a rejected argument or a radio (CTS/apply) fault. Max 12 properties per
+ * command (SI446X_CMD_SET_PROPERTY_ARG_NUM_PROPS_MAX) - exactly the WDS
+ * command chunking. */
+uint8_t SI446x_Set_Properties(uint8_t group, uint8_t start_prop, uint8_t num_props, const uint8_t *p_values);
+
+/* Apply a runtime modem configuration on top of the loaded WDS base
+ * configuration (see above). Idempotent: identical repeated requests emit
+ * identical property writes. Task context ONLY - never call from an ISR.
+ * On return, *mod_type_out holds the raw MODEM_MOD_TYPE code when the
+ * modulation was overridden (so a TX caller re-encodes its direct-mode
+ * 0xC8|mod_type with the user's modulation), and *tx_power_out holds the
+ * mapped PA_PWR_LVL byte when power_dbm was in range. Either pointer may
+ * be NULL. Returns the number of property writes the radio refused. */
+uint8_t SI446x_Apply_Modem_Config(const S_M1_Si446x_ModemCfg_t *cfg, uint8_t *mod_type_out, uint8_t *tx_power_out);
+
+/* Output-divider (outdiv) of the configuration loaded most recently by
+ * radio_init_rx_tx()/radio_tune_exact_hz(). Needed by the deviation
+ * encoding; 0 when unknown (the deviation override is then skipped). */
+uint32_t radio_get_last_outdiv(void);
+
+
 void radio_init_rx_tx(S_M1_SubGHz_Band, uint8_t mod_type, bool do_reset);
 
 /* Exact-frequency tuning (Record RAW extended frequency list, Phase 14).

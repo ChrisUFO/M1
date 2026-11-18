@@ -55,7 +55,11 @@
 
 /* Single source of truth for the compiled defaults: both the const default
  * image and the (writable) live image are initialized from this macro, so
- * the live struct is valid BEFORE settings_init() runs. */
+ * the live struct is valid BEFORE settings_init() runs. Sub-GHz semantics
+ * are owned by the Radio Settings unit (PR-7): mod 0 / bw 0 / dev 0 are
+ * the "keep the loaded band preset" sentinels, power +20 dBm maps to the
+ * stock PA_PWR_LVL 0x7F, and freq_valid 0 means no frequency override --
+ * together these reproduce pre-PR-7 RF behavior bit-for-bit. */
 #define SETTINGS_DEFAULTS_INIT {                                       \
     .brightness_pct    = 100u,                                         \
     .screen_timeout_s  = 45u,                                          \
@@ -64,13 +68,26 @@
     .subghz_mod        = 0u,                                           \
     .subghz_bw_khz     = 0u,                                           \
     .subghz_dev_khz    = 0u,                                           \
-    .subghz_power_dbm  = 0,                                            \
+    .subghz_power_dbm  = 20,                                           \
     .subghz_freq_hz    = 0u,                                           \
     .subghz_freq_valid = 0u,                                           \
     .bt_adv_name       = "",                                           \
     .bt_preset         = 0u,                                           \
     .bt_interval_ms    = 0u,                                           \
 }
+
+/* On-disk format version (the "#ver=N" first line). History:
+ *  - v1: pre-Radio-Settings (PR-1..PR-6) writes. The RAM image was
+ *    serialized wholesale, so every legacy file carries
+ *    subghz_power_dbm=0 -- the then-INERT default, written even by an
+ *    unrelated brightness edit. On load such a legacy 0 is migrated to
+ *    the +20 dBm default (see settings_parse_buffer) so devices
+ *    upgraded across the PR-7 boundary keep stock TX power.
+ *  - v2 (current): written under the Radio Settings (PR-7) semantics;
+ *    every persisted value, including subghz_power_dbm=0, is an
+ *    explicit user choice and loads verbatim.
+ * The version is a single decimal digit on disk (parse below). */
+#define SETTINGS_FORMAT_VER  2
 
 /* Numeric storage types handled by the field table. */
 typedef enum
@@ -122,7 +139,13 @@ static const S_M1_Settings_t s_settings_defaults = SETTINGS_DEFAULTS_INIT;
  *  - brightness 0..100, timeout 0(Off)/10..120 s, LED 0/1 are product
  *    semantics (PR-2 screens enforce the same bounds);
  *  - subghz_/bt_ fields round-trip at full storage-type width until their
- *    consuming units define tighter ranges (documented in the header). */
+ *    consuming units define tighter ranges (documented in the header).
+ *    The subghz_ semantics are defined by the Radio Settings unit (PR-7):
+ *    mod 0..5 preset ids, bw 0/10/100/200 kHz, dev 0/2/20/47/200 kHz,
+ *    power -10..+20 dBm (default +20 == stock PA), freq an exact-Hz
+ *    override gated by region at save AND apply; the screen enforces
+ *    these, the store keeps tolerating any storage-width value so a
+ *    hand-edited file still loads (clamped only by the type width). */
 static const settings_field_desc_t s_settings_fields[] =
 {
     { "brightness_pct",   SETTINGS_T_U8,  offsetof(S_M1_Settings_t, brightness_pct),   sizeof(s_settings_defaults.brightness_pct),   0,      100u,          false, NULL   },
@@ -396,11 +419,16 @@ static void settings_apply_kv(const char *line, size_t line_len)
 /* Parse a whole (already CRC-verified) settings file image. Resets the
  * live struct to defaults first, so absent keys keep their default.
  * Returns false only for an unsupported format version (caller reports
- * the file as corrupt); everything else is tolerated per-field. */
+ * the file as corrupt); everything else is tolerated per-field. A v1
+ * (pre-Radio-Settings) file additionally migrates on load: its
+ * serialized subghz_power_dbm=0 was the then-inert default, not a user
+ * choice, so it becomes the +20 dBm default; v2 files preserve an
+ * explicit 0 dBm. */
 static bool settings_parse_buffer(const char *buf, size_t len)
 {
 	size_t i = 0;
 	bool first = true;
+	uint32_t ver = 0;
 
 	if (len == 0U) { return false; }
 
@@ -420,12 +448,40 @@ static bool settings_parse_buffer(const char *buf, size_t len)
 		if (first)
 		{
 			first = false;
-			if ((line_len != 6U) || (strncmp(line, "#ver=1", 6U) != 0)) { return false; }
+			/* "#ver=N": the version is one decimal digit, accepted in
+			 * 1..SETTINGS_FORMAT_VER. Anything else (wrong shape, v0, a
+			 * future vN) is an unsupported version. Legacy v1 is always
+			 * accepted -- a file is never rejected merely for its age. */
+			if ((line_len != 6U) || (strncmp(line, "#ver=", 5U) != 0)
+			    || (line[5] < '1') || ((int)line[5] > ('0' + SETTINGS_FORMAT_VER)))
+			{
+				return false;
+			}
+			ver = (uint32_t)(line[5] - '0');
 			continue;
 		}
 		if ((line_len == 0U) || (line[0] == '#')) { continue; } /* blank/comment */
 		if ((line_len >= 4U) && (strncmp(line, "crc=", 4U) == 0)) { break; } /* data ends at the trailer */
 		settings_apply_kv(line, line_len);
+	}
+
+	/* v1 -> v2 migration (PR-7 Radio Settings semantics): legacy files
+	 * carry subghz_power_dbm=0 because PR-1..PR-6 firmware serialized
+	 * the then-inert default wholesale. Under the new semantics 0 is a
+	 * real 0 dBm TX power, which would silently drop replay TX from
+	 * the stock DDAC 0x7F to 42 on upgraded devices; map the inert 0
+	 * to the +20 dBm default instead. Non-zero legacy values (only
+	 * hand-editable in the v1 era) and every v2 file (explicit user
+	 * choices, including a deliberate 0 dBm) load verbatim, and the
+	 * next save persists the file as v2, making the semantics durable.
+	 * Deliberately not counted as a field reset: nothing was lost --
+	 * the value keeps meaning exactly what it always meant (stock). */
+	if (ver <= 1U)
+	{
+		if (g_m1_settings.subghz_power_dbm == 0)
+		{
+			g_m1_settings.subghz_power_dbm = s_settings_defaults.subghz_power_dbm;
+		}
 	}
 	return true;
 }
@@ -475,10 +531,11 @@ static int64_t settings_read_numeric(const settings_field_desc_t *fd)
 }
 
 /* Serialize the live struct into out[0..cap) as
- * "#ver=1" + one "key=value" line per field + "crc=<8 hex>" trailer.
- * Returns false (with no partial file emitted by callers) if the output
- * would not fit, or if a string field contains a control character (a
- * CR/LF inside a value would corrupt the line format -- refuse loudly). */
+ * "#ver=<SETTINGS_FORMAT_VER>" + one "key=value" line per field +
+ * "crc=<8 hex>" trailer. Returns false (with no partial file emitted by
+ * callers) if the output would not fit, or if a string field contains a
+ * control character (a CR/LF inside a value would corrupt the line
+ * format -- refuse loudly). */
 static bool settings_serialize(char *out, size_t cap, size_t *out_len)
 {
 	size_t off = 0;
@@ -486,7 +543,7 @@ static bool settings_serialize(char *out, size_t cap, size_t *out_len)
 	uint32_t crc;
 	int n;
 
-	n = snprintf(&out[off], cap - off, "#ver=1\r\n");
+	n = snprintf(&out[off], cap - off, "#ver=%d\r\n", (int)SETTINGS_FORMAT_VER);
 	if ((n < 0) || ((size_t)n >= (cap - off))) { return false; }
 	off += (size_t)n;
 

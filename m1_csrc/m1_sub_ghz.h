@@ -161,6 +161,21 @@ void sub_ghz_frequency_reader(void);
 void sub_ghz_gpio_remap(void);
 void subghz_rx_dma_restart_from_isr(void);
 
+/* Radio Settings (issue #3): apply the user's modem/power overrides on top
+ * of the radio configuration just loaded by radio_init_rx_tx() /
+ * radio_tune_exact_hz(). Called after every preset load/tune and
+ * immediately before the radio enters RX/TX. Idempotent; fast-out (no SI
+ * writes at all) when every field is at its compiled default; TASK CONTEXT
+ * ONLY - never from an ISR (blocking SPI property API). See the
+ * implementation in m1_sub_ghz.c and SI446x_Apply_Modem_Config() in
+ * Sub_Ghz/m1_sub_ghz_api.c for the encodings. */
+void sub_ghz_apply_user_radio_overrides(uint8_t *mod_type, uint8_t *tx_power);
+
+/* Radio Settings screen (issue #3): modal settings screen following the
+ * established 128x64 settings idiom (see the header comment in
+ * m1_settings.c); runs in subfunc_handler_task like every menu leaf. */
+void sub_ghz_radio_settings(void);
+
 extern EXTI_HandleTypeDef 	si4463_exti_hdl;
 extern TIM_HandleTypeDef   	timerhdl_subghz_tx;
 extern TIM_HandleTypeDef   	timerhdl_subghz_rx;

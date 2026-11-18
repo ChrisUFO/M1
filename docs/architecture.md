@@ -124,14 +124,20 @@ Durable user settings live in `0:/System/settings.cfg`
 (`m1_csrc/m1_settings_store.c/.h`) — never in flash: the boot-signed metadata
 span (`S_M1_FW_CONFIG_t`, sector 127) is off-limits to application settings.
 
-File format (version 1):
+File format (version 2):
 
-- first line `#ver=1`;
+- first line `#ver=2`;
 - one `key=value` line per field, CRLF endings, keys in the module's field
   table (`brightness_pct`, `screen_timeout_s`, `led_notifications`,
   `device_name`, `subghz_*`, `bt_*`);
 - final line `crc=XXXXXXXX`: CRC-32C (Castagnoli, polynomial 0x1EDC6F41,
   the shared `m1_crc32c.c` helper) over every byte preceding that line.
+
+A v1 file written by pre-Radio-Settings firmware still loads: its
+serialized `subghz_power_dbm=0` was the then-inert default rather than a
+user choice, so the load migrates it to the +20 dBm default (stock TX
+power); every other field is kept, and the next save rewrites the file as
+v2 — under which an explicit 0 dBm choice is preserved verbatim.
 
 Semantics:
 
@@ -232,6 +238,38 @@ receive result and never act on an empty receive (same guard as the
 virtual keyboard), so a stale or uninitialized event struct cannot
 trigger an action. Future settings screens (Sub-GHz radio,
 Bluetooth) copy this pattern.
+
+Sub-GHz Radio Settings (PR-7, issue #3) consumes the store's `subghz_*`
+fields and copies the same modal idiom (screen in
+`m1_csrc/m1_sub_ghz.c`, decision logic in its host-tested
+`M1_SUBGHZ_RADIO_SETTINGS_PURE_CORE` region):
+
+- *Parameter model*: modulation `Auto/OOK/2-FSK/2-GFSK/4-FSK/4-GFSK`,
+  RX bandwidth `Auto/10/100/200 kHz` (the three WDS-generated sets the
+  repo's `Sub_Ghz/radio_config/` headers actually contain; nominal
+  10.75/109.93/219.87 kHz as generated), FSK deviation
+  `Auto/2/20/47/200 kHz` (Auto = the band family's WDS FSK value), power
+  `-10..+20 dBm` nominal (default +20 ≡ the stock `PA_PWR_LVL 0x7F`),
+  frequency override = an exact-Hz entry of the Record-RAW list or Off.
+  Every default is behavior-identical to pre-PR-7 radio operation.
+- *Where the override lives*: `SI446x_Apply_Modem_Config()`
+  (`Sub_Ghz/m1_sub_ghz_api.c`) patches the SI4463 property API
+  (`MODEM_MOD_TYPE`, `MODEM_FREQ_DEV`, the decimation/AFC/spike/DSA/CHFLT
+  bandwidth set) on top of the just-loaded WDS base configuration; the
+  dBm→PA map and all encodings are documented at that implementation and
+  provenance-bound to the WDS headers by the host suite
+  (`m1_csrc/test/m1_subghz_radio_settings_test.py`).
+- *Apply hook*: `sub_ghz_apply_user_radio_overrides()` runs in
+  `subfunc_handler_task` (never ISR), invoked by both opmode setters —
+  the single funnel of Record/Replay/Scan/Frequency Reader — after every
+  preset load/tune and immediately before the radio enters RX/TX. An
+  active frequency override replaces the tune target
+  (`radio_tune_exact_hz()`); the region gate
+  (`sub_ghz_fcc_ism_band_check_hz()`) is enforced at save time in the
+  screen and re-enforced at apply time in the resolver, and the TX
+  boundary keeps its own region check on the effective frequency.
+  Power values are nominal: RF verification on a meter/receiver is the
+  hardware-acceptance follow-up.
 
 **Needs validation:** Document the remaining SD-card directory layout details,
 filename limits, concurrent USB/device access policy, and recovery behavior
