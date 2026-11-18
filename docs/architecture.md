@@ -452,6 +452,10 @@ startup dependency, persistent format, or inter-processor interface.
 Persistent formats documented here: `0:/System/settings.cfg` (user settings,
 see "Storage model"); IR favorites/recent (`0:/System/ir_favorites.txt` /
 `ir_recent.txt`, see "Storage model"); Wi-Fi saved networks
-(`m1_csrc/m1_wifi.c`, versioned CSV). New persistent formats must document
+(`m1_csrc/m1_wifi.c`, versioned CSV with an optional per-network encrypted
+credential column — layout, integrity mechanism, failure/recovery behavior,
+and writer ownership documented in
+[security/wifi-credential-threat-model.md](security/wifi-credential-threat-model.md)).
+New persistent formats must document
 their file layout, integrity mechanism, failure/recovery behavior, and
 writer ownership.

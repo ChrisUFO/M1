@@ -36,9 +36,11 @@ All external and removable-media input must be treated as untrusted.
 
 ## Wi-Fi credential crypto and hardware RNG
 
-Issue #42 (part 1, PR-8) introduces the primitive layer; the CSV field
-that uses it lands in a follow-up. The security posture, stated
-plainly:
+Issue #42 (part 1, PR-8) introduces the primitive layer; issue #42
+part 2 (PR-9) applies it as the optional `credential` column of
+`0:/WiFi/saved_networks.csv`. The security posture, stated plainly
+(the full field format, tamper behavior, and exclusions live in
+[`docs/security/wifi-credential-threat-model.md`](security/wifi-credential-threat-model.md)):
 
 **What is protected.** Wi-Fi credentials written to the SD card are
 encrypted (AES-256-CBC) and authenticated (AES-CMAC, RFC 4493) under a
