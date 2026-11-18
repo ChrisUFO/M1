@@ -694,8 +694,9 @@ static void sub_ghz_set_opmode(uint8_t opmode, uint8_t band, uint8_t channel, ui
 	 * of the just-loaded preset - the LAST configuration step before the
 	 * radio enters RX/TX below. At compiled defaults this writes nothing
 	 * (stock behavior); otherwise it may replace mod_type (re-encoded by
-	 * the TX branch below for direct mode) and tx_power (written right
-	 * before Radio_Start_Tx). */
+	 * the TX branch below for direct mode) and tx_power (written by
+	 * that branch right after Radio_Start_Tx - this path's existing
+	 * ordering; the PA property stays writable in TX state). */
 	sub_ghz_apply_user_radio_overrides(&mod_type, &tx_power);
 
 	//pinfo = SI446x_PartInfo();
@@ -955,7 +956,8 @@ static uint8_t sub_ghz_freq_override_hz(uint32_t *out_hz)
   *         TX caller re-encodes its direct-mode 0xC8|mod_type with the
   *         user's modulation) and *tx_power holds the nominal PA_PWR_LVL
   *         byte (written by the TX path right after Radio_Start_Tx -
-  *         stock ordering; the PA property stays writable in TX state).
+  *         this path's existing ordering; the PA property stays
+  *         writable in TX state).
   *         Either pointer may be NULL.
   */
 /*============================================================================*/
