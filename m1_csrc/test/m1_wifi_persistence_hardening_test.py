@@ -69,6 +69,17 @@ def simple_typedef(text, name):
     return text[start_idx:end_idx]
 
 
+def enum_typedef(text, name):
+    """Extract a 'typedef enum { ... } name;' block, anchored on the
+    closing marker (same anti-runaway technique as simple_typedef --
+    a naive non-greedy regex would start at the file's FIRST 'typedef
+    enum {' and swallow everything up to this one's closer)."""
+    end_marker = "} " + name + ";"
+    end_idx = text.index(end_marker) + len(end_marker)
+    start_idx = text.rindex("typedef enum", 0, end_idx)
+    return text[start_idx:end_idx]
+
+
 def host_cc():
     """Same compiler probe as m1_crypto_test.py / m1_ir_favorites_test.py:
     cc (POSIX) then gcc/clang (a Windows host has no cc)."""
@@ -456,6 +467,13 @@ typedef struct {
  * logic under test treats it as an opaque field -- not the real function,
  * disclosed here rather than pulled from the unavailable vendor header. */
 static const char *wifi_auth_mode_to_str(int mode) { return mode ? "WPA2" : "OPEN"; }
+/* Real wifi_cred_device_uid() reads the STM32H5 UID words through the
+ * HAL (not host-buildable); the credential codec compiled here calls
+ * this injected stand-in, which is exactly the foreign-UID test seam
+ * (change t_uid between seal and load to simulate another device). */
+#include "m1_crypto.h"
+static uint8_t t_uid[M1_UID_LEN] = {0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xAA,0xBB,0xCC};
+static void wifi_cred_device_uid(uint8_t uid[M1_UID_LEN]) { memcpy(uid, t_uid, M1_UID_LEN); }
 """
 
 SAVED_NET_MAIN_START = r"""
@@ -464,30 +482,55 @@ int main(void)
 """
 
 
-def saved_networks_tests(tmp):
-    wifi = source("m1_csrc/m1_wifi.c")
-    provision_h = source("m1_csrc/m1_sdcard_provision.h")
+def saved_net_prefix(wifi, provision_h):
+    """Defines + types + seams shared by every saved-networks host
+    program: the size/#define set, the credential-state enum, the entry
+    typedef, the in-memory store globals, and the stand-in prelude with
+    the injectable device-UID seam (real crypto linked from
+    m1_crypto.c via -I)."""
     code = VFS_STUBS
     code += "\n" + define(provision_h, "M1_SD_DIR_WIFI")
-    code += "\n" + define(wifi, "DRIVE0_WIFI")
-    code += "\n" + define(wifi, "WIFI_SAVED_PATH")
-    code += "\n" + define(wifi, "WIFI_SAVED_TMP_PATH")
-    code += "\n" + define(wifi, "WIFI_SAVED_BAK_PATH")
-    code += "\n" + define(wifi, "WIFI_SAVED_MAX")
-    code += "\n" + define(wifi, "WIFI_SAVED_FMT_VER")
-    code += "\n" + define(wifi, "WIFI_SAVED_LINE_MAX")
-    code += "\n" + define(wifi, "WIFI_SAVED_LINE_BUF")
-    code += "\n" + define(wifi, "WIFI_CRED_FIELD_MAX")
+    for d in (
+        "DRIVE0_WIFI",
+        "WIFI_SAVED_PATH",
+        "WIFI_SAVED_TMP_PATH",
+        "WIFI_SAVED_BAK_PATH",
+        "WIFI_SAVED_MAX",
+        "WIFI_SAVED_FMT_VER",
+        "WIFI_SAVED_LINE_MAX",
+        "WIFI_SAVED_LINE_BUF",
+        "WIFI_CRED_FIELD_MAX",
+        "WIFI_PSK_MAX_CHARS",
+        "WIFI_PSK_PT_LEN",
+        "WIFI_PSK_IV_LEN",
+        "WIFI_PSK_CT_LEN",
+        "WIFI_CRED_B64_IVCT_LEN",
+        "WIFI_CRED_B64_MAC_LEN",
+    ):
+        code += "\n" + define(wifi, d)
+    code += "\n" + enum_typedef(wifi, "wifi_cred_state_t")
     code += "\n" + simple_typedef(wifi, "wifi_saved_entry_t")
     code += "\n" + line(wifi, r"^static wifi_saved_entry_t g_saved\[WIFI_SAVED_MAX\];$")
     code += "\n" + line(wifi, r"^static uint16_t g_saved_count = 0;$")
     code += SAVED_NET_STUB_PRELUDE
+    return code
+
+
+def saved_networks_tests(tmp):
+    wifi = source("m1_csrc/m1_wifi.c")
+    provision_h = source("m1_csrc/m1_sdcard_provision.h")
+    code = saved_net_prefix(wifi, provision_h)
     for fn in (
         "wifi_bssid_to_upper",
         "wifi_bssid_is_canonical",
         "wifi_parse_int_field",
         "wifi_csv_quote",
         "wifi_csv_next_field",
+        "wifi_b64_val",
+        "wifi_b64_decode",
+        "wifi_cred_key",
+        "wifi_cred_parse_verify",
+        "wifi_cred_check",
         "wifi_saved_find",
         "wifi_saved_recover_replace",
         "wifi_saved_load",
@@ -683,7 +726,13 @@ def saved_networks_tests(tmp):
     return g_fail ? 1 : 0;
 }
 """
-    build_run(tmp, "saved_networks_tests", code)
+    build_run(
+        tmp,
+        "saved_networks_tests",
+        code,
+        extra_sources=[ROOT / "m1_csrc" / "m1_crypto.c"],
+        extra_flags=["-I", str(ROOT / "m1_csrc")],
+    )
 
 
 PICKPATH_STUBS = r"""

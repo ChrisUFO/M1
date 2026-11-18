@@ -124,6 +124,20 @@
  * Size budget: iv(16)+ct(64)=80 bytes -> 108 base64 chars; cmac(16)
  * bytes -> 24 base64 chars; plus the ':' separator -> 133 chars max. */
 #define WIFI_CRED_FIELD_MAX         136u /* 133 chars + NUL + slack      */
+/* PSK framing: the plaintext is a FIXED 64-byte frame (PSK bytes then
+ * zero padding; first NUL — or its absence at exactly 64 — ends the
+ * PSK), so CBC needs no padding scheme, the exact PSK length never
+ * leaks into the ciphertext size, and decrypt-time framing validation
+ * can fail closed on anything unexpected. 64 accommodates both WPA
+ * forms: 8..63-char passphrases and the 64-hex-char PMK form. */
+#define WIFI_PSK_MAX_CHARS          64u  /* longest storable PSK (chars) */
+#define WIFI_PSK_PT_LEN             64u  /* fixed CBC plaintext frame    */
+#define WIFI_PSK_IV_LEN             M1_AES_BLOCK_LEN        /* 16      */
+#define WIFI_PSK_CT_LEN             WIFI_PSK_PT_LEN         /* 64      */
+/* Exact base64 lengths of the two field halves (checked, not guessed):
+ * (16+64)=80 bytes -> 108 padded chars; 16-byte CMAC tag -> 24 chars. */
+#define WIFI_CRED_B64_IVCT_LEN      108u
+#define WIFI_CRED_B64_MAC_LEN       24u
 /* Line buffer for bounded line-by-line load: must comfortably exceed the
  * writer's own longest possible record (line[WIFI_SAVED_LINE_BUF] in
  * wifi_saved_write_recoverable(), worst case ~280 chars: max-quoted
@@ -5018,6 +5032,318 @@ static char *wifi_csv_next_field(char *p, char *out, size_t outsz)
     return p;
 }
 
+/*============================================================================*/
+/* Credential field codec — base64 + AES-256-CBC + AES-CMAC (PR-9, #42 p2).   */
+/*                                                                             */
+/* Field text:  base64(iv ‖ ct) ‖ ":" ‖ base64(cmac)                           */
+/*   iv  — 16 bytes of hardware-RNG output (m1_rng_bytes(); the seal refuses   */
+/*          rather than fall back to any deterministic source)                 */
+/*   ct  — AES-256-CBC(iv, key, 64-byte framed PSK plaintext) — no padding:   */
+/*          the frame is PSK bytes then zero padding to exactly 64 bytes       */
+/*   cmac — AES-CMAC (RFC 4493, 256-bit key) over iv‖ct, so both the IV and   */
+/*          the ciphertext are integrity-protected                             */
+/*   key — m1_crypto_derive_wifi_key(device UID), domain-separated            */
+/*         "m1-wifi-cred-v1" (see m1_crypto.h; key hiding, not physical-      */
+/*         attacker secrecy — docs/security/wifi-credential-threat-model.md)  */
+/*                                                                             */
+/* Failure policy: every parse/verify/decrypt path fails closed. A field that  */
+/* is structurally bad, truncated, tampered (wrong CMAC) or was sealed under   */
+/* a different device's UID classifies as WIFI_CRED_INVALID: the row still    */
+/* loads (it remains a valid reconnaissance target) but the credential is     */
+/* unusable and the join flow skips it.                                        */
+/*============================================================================*/
+
+/*--- base64 (standard alphabet, always padded; strict decode) ----------------*/
+
+static bool wifi_b64_encode(const uint8_t *src, size_t len, char *dst, size_t dstsz)
+{
+    static const char tab[65] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t di = 0;
+    size_t i;
+
+    if (!src || !dst || (len == 0U) || (((len + 2U) / 3U) * 4U + 1U > dstsz))
+    {
+        return false;
+    }
+
+    for (i = 0U; (i + 3U) <= len; i += 3U)
+    {
+        uint32_t v = ((uint32_t)src[i] << 16) | ((uint32_t)src[i + 1U] << 8) |
+                     (uint32_t)src[i + 2U];
+        dst[di++] = tab[(v >> 18) & 0x3FU];
+        dst[di++] = tab[(v >> 12) & 0x3FU];
+        dst[di++] = tab[(v >> 6) & 0x3FU];
+        dst[di++] = tab[v & 0x3FU];
+    }
+    if ((len % 3U) == 1U)
+    {
+        uint32_t v = (uint32_t)src[i] << 16;
+        dst[di++] = tab[(v >> 18) & 0x3FU];
+        dst[di++] = tab[(v >> 12) & 0x3FU];
+        dst[di++] = '=';
+        dst[di++] = '=';
+    }
+    else if ((len % 3U) == 2U)
+    {
+        uint32_t v = ((uint32_t)src[i] << 16) | ((uint32_t)src[i + 1U] << 8);
+        dst[di++] = tab[(v >> 18) & 0x3FU];
+        dst[di++] = tab[(v >> 12) & 0x3FU];
+        dst[di++] = tab[(v >> 6) & 0x3FU];
+        dst[di++] = '=';
+    }
+    dst[di] = '\0';
+    return true;
+}
+
+/* Value of one base64 alphabet character, or -1 outside the alphabet. */
+static int wifi_b64_val(unsigned char c)
+{
+    if ((c >= 'A') && (c <= 'Z')) { return (int)(c - 'A'); }
+    if ((c >= 'a') && (c <= 'z')) { return (int)(c - 'a') + 26; }
+    if ((c >= '0') && (c <= '9')) { return (int)(c - '0') + 52; }
+    if (c == '+') { return 62; }
+    if (c == '/') { return 63; }
+    return -1;
+}
+
+/* Strict standard-base64 decode: rejects lengths that are not a multiple
+ * of 4, characters outside the alphabet, '=' anywhere but the tail, more
+ * than two padding characters, and non-canonical output lengths. Fails
+ * without writing dst when the input would decode to more than dstsz
+ * bytes. On success *out_len is the decoded byte count. */
+static bool wifi_b64_decode(const char *src, size_t srclen,
+                            uint8_t *dst, size_t dstsz, size_t *out_len)
+{
+    size_t pad = 0U;
+    size_t di = 0U;
+    size_t expect;
+    size_t i;
+    uint32_t acc = 0U;
+    int nb = 0;
+
+    if (!src || !dst || !out_len || (srclen == 0U) || ((srclen % 4U) != 0U))
+    {
+        return false;
+    }
+    for (i = 0U; i < 4U; i++) /* padding may only occupy the very tail */
+    {
+        if (src[srclen - 1U - i] == '=') { pad++; }
+        else { break; }
+    }
+    expect = ((srclen / 4U) * 3U) - pad;
+    if ((pad > 2U) || (expect > dstsz)) { return false; }
+
+    for (i = 0U; i < srclen; i++)
+    {
+        int v;
+        if (src[i] == '=')
+        {
+            if (i < (srclen - pad)) { return false; }
+            continue;
+        }
+        v = wifi_b64_val((unsigned char)src[i]);
+        if (v < 0) { return false; }
+        acc = (acc << 6) | (uint32_t)v;
+        nb += 6;
+        if (nb >= 8)
+        {
+            nb -= 8;
+            dst[di++] = (uint8_t)((acc >> nb) & 0xFFU);
+        }
+    }
+    if (di != expect) { return false; }
+    *out_len = di;
+    return true;
+}
+
+/*--- key material ------------------------------------------------------------*/
+
+/* Read the 96-bit device UID used for credential key derivation: the
+ * three HAL UID words' little-endian memory image (the same packing
+ * m1_manager_protocol.c serializes), so the KDF input is stable and
+ * identical wherever the UID is consumed.
+ *
+ * HOST TEST SEAM: m1_wifi_persistence_hardening_test.py compiles the
+ * codec against its own definition of this function so foreign-UID
+ * scenarios can be injected; keep it a standalone function. */
+static void wifi_cred_device_uid(uint8_t uid[M1_UID_LEN])
+{
+    uint32_t w[3];
+
+    w[0] = HAL_GetUIDw0();
+    w[1] = HAL_GetUIDw1();
+    w[2] = HAL_GetUIDw2();
+    memcpy(uid, w, M1_UID_LEN);
+}
+
+/* Derive the credential key (fresh per call: no key material is cached
+ * in static storage). Returns the KDF result unchanged. */
+static bool wifi_cred_key(uint8_t key[M1_AES256_KEY_LEN])
+{
+    uint8_t uid[M1_UID_LEN];
+
+    wifi_cred_device_uid(uid);
+    return m1_crypto_derive_wifi_key(uid, key);
+}
+
+/*--- parse + verify (no plaintext produced) -----------------------------------*/
+
+/* Decode the two base64 halves of a credential field into iv||ct and
+ * mac, and verify the CMAC of iv||ct under this device's derived key.
+ * Exact base64 lengths are enforced (108 and 24 chars), so truncation
+ * and length-extension games fail structurally before any crypto runs.
+ * On failure the outputs are meaningless (the caller never inspects
+ * them). Returns true only for an authenticated field. */
+static bool wifi_cred_parse_verify(const char *field,
+                                   uint8_t ivct[WIFI_PSK_IV_LEN + WIFI_PSK_CT_LEN],
+                                   uint8_t mac[M1_AES_CMAC_TAG_LEN])
+{
+    uint8_t key[M1_AES256_KEY_LEN];
+    uint8_t calc[M1_AES_CMAC_TAG_LEN];
+    const char *sep;
+    size_t part2_len;
+    size_t n1 = 0U;
+    size_t n2 = 0U;
+    bool ok = false;
+
+    do {
+        if (!field || !ivct || !mac) { break; }
+
+        sep = strchr(field, ':');
+        if (!sep) { break; }
+        if ((size_t)(sep - field) != WIFI_CRED_B64_IVCT_LEN) { break; }
+        part2_len = strlen(sep + 1);
+        if (part2_len != WIFI_CRED_B64_MAC_LEN) { break; }
+
+        if (!wifi_b64_decode(field, (size_t)(sep - field),
+                             ivct, WIFI_PSK_IV_LEN + WIFI_PSK_CT_LEN, &n1)) { break; }
+        if (n1 != (WIFI_PSK_IV_LEN + WIFI_PSK_CT_LEN)) { break; }
+        if (!wifi_b64_decode(sep + 1, part2_len, mac, M1_AES_CMAC_TAG_LEN, &n2)) { break; }
+        if (n2 != M1_AES_CMAC_TAG_LEN) { break; }
+
+        if (!wifi_cred_key(key)) { break; }
+        if (!m1_aes_cmac(key, M1_AES256_KEY_LEN, ivct,
+                         WIFI_PSK_IV_LEN + WIFI_PSK_CT_LEN, calc)) { break; }
+        if (!m1_ct_equal(mac, calc, M1_AES_CMAC_TAG_LEN))
+        {
+            break; /* tampered, or sealed under a different device UID */
+        }
+        ok = true;
+    } while (false);
+
+    m1_secure_zero(key, sizeof(key));
+    m1_secure_zero(calc, sizeof(calc));
+    return ok;
+}
+
+/* Classify credential field text into a wifi_cred_state_t value. */
+static uint8_t wifi_cred_check(const char *field)
+{
+    uint8_t ivct[WIFI_PSK_IV_LEN + WIFI_PSK_CT_LEN];
+    uint8_t mac[M1_AES_CMAC_TAG_LEN];
+
+    if (!field || (field[0] == '\0')) { return (uint8_t)WIFI_CRED_ABSENT; }
+    return wifi_cred_parse_verify(field, ivct, mac)
+               ? (uint8_t)WIFI_CRED_OK
+               : (uint8_t)WIFI_CRED_INVALID;
+}
+
+/*--- seal / unseal ------------------------------------------------------------*/
+
+/* Seal psk into field_out ("base64(iv||ct):base64(cmac)"). Fails
+ * (field_out untouched) when the PSK length is not 1..64, the KDF
+ * refuses, or the hardware RNG refuses — never by falling back to a
+ * deterministic IV. */
+static bool wifi_cred_seal(const char *psk, char *field_out, size_t outsz)
+{
+    uint8_t key[M1_AES256_KEY_LEN];
+    uint8_t ivct[WIFI_PSK_IV_LEN + WIFI_PSK_CT_LEN];
+    uint8_t mac[M1_AES_CMAC_TAG_LEN];
+    char b1[WIFI_CRED_B64_IVCT_LEN + 1];
+    char b2[WIFI_CRED_B64_MAC_LEN + 1];
+    size_t plen;
+    int n;
+    bool ok = false;
+
+    do {
+        if (!psk || !field_out) { break; }
+        plen = strlen(psk);
+        if ((plen == 0U) || (plen > WIFI_PSK_MAX_CHARS)) { break; }
+
+        /* Fixed 64-byte frame: PSK bytes then zero padding. */
+        memset(ivct + WIFI_PSK_IV_LEN, 0, WIFI_PSK_CT_LEN);
+        memcpy(ivct + WIFI_PSK_IV_LEN, psk, plen);
+
+        if (!wifi_cred_key(key)) { break; }
+        if (!m1_rng_bytes(ivct, WIFI_PSK_IV_LEN)) { break; } /* IV: RNG only */
+        if (!m1_aes256_cbc_encrypt(key, M1_AES256_KEY_LEN,
+                                   ivct, WIFI_PSK_IV_LEN,
+                                   ivct + WIFI_PSK_IV_LEN, WIFI_PSK_CT_LEN,
+                                   ivct + WIFI_PSK_IV_LEN)) { break; }
+        if (!m1_aes_cmac(key, M1_AES256_KEY_LEN, ivct, sizeof(ivct), mac)) { break; }
+
+        if (!wifi_b64_encode(ivct, sizeof(ivct), b1, sizeof(b1))) { break; }
+        if (!wifi_b64_encode(mac, sizeof(mac), b2, sizeof(b2))) { break; }
+        n = snprintf(field_out, outsz, "%s:%s", b1, b2);
+        if ((n <= 0) || ((size_t)n >= outsz)) { break; }
+
+        ok = true;
+    } while (false);
+
+    m1_secure_zero(key, sizeof(key));
+    m1_secure_zero(ivct, sizeof(ivct));
+    m1_secure_zero(mac, sizeof(mac));
+    return ok;
+}
+
+/* Unseal at join time: parse + CMAC-verify + CBC-decrypt + frame
+ * validation. On success psk_out holds the NUL-terminated PSK. On ANY
+ * failure psk_out is zeroized and false is returned — fail closed.
+ * The caller must m1_secure_zero() psk_out after use. */
+static bool wifi_cred_unseal(const char *field, char *psk_out, size_t outsz)
+{
+    uint8_t key[M1_AES256_KEY_LEN];
+    uint8_t ivct[WIFI_PSK_IV_LEN + WIFI_PSK_CT_LEN];
+    uint8_t mac[M1_AES_CMAC_TAG_LEN];
+    size_t plen;
+    size_t i;
+    bool ok = false;
+
+    do {
+        if (!field || !psk_out || (outsz < (WIFI_PSK_MAX_CHARS + 1U))) { break; }
+        if (field[0] == '\0') { break; }
+        if (!wifi_cred_parse_verify(field, ivct, mac)) { break; }
+
+        if (!wifi_cred_key(key)) { break; }
+        if (!m1_aes256_cbc_decrypt(key, M1_AES256_KEY_LEN,
+                                   ivct, WIFI_PSK_IV_LEN,
+                                   ivct + WIFI_PSK_IV_LEN, WIFI_PSK_CT_LEN,
+                                   ivct + WIFI_PSK_IV_LEN)) { break; }
+
+        /* Frame validation: 1..64 PSK bytes, then zeros only. */
+        plen = 0U;
+        while ((plen < WIFI_PSK_CT_LEN) &&
+               (ivct[WIFI_PSK_IV_LEN + plen] != 0U)) { plen++; }
+        if ((plen == 0U) || (plen > WIFI_PSK_MAX_CHARS)) { break; }
+        for (i = plen; i < WIFI_PSK_CT_LEN; i++)
+        {
+            if (ivct[WIFI_PSK_IV_LEN + i] != 0U) { break; }
+        }
+        if (i != WIFI_PSK_CT_LEN) { break; }
+
+        memcpy(psk_out, ivct + WIFI_PSK_IV_LEN, plen);
+        psk_out[plen] = '\0';
+        ok = true;
+    } while (false);
+
+    if (!ok) { m1_secure_zero(psk_out, outsz); }
+    m1_secure_zero(key, sizeof(key));
+    m1_secure_zero(ivct, sizeof(ivct));
+    m1_secure_zero(mac, sizeof(mac));
+    return ok;
+}
+
 /* Find a saved entry by canonical (uppercase) BSSID. Returns index or -1. */
 static int wifi_saved_find(const char *bssid_upper)
 {
@@ -5176,6 +5502,11 @@ static uint8_t wifi_saved_load(void)
             e.bssid[sizeof(e.bssid) - 1U] = '\0';
             e.channel = ch_val;
             e.rssi = rs_val;
+            /* Authenticate the optional credential now (parse + CMAC,
+             * no decrypt): tampered/truncated/foreign-UID fields mark
+             * the credential unusable while the row itself stays a
+             * valid reconnaissance target. */
+            e.cred_state = wifi_cred_check(e.psk_enc);
             g_saved[g_saved_count++] = e;
         }
     }
@@ -5333,6 +5664,80 @@ static uint8_t wifi_saved_delete_index(uint16_t idx)
         return 1U;
     }
     return 0U;
+}
+
+/*--- store-facing credential API (PR-11 join flow is the intended caller) ---*/
+
+/* Set, clear, and persist the encrypted PSK for the saved network with
+ * the given canonical uppercase BSSID. psk is ABSORBED: it is zeroized
+ * with m1_secure_zero() on every return path once sealing is attempted,
+ * so the plaintext never outlives the call. Returns 0 ok, 1 no such
+ * saved network, 2 save failed (in-memory state rolled back to match
+ * the card), 3 crypto refused (RNG/KDF; nothing changed). */
+uint8_t wifi_cred_set_psk(const char *bssid_upper, char *psk)
+{
+    char field[WIFI_CRED_FIELD_MAX];
+    wifi_saved_entry_t prev;
+    size_t plen = 0U;
+    int idx;
+
+    if (!bssid_upper) { return 1U; }
+    idx = wifi_saved_find(bssid_upper);
+    if (idx < 0) { return 1U; }
+
+    if (psk != NULL) { plen = strlen(psk); }
+    if (plen != 0U)
+    {
+        if (!wifi_cred_seal(psk, field, sizeof(field)))
+        {
+            m1_secure_zero(psk, plen); /* absorb the plaintext even on refusal */
+            return 3U;
+        }
+    }
+    else
+    {
+        field[0] = '\0';
+    }
+    m1_secure_zero(psk, plen);
+
+    prev = g_saved[idx];
+    memcpy(g_saved[idx].psk_enc, field, strlen(field) + 1U);
+    g_saved[idx].cred_state =
+        (field[0] != '\0') ? (uint8_t)WIFI_CRED_OK : (uint8_t)WIFI_CRED_ABSENT;
+
+    if (wifi_saved_write_recoverable() != 0U)
+    {
+        g_saved[idx] = prev; /* keep in-memory state identical to the card */
+        return 2U;
+    }
+    return 0U;
+}
+
+/* Decrypt (unseal) the stored PSK of saved-network index idx for a join
+ * attempt. psk_out must have room for WIFI_PSK_MAX_CHARS + 1 bytes. On
+ * failure — absent credential, structural damage, truncation, wrong
+ * CMAC, or a field sealed under a different device's UID — the entry is
+ * marked WIFI_CRED_INVALID (unusable; the join flow skips it) and
+ * psk_out comes back zeroized. On success the caller must zeroize
+ * psk_out after use. */
+bool wifi_cred_get_psk(uint16_t idx, char *psk_out, size_t outsz)
+{
+    if (!psk_out || (idx >= g_saved_count))
+    {
+        m1_secure_zero(psk_out, outsz);
+        return false;
+    }
+    if (g_saved[idx].psk_enc[0] == '\0')
+    {
+        m1_secure_zero(psk_out, outsz);
+        return false;
+    }
+    if (!wifi_cred_unseal(g_saved[idx].psk_enc, psk_out, outsz))
+    {
+        g_saved[idx].cred_state = (uint8_t)WIFI_CRED_INVALID; /* mark unusable */
+        return false;
+    }
+    return true;
 }
 
 /*========================= Scan Networks (browse + save) ====================*/
