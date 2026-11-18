@@ -193,6 +193,7 @@ target_sources(m1_01 INTERFACE
     ../../Drivers/STM32H5xx_HAL_Driver/Src/stm32h5xx_hal_pwr_ex.c
     ../../Drivers/STM32H5xx_HAL_Driver/Src/stm32h5xx_hal_rcc.c
     ../../Drivers/STM32H5xx_HAL_Driver/Src/stm32h5xx_hal_rcc_ex.c
+    ../../Drivers/STM32H5xx_HAL_Driver/Src/stm32h5xx_hal_rng.c
     ../../Drivers/STM32H5xx_HAL_Driver/Src/stm32h5xx_hal_rtc.c
     ../../Drivers/STM32H5xx_HAL_Driver/Src/stm32h5xx_hal_rtc_ex.c
     ../../Drivers/STM32H5xx_HAL_Driver/Src/stm32h5xx_hal_sd.c
@@ -504,6 +505,7 @@ set(M1_APP_SOURCES
     ../../m1_csrc/m1_capture_transport.c
     ../../m1_csrc/m1_cobs.c
     ../../m1_csrc/m1_crc32c.c
+    ../../m1_csrc/m1_crypto.c
     ../../m1_csrc/m1_display.c
     ../../m1_csrc/m1_display_data.c
     ../../m1_csrc/m1_esp32_flash_session.c
@@ -545,6 +547,7 @@ set(M1_APP_SOURCES
     ../../m1_csrc/m1_rf_spi.c
     ../../m1_csrc/m1_rfid.c
     ../../m1_csrc/m1_ring_buffer.c
+    ../../m1_csrc/m1_rng.c
     ../../m1_csrc/m1_rtc.c
     ../../m1_csrc/m1_rtc_date.c
     ../../m1_csrc/m1_sdcard.c

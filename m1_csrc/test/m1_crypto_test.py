@@ -1,0 +1,876 @@
+#!/usr/bin/env python3
+"""Host tests for the crypto + HW RNG foundation (PR-8, issue #42 part 1).
+
+Same technique as m1_rtc_test.py / m1_settings_screens_test.py: compile
+the REAL sources with a generated harness (no mocks of the code under
+test) and, separately, verify the wiring seams statically in the actual
+files.
+
+Layers:
+
+1. Compiled crypto core (m1_csrc/m1_crypto.c, pure by contract -- the
+   static layer below proves the include hygiene):
+   - AES-256 block KATs from NIST SP 800-38A appendix F.1.5/F.1.6
+     (ECB-AES256), byte-for-byte as printed in the publication.
+   - AES-256-CBC KATs from NIST SP 800-38A appendix F.2.5/F.2.6
+     (encrypt AND decrypt of the full 4-block example), plus in-place
+     operation of both directions and round-trips with other key/IV.
+   - AES-CMAC vectors:
+       * all four RFC 4493 examples (AES-128 key -- the conformance
+         path; the algorithm is key-size agnostic per SP 800-38B),
+       * ten NIST CAVP CMACGenAES256.rsp vectors (AES-256) covering
+         every structural case in that file: Mlen 0/10/15/16/48 x
+         Tlen 5/10. NOTE on the CAVP file's "Msg = 00" placeholder on
+         Mlen=0 rows: Mlen is authoritative -- the message is EMPTY
+         (this matches RFC 4493 example 1's empty-message semantics;
+         if the interpretation were wrong the Mlen=0 rows would fail
+         while 10/15/16/48 pass). Tlen < 16 means the published Mac is
+         the first Tlen bytes of the full tag.
+   - Argument-contract negatives (NULL, key/iv lengths, len % 16).
+   - Constant-time compare semantics.
+   - UID-KDF golden known-answer vector (independently computed with
+     Python `cryptography` AES-CMAC per the documented construction)
+     plus properties (determinism, UID sensitivity, counter
+     divergence, all-zero-UID nondegeneracy).
+   - Zeroization: functional zeroing (odd sizes), and an
+     escape-hatched buffer test compiled and run at -O0 AND -O2 so the
+     zeroing cannot be dead-store-elided "as far as host-testable"
+     (documented limit: a truly dead buffer the optimizer can prove
+     unread is out of any portable test's reach; the barrier plus
+     volatile stores is the industry-standard mitigation).
+
+2. Compiled RNG wrapper (m1_csrc/m1_rng.c built with
+   -DM1_RNG_HOST_TEST): the harness provides fault-injectable
+   m1_rng_hal_init/m1_rng_hal_generate, proving the refusal semantics
+   -- init failure refuses, generate failure refuses with the partial
+   buffer zeroized AND the failure sticky, success packs words
+   correctly including a non-multiple-of-4 tail.
+
+3. Static layer on the real sources:
+   - HAL_RNG_MODULE_ENABLED is enabled in Core/Inc/stm32h5xx_hal_conf.h;
+   - HAL_RNG_MspInit selects RCC_RNGCLKSOURCE_HSI48 (the clock ST
+     requires for the H5 RNG; HSI48 is already started for USB) before
+     enabling the peripheral clock;
+   - the build wires the RNG HAL driver and both new app sources
+     (m1_crypto.c / m1_rng.c are in M1_APP_SOURCES, i.e. inside the
+     scoped -Werror gate);
+   - m1_crypto.c/.h include no HAL/FreeRTOS/u8g2 headers (pure core);
+   - m1_rng.c (target build) uses HAL_RNG_Init/HAL_RNG_GenerateRandomNumber
+     and contains NO rand/srand/HAL_GetTick fallback;
+   - m1_sys_init.c calls m1_rng_init() BEFORE m1_tasks_init() and logs
+     on failure;
+   - m1_secure_zero carries the compiler memory barrier;
+   - no-fallback grep proof: the crypto consumers/potential consumers
+     (m1_crypto*, m1_rng*, m1_wifi*) contain no srand/rand and no
+     HAL_GetTick-seeded randomness. The tree's pre-existing decorative
+     srand(HAL_GetTick())/rand() sites (saved-file name suffixes in
+     m1_save_filename.c, synthetic NFC tag UIDs and file names in
+     m1_nfc.c) are NOT keys/IVs/credentials; the PER-FILE COUNTS of
+     active srand and rand( sites are pinned exactly (comments
+     stripped first), so re-enabling m1_sdcard_man.c's commented-out
+     srand, adding a site to an already-tolerated file, or adding a
+     new rand()/srand file anywhere in m1_csrc -- including a
+     rand()-only file on libc's deterministic default seed -- fails
+     the pin.
+
+Usage: python3 m1_csrc/test/m1_crypto_test.py
+"""
+
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+
+PASSED = 0
+FAILED = 0
+
+
+def CHECK(cond, msg):
+    global PASSED, FAILED
+    if cond:
+        PASSED += 1
+    else:
+        FAILED += 1
+        print(f"  FAIL: {msg}")
+
+
+def source(path):
+    return (ROOT / path).read_text()
+
+
+def strip_c_comments(src):
+    """Drop /* */ block and // line comments (approximate -- string
+    literals are not parsed, which cannot invent or hide an srand call
+    in these firmware sources). Used by the no-fallback srand pin so a
+    re-enabled (uncommented) site fails the pin."""
+    src = re.sub(r"/\*.*?\*/", " ", src, flags=re.DOTALL)
+    return re.sub(r"//[^\n]*", " ", src)
+
+
+def host_cc():
+    for cc in ("cc", "gcc", "clang"):
+        try:
+            subprocess.run([cc, "--version"], capture_output=True, check=True)
+            return cc
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    raise AssertionError("no usable host C compiler (cc/gcc/clang) found")
+
+
+# ---------------------------------------------------------------------------
+# Compiled harness: crypto core
+# ---------------------------------------------------------------------------
+
+CRYPTO_HARNESS = r"""
+/* Generated by m1_csrc/test/m1_crypto_test.py -- do not edit. */
+#include <stdio.h>
+#include <string.h>
+#include "m1_crypto.h"
+
+static int fails = 0;
+
+#define FAILF(...) do { fails++; printf("  FAIL: " __VA_ARGS__); printf("\\n"); } while (0)
+#define CHECKN(c, m) do { if (!(c)) FAILF("%s", m); } while (0)
+
+static size_t unhex(const char *h, uint8_t *out, size_t cap)
+{
+    size_t n = 0;
+    while (h[0] && h[1]) {
+        unsigned v;
+        if (sscanf(h, "%2x", &v) != 1) { FAILF("bad hex in vector"); break; }
+        if (n >= cap) { FAILF("vector too long for cap"); break; }
+        out[n++] = (uint8_t)v;
+        h += 2;
+    }
+    return n;
+}
+
+/* ---- NIST SP 800-38A AES-256 key + example blocks (appendix F) ---- */
+static const char *K256 =
+    "603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4";
+static const char *IV256 =
+    "000102030405060708090a0b0c0d0e0f";
+static const char *PT4 =
+    "6bc1bee22e409f96e93d7e117393172a"
+    "ae2d8a571e03ac9c9eb76fac45af8e51"
+    "30c81c46a35ce411e5fbc1191a0a52ef"
+    "f69f2445df4f9b17ad2b417be66c3710";
+/* ECB-AES256 ciphertext (F.1.5) */
+static const char *ECB_CT4 =
+    "f3eed1bdb5d2a03c064b5a7e3db181f8"
+    "591ccb10d410ed26dc5ba74a31362870"
+    "b6ed21b99ca6f4f9f153e7b1beafed1d"
+    "23304b7a39f9f3ff067d8d8f9e24ecc7";
+/* CBC-AES256 ciphertext (F.2.5) */
+static const char *CBC_CT4 =
+    "f58c4c04d6e5f1ba779eabfb5f7bfbd6"
+    "9cfc4e967edb808d679f777bc6702c7d"
+    "39f23369a9d9bacfa530e26304231461"
+    "b2eb05e2c39be9fcda6c19078c6a9d1b";
+
+/* ---- RFC 4493 AES-CMAC examples 1..4 (AES-128) ---- */
+static const char *CMAC128_K = "2b7e151628aed2a6abf7158809cf4f3c";
+static const struct { const char *msg; const char *tag; } RFC4493[] = {
+    { "", "bb1d6929e95937287fa37d129b756746" },
+    { "6bc1bee22e409f96e93d7e117393172a",
+      "070a16b46b4d4144f79bdd9dd04a287c" },
+    { "6bc1bee22e409f96e93d7e117393172a"
+      "ae2d8a571e03ac9c9eb76fac45af8e51"
+      "30c81c46a35ce411",
+      "dfa66747de9ae63030ca32611497c827" },
+    { "6bc1bee22e409f96e93d7e117393172a"
+      "ae2d8a571e03ac9c9eb76fac45af8e51"
+      "30c81c46a35ce411e5fbc1191a0a52ef"
+      "f69f2445df4f9b17ad2b417be66c3710",
+      "51f0bebf7e3b9d92fc49741779363cfe" },
+};
+
+/* ---- NIST CAVP CMACGenAES256.rsp (CAVS 11.0) selected vectors:
+ *      every Mlen class in the file (0/10/15/16/48) x both Tlen
+ *      (5/10). {Mlen, Tlen, Count, Key, Msg, Mac} ---- */
+static const struct { int mlen; int tlen; const char *count;
+    const char *key; const char *msg; const char *mac; } CAVP256[] = {
+    {  0,  5, "0",
+      "95d8afb8a4b7245ce79f9f9c5ddd40de61b35905dcb638f2b875404a985b3f7a",
+      "00", "68adfc9b59" },
+    {  0, 10, "8",
+      "f0a3e4c237d86718d84c43185e70f9cef0dc92b378e3e0db046b06716cfb3b61",
+      "00", "38ba46602f3411a58b2e" },
+    { 10,  5, "48",
+      "6c0b2c3c5fec961ab84e68f56ca166586e5942fb2594b18a1dfdc4a8fdf07634",
+      "f08f890875e139480489", "b49c2239e7" },
+    { 10, 10, "56",
+      "712e6cc33d3d1f442776d546f4d5a25b7d23402a5fd65e6ef3333a4281b5729b",
+      "56c026b8a71974ff7ecd", "df8dc096f5b385faaffa" },
+    { 15,  5, "64",
+      "f64e41e62cae5c26fbd3738916f5f39b67a62f3202fef8ac57f56e78ab1015d8",
+      "449f3e3ce08b72f4f9bcad194acdad", "4019fda078" },
+    { 15, 10, "72",
+      "2f4a6501d8fe7b65f607757ddff6ed87ae0681b98b53331d2d46109f9c541065",
+      "4fa9ac1b544afcd85ac32ac0909c74", "c02e8b66f9fc263b8fb0" },
+    { 16,  5, "16",
+      "916cd8119a4d7e825e01a86f93b0eee4a46d29216115cc9ef67a784c19c1ca1e",
+      "3310fc5bc910f4c9b9cf4957ac638ae7", "03f045f886" },
+    { 16, 10, "24",
+      "3a75a9d2bdb8c804ba4ab4983573a6b253160dd90f8eddfb2fdc2ab17604f5c5",
+      "42f35d5aa533a7a0a5f74e144f2a5f20", "f1532f8732d9f5903007" },
+    { 48,  5, "32",
+      "dcba2ce01633937b1cdab12b2e83598a49c51609efae0f4026b62d82c3f280b5",
+      "9aa3e8ad92777dfeb121a646ce2e918d"
+      "1e12b30754bc09470d6da4af6cc9642b"
+      "012f041ff046569d4fd8d0dccfe448e5", "816282fb33" },
+    { 48, 10, "40",
+      "d1abde73d927eef381f37abc254ed995fed933d499419523871d4484571a5293",
+      "21ed22abc7bbb62fb2d51d1fb8830ca9"
+      "5b16213f56291af976274934ab0d4380"
+      "5f71d9b906c44973f7d4b59b7a94d35c", "3ad12df7acebdf36ee1a" },
+};
+
+static void test_block_kats(void)
+{
+    uint8_t key[32], pt[16], ct[16], rt[16];
+    size_t kl = unhex(K256, key, sizeof(key));
+    int i;
+
+    if (kl != 32) { FAILF("K256 decode"); return; }
+
+    for (i = 0; i < 4; i++) {
+        char ph[33], ch[33];
+        size_t n;
+        strncpy(ph, PT4 + i * 32, 32);  ph[32] = 0;
+        strncpy(ch, ECB_CT4 + i * 32, 32); ch[32] = 0;
+
+        n = unhex(ph, pt, sizeof(pt));
+        if (n != 16) { FAILF("PT decode"); continue; }
+        n = unhex(ch, ct, sizeof(ct));
+        if (n != 16) { FAILF("CT decode"); continue; }
+
+        if (!m1_aes256_encrypt_block(key, pt, rt))
+            FAILF("encrypt_block(%d) returned false", i);
+        else if (memcmp(rt, ct, 16) != 0)
+            FAILF("ECB-AES256 encrypt block %d mismatch", i);
+
+        if (!m1_aes256_decrypt_block(key, ct, rt))
+            FAILF("decrypt_block(%d) returned false", i);
+        else if (memcmp(rt, pt, 16) != 0)
+            FAILF("ECB-AES256 decrypt block %d mismatch", i);
+    }
+    printf("block KATs done (%d fails so far)\n", fails);
+}
+
+static void test_cbc_kats(void)
+{
+    uint8_t key[32], iv[16], pt[64], ct[64], rt[64], ip[64];
+    size_t n;
+
+    n = unhex(K256, key, sizeof(key)); if (n != 32) { FAILF("K256"); return; }
+    n = unhex(IV256, iv, sizeof(iv)); if (n != 16) { FAILF("IV256"); return; }
+    n = unhex(PT4, pt, sizeof(pt)); if (n != 64) { FAILF("PT4"); return; }
+    n = unhex(CBC_CT4, ct, sizeof(ct)); if (n != 64) { FAILF("CBC_CT4"); return; }
+
+    /* F.2.5 encrypt */
+    memset(rt, 0xAA, sizeof(rt));
+    if (!m1_aes256_cbc_encrypt(key, 32, iv, 16, pt, 64, rt))
+        FAILF("cbc_encrypt KAT returned false");
+    else if (memcmp(rt, ct, 64) != 0)
+        FAILF("CBC-AES256 encrypt KAT mismatch (F.2.5)");
+
+    /* F.2.6 decrypt */
+    memset(rt, 0xAA, sizeof(rt));
+    if (!m1_aes256_cbc_decrypt(key, 32, iv, 16, ct, 64, rt))
+        FAILF("cbc_decrypt KAT returned false");
+    else if (memcmp(rt, pt, 64) != 0)
+        FAILF("CBC-AES256 decrypt KAT mismatch (F.2.6)");
+
+    /* In-place decrypt */
+    memcpy(ip, ct, 64);
+    if (!m1_aes256_cbc_decrypt(key, 32, iv, 16, ip, 64, ip))
+        FAILF("in-place decrypt returned false");
+    else if (memcmp(ip, pt, 64) != 0)
+        FAILF("in-place decrypt mismatch");
+
+    /* In-place encrypt */
+    memcpy(ip, pt, 64);
+    if (!m1_aes256_cbc_encrypt(key, 32, iv, 16, ip, 64, ip))
+        FAILF("in-place encrypt returned false");
+    else if (memcmp(ip, ct, 64) != 0)
+        FAILF("in-place encrypt mismatch");
+
+    /* Round trip with a different key/iv (non-KAT sanity) */
+    {
+        uint8_t k2[32], v2[16], o[48], d[48], msg[48];
+        size_t j;
+        for (j = 0; j < 48; j++) msg[j] = (uint8_t)(j * 31 + 7);
+        for (j = 0; j < 32; j++) k2[j] = (uint8_t)(j ^ 0x5Au);
+        for (j = 0; j < 16; j++) v2[j] = (uint8_t)(j + 100);
+        if (!m1_aes256_cbc_encrypt(k2, 32, v2, 16, msg, 48, o) ||
+            !m1_aes256_cbc_decrypt(k2, 32, v2, 16, o, 48, d) ||
+            memcmp(msg, d, 48) != 0)
+            FAILF("generic round-trip failed");
+    }
+    printf("CBC KATs done (%d fails so far)\n", fails);
+}
+
+static void test_cmac_rfc4493(void)
+{
+    uint8_t key[16], msg[64], tag[16], exp[16];
+    size_t i;
+
+    if (unhex(CMAC128_K, key, sizeof(key)) != 16) { FAILF("CMAC128_K"); return; }
+
+    for (i = 0; i < sizeof(RFC4493) / sizeof(RFC4493[0]); i++) {
+        size_t ml = RFC4493[i].msg[0] ? unhex(RFC4493[i].msg, msg, sizeof(msg)) : 0;
+        if (unhex(RFC4493[i].tag, exp, sizeof(exp)) != 16) { FAILF("tag decode"); continue; }
+        if (!m1_aes_cmac(key, 16, ml ? msg : NULL, ml, tag)) {
+            FAILF("RFC4493 ex %u returned false", (unsigned)i);
+            continue;
+        }
+        if (memcmp(tag, exp, 16) != 0)
+            FAILF("RFC4493 example %u tag mismatch", (unsigned)(i + 1));
+    }
+    printf("RFC 4493 CMAC vectors done (%d fails so far)\n", fails);
+}
+
+static void test_cmac_cavp256(void)
+{
+    uint8_t key[32], msg[64], tag[16], exp[16];
+    size_t i;
+
+    for (i = 0; i < sizeof(CAVP256) / sizeof(CAVP256[0]); i++) {
+        int mlen = CAVP256[i].mlen, tlen = CAVP256[i].tlen;
+        size_t ml;
+        if (unhex(CAVP256[i].key, key, sizeof(key)) != 32) {
+            FAILF("CAVP count %s key decode", CAVP256[i].count); continue;
+        }
+        /* Mlen is authoritative: a 0-length message is EMPTY (the
+         * "Msg = 00" line is the file's placeholder encoding). */
+        ml = (mlen > 0) ? unhex(CAVP256[i].msg, msg, sizeof(msg)) : 0;
+        if ((int)ml != mlen) {
+            FAILF("CAVP count %s msg decode %u != Mlen %d",
+                  CAVP256[i].count, (unsigned)ml, mlen);
+            continue;
+        }
+        if (unhex(CAVP256[i].mac, exp, sizeof(exp)) != (size_t)tlen) {
+            FAILF("CAVP count %s mac decode", CAVP256[i].count); continue;
+        }
+        if (!m1_aes_cmac(key, 32, ml ? msg : NULL, ml, tag)) {
+            FAILF("CAVP count %s returned false", CAVP256[i].count);
+            continue;
+        }
+        if (memcmp(tag, exp, (size_t)tlen) != 0)
+            FAILF("CAVP CMACGenAES256 count %s mismatch", CAVP256[i].count);
+    }
+    printf("CAVP AES-256 CMAC vectors done (%d fails so far)\n", fails);
+}
+
+static void test_contracts(void)
+{
+    uint8_t key[32], iv[16], buf[32], tag[16];
+
+    memset(key, 1, sizeof(key)); memset(iv, 2, sizeof(iv)); memset(buf, 3, sizeof(buf));
+
+    /* NULL rejections */
+    CHECKN(!m1_aes256_encrypt_block(NULL, buf, buf), "encrypt_block NULL key");
+    CHECKN(!m1_aes256_encrypt_block(key, NULL, buf), "encrypt_block NULL in");
+    CHECKN(!m1_aes256_encrypt_block(key, buf, NULL), "encrypt_block NULL out");
+    CHECKN(!m1_aes256_cbc_encrypt(key, 32, iv, 16, buf, 16, NULL), "cbc NULL out");
+    CHECKN(!m1_aes_cmac(NULL, 32, buf, 16, tag), "cmac NULL key");
+    CHECKN(!m1_aes_cmac(key, 32, NULL, 1, tag), "cmac NULL msg with len>0");
+
+    /* key length contracts */
+    CHECKN(!m1_aes256_cbc_encrypt(key, 16, iv, 16, buf, 16, buf), "cbc key_len 16");
+    CHECKN(!m1_aes256_cbc_encrypt(key, 24, iv, 16, buf, 16, buf), "cbc key_len 24");
+    CHECKN(!m1_aes_cmac(key, 24, buf, 16, tag), "cmac key_len 24");
+    CHECKN(!m1_aes_cmac(key, 0, buf, 16, tag), "cmac key_len 0");
+
+    /* IV length contract: explicit and must be exactly one block */
+    CHECKN(!m1_aes256_cbc_encrypt(key, 32, iv, 0, buf, 16, buf), "cbc iv_len 0");
+    CHECKN(!m1_aes256_cbc_encrypt(key, 32, iv, 8, buf, 16, buf), "cbc iv_len 8");
+    CHECKN(!m1_aes256_cbc_decrypt(key, 32, iv, 32, buf, 32, buf), "cbc iv_len 32");
+
+    /* Whole-block contract (no padding assumptions) */
+    CHECKN(!m1_aes256_cbc_encrypt(key, 32, iv, 16, buf, 1, buf), "cbc len 1");
+    CHECKN(!m1_aes256_cbc_encrypt(key, 32, iv, 16, buf, 0, buf), "cbc len 0");
+    CHECKN(!m1_aes256_cbc_decrypt(key, 32, iv, 16, buf, 17, buf), "cbc len 17");
+
+    printf("contract negatives done (%d fails so far)\n", fails);
+}
+
+static void test_ct_equal(void)
+{
+    uint8_t a[16], b[16];
+    size_t i;
+    for (i = 0; i < 16; i++) { a[i] = (uint8_t)i; b[i] = (uint8_t)i; }
+    CHECKN(m1_ct_equal(a, b, 16), "ct_equal same");
+    CHECKN(m1_ct_equal(NULL, NULL, 0), "ct_equal NULL/NULL/0");
+    CHECKN(!m1_ct_equal(NULL, b, 16), "ct_equal NULL a");
+    b[15] ^= 0x01;
+    CHECKN(!m1_ct_equal(a, b, 16), "ct_equal last-byte diff");
+    b[15] ^= 0x01; b[0] ^= 0x80;
+    CHECKN(!m1_ct_equal(a, b, 16), "ct_equal first-byte diff");
+    printf("ct_equal done (%d fails so far)\n", fails);
+}
+
+static void test_kdf(void)
+{
+    uint8_t uid[12] = {0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xAA,0xBB,0xCC};
+    uint8_t k1[32], k2[32], kz[32];
+    /* Golden known-answer vector: construction-drift tripwire for the
+     * counter byte, label, 0x00 separator, and L encoding -- none of
+     * which the string-presence pins can catch. Expected bytes were
+     * computed independently of this codebase with Python
+     * `cryptography` 46.0.3 AES-CMAC per the m1_crypto.h construction
+     * (PRK = UID || 0^20; i || "m1-wifi-cred-v1" || 0x00 || 0x00000100)
+     * and cross-checked in the PR #82 review. */
+    static const uint8_t golden[32] = {
+        0xd4,0x8a,0x45,0x99,0xe4,0x9f,0x69,0x0c,
+        0x6d,0x99,0x85,0xd0,0x9c,0xff,0xa3,0x3e,
+        0xfb,0xd6,0x3a,0x58,0x26,0x78,0x67,0x62,
+        0x4a,0x4a,0x18,0xbb,0xa5,0x5d,0x9b,0x02,
+    };
+    size_t i;
+    int nz = 0, halves_differ = 0;
+
+    if (!m1_crypto_derive_wifi_key(uid, k1)) FAILF("kdf returned false");
+    if (!m1_crypto_derive_wifi_key(uid, k2)) FAILF("kdf returned false (2nd)");
+    CHECKN(memcmp(k1, k2, 32) == 0, "kdf deterministic");
+    CHECKN(memcmp(k1, golden, 32) == 0, "kdf golden KAT (SP 800-108 CMAC)");
+
+    uid[0] ^= 0x01; /* one-bit UID change */
+    if (!m1_crypto_derive_wifi_key(uid, k2)) FAILF("kdf returned false (3rd)");
+    CHECKN(memcmp(k1, k2, 32) != 0, "kdf UID-sensitive");
+
+    memset(uid, 0, sizeof(uid));
+    if (!m1_crypto_derive_wifi_key(uid, kz)) FAILF("kdf returned false (zero uid)");
+    for (i = 0; i < 32; i++) if (kz[i] != 0) { nz = 1; break; }
+    CHECKN(nz, "kdf all-zero-UID not degenerate");
+    for (i = 0; i < 16; i++) if (kz[i] != kz[i + 16]) { halves_differ = 1; break; }
+    CHECKN(halves_differ, "kdf counter halves differ (i=1 vs i=2)");
+
+    CHECKN(!m1_crypto_derive_wifi_key(NULL, kz), "kdf NULL uid");
+    CHECKN(!m1_crypto_derive_wifi_key(uid, NULL), "kdf NULL out");
+    printf("KDF properties done (%d fails so far)\n", fails);
+}
+
+/* Zeroization: escape-hatched buffer so the optimizer cannot prove the
+ * buffer dead; the reads after m1_secure_zero force the stores to be
+ * observable. Run at -O0 and -O2 by the driver script. */
+static uint8_t *g_zbuf;
+static void z_sink(uint8_t *p) { g_zbuf = p; }
+static uint8_t *z_source(void) { return g_zbuf; }
+
+static void test_secure_zero(void)
+{
+    uint8_t buf[37];
+    size_t i;
+    int zeros = 1;
+
+    for (i = 0; i < sizeof(buf); i++) buf[i] = (uint8_t)(0xA5 ^ i);
+    z_sink(buf);
+    m1_secure_zero(z_source(), sizeof(buf)); /* odd length on purpose */
+    for (i = 0; i < sizeof(buf); i++) if (z_source()[i] != 0) { zeros = 0; break; }
+    CHECKN(zeros, "secure_zero zeroed odd-size buffer");
+
+    m1_secure_zero(NULL, 16); /* must not crash */
+    m1_secure_zero(buf, 0);   /* must not crash */
+    z_sink(NULL);
+
+    {
+        uint8_t one = 0xFF;
+        z_sink(&one);
+        m1_secure_zero(z_source(), 1);
+        CHECKN(z_source()[0] == 0, "secure_zero 1-byte");
+        z_sink(NULL);
+    }
+    printf("secure_zero done (%d fails so far)\n", fails);
+}
+
+int main(void)
+{
+    test_block_kats();
+    test_cbc_kats();
+    test_cmac_rfc4493();
+    test_cmac_cavp256();
+    test_contracts();
+    test_ct_equal();
+    test_kdf();
+    test_secure_zero();
+
+    if (fails == 0) {
+        printf("CRYPTO CORE OK\n");
+        return 0;
+    }
+    printf("CRYPTO CORE FAILED (%d)\n", fails);
+    return 1;
+}
+"""
+
+# ---------------------------------------------------------------------------
+# Compiled harness: RNG wrapper with fault-injectable HAL seam
+# ---------------------------------------------------------------------------
+
+RNG_HARNESS = r"""
+/* Generated by m1_csrc/test/m1_crypto_test.py -- do not edit.
+ * Builds m1_csrc/m1_rng.c with -DM1_RNG_HOST_TEST: the harness owns
+ * the two HAL seam functions and can fail them at will. */
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+
+#include "m1_rng.h"
+
+/* --- fault-injectable HAL seam (provided by the harness) --- */
+static bool   h_init_ok = true;
+static bool   h_gen_ok = true;
+static uint32_t h_word = 0x11223344u;
+static unsigned h_init_calls = 0;
+static unsigned h_gen_calls = 0;
+static unsigned h_fail_after = 0xFFFFFFFFu; /* gen call index to fail */
+
+bool m1_rng_hal_init(void) { h_init_calls++; return h_init_ok; }
+bool m1_rng_hal_generate(uint32_t *word)
+{
+    unsigned idx = h_gen_calls++;
+    if (idx >= h_fail_after || !h_gen_ok)
+        return false;
+    *word = h_word + idx;
+    return true;
+}
+
+static int fails = 0;
+#define FAILF(...) do { fails++; printf("  FAIL: " __VA_ARGS__); printf("\\n"); } while (0)
+#define CHECKN(c, m) do { if (!(c)) FAILF("%s", m); } while (0)
+
+int main(int argc, char **argv)
+{
+    int scenario = (argc > 1) ? atoi(argv[1]) : 0;
+
+    if (scenario == 1) {
+        /* Init failure: refuse, and stay refused. */
+        h_init_ok = false;
+        if (m1_rng_init()) FAILF("init succeeded despite HAL init failure");
+        if (m1_rng_ok()) FAILF("rng_ok true after failed init");
+        uint8_t buf[16];
+        if (m1_rng_bytes(buf, sizeof(buf))) FAILF("bytes succeeded after failed init");
+        /* Even after the HAL 'recovers', the wrapper must stay refused:
+         * the failure latch is permanent -- a later m1_rng_init()
+         * cannot resurrect the RNG. */
+        h_init_ok = true;
+        if (m1_rng_init()) FAILF("init resurrected the RNG after HAL init failure (latch not permanent)");
+        if (m1_rng_ok()) FAILF("rng_ok flipped true after re-init");
+    } else if (scenario == 2) {
+        /* Init OK; then generate fails on the FIRST word of a byte
+         * request: refuse + zero buffer + sticky. (A probe-time
+         * failure is scenario 5.) */
+        if (!m1_rng_init()) FAILF("init failed with healthy HAL");
+        h_fail_after = 0;
+        uint8_t buf[16];
+        memset(buf, 0xEE, sizeof(buf));
+        if (m1_rng_bytes(buf, sizeof(buf))) FAILF("bytes succeeded despite generate failure");
+        for (size_t i = 0; i < sizeof(buf); i++)
+            if (buf[i] != 0) { FAILF("partial buffer not zeroized at %u", (unsigned)i); break; }
+        if (m1_rng_ok()) FAILF("rng_ok true after generate failure (sticky)");
+        uint8_t buf2[4];
+        if (m1_rng_bytes(buf2, sizeof(buf2))) FAILF("bytes succeeded after sticky failure");
+    } else if (scenario == 3) {
+        /* Generate fails mid-stream (3rd word of 16 bytes): refuse,
+         * everything written so far zeroized, sticky. */
+        if (!m1_rng_init()) FAILF("init failed");
+        h_fail_after = 2;
+        uint8_t buf[16];
+        memset(buf, 0xEE, sizeof(buf));
+        if (m1_rng_bytes(buf, sizeof(buf))) FAILF("bytes succeeded despite mid-stream failure");
+        for (size_t i = 0; i < sizeof(buf); i++)
+            if (buf[i] != 0) { FAILF("buffer not fully zeroized after mid-stream failure at %u", (unsigned)i); break; }
+        if (m1_rng_ok()) FAILF("sticky after mid-stream failure");
+    } else if (scenario == 4) {
+        /* Healthy path: word packing incl. non-multiple-of-4 tail.
+         * m1_rng_init() consumed the probe word (gen index 0), so the
+         * byte fills see indices 1,2,3: word(i) = 0x11223344 + i,
+         * packed little-endian. */
+        if (!m1_rng_init()) FAILF("init failed with healthy HAL");
+        if (!m1_rng_ok()) FAILF("rng_ok false after healthy init");
+        uint8_t buf[7];
+        memset(buf, 0, sizeof(buf));
+        if (!m1_rng_bytes(buf, sizeof(buf))) FAILF("bytes failed with healthy HAL");
+        uint8_t exp[7] = {0x45,0x33,0x22,0x11,0x46,0x33,0x22};
+        if (memcmp(buf, exp, sizeof(buf)) != 0) {
+            FAILF("word packing mismatch:");
+            printf("    got "); for (size_t i=0;i<7;i++) printf("%02x", buf[i]);
+            printf(" exp "); for (size_t i=0;i<7;i++) printf("%02x", exp[i]);
+            printf("\n");
+        }
+        if (m1_rng_bytes(NULL, 4)) FAILF("bytes accepted NULL");
+        if (!m1_rng_bytes(buf, 0)) FAILF("bytes len 0 should be a no-op success");
+        /* Idempotent re-init */
+        if (!m1_rng_init()) FAILF("re-init failed");
+        if (h_init_calls != 1) FAILF("re-init re-ran HAL init (%u)", h_init_calls);
+    } else if (scenario == 5) {
+        /* Probe-time generate failure: init itself refuses and the
+         * permanent latch engages -- even with a fully recovered HAL,
+         * a later init must not resurrect the RNG. */
+        h_fail_after = 0;
+        if (m1_rng_init()) FAILF("init succeeded despite probe generate failure");
+        if (m1_rng_ok()) FAILF("rng_ok true after probe failure");
+        uint8_t buf[4];
+        if (m1_rng_bytes(buf, sizeof(buf))) FAILF("bytes succeeded after probe failure");
+        h_fail_after = 0xFFFFFFFFu;
+        if (m1_rng_init()) FAILF("recovery init resurrected the RNG (latch not permanent)");
+        if (m1_rng_ok()) FAILF("rng_ok true after recovery init (latch not permanent)");
+        if (m1_rng_bytes(buf, sizeof(buf))) FAILF("bytes succeeded after recovery init refusal");
+    } else {
+        FAILF("unknown scenario %d", scenario);
+    }
+
+    if (fails == 0) { printf("RNG SEAM OK (%d)\n", scenario); return 0; }
+    printf("RNG SEAM FAILED (%d): %d\n", scenario, fails);
+    return 1;
+}
+"""
+
+
+def run_compiled_tests(cc):
+    with tempfile.TemporaryDirectory() as td:
+        tdir = Path(td)
+        core_c = tdir / "crypto_core_test.c"
+        core_c.write_text(CRYPTO_HARNESS)
+        for opt in ("-O0", "-O2"):
+            exe = tdir / f"crypto_core_{opt[1:]}"
+            cmd = [
+                cc,
+                "-std=c99",
+                opt,
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-pedantic",
+                "-I",
+                str(ROOT / "m1_csrc"),
+                str(ROOT / "m1_csrc" / "m1_crypto.c"),
+                str(core_c),
+                "-o",
+                str(exe),
+            ]
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            CHECK(
+                r.returncode == 0,
+                f"crypto core compile {opt} failed: {r.stderr.strip()[:400]}",
+            )
+            if r.returncode != 0:
+                continue
+            r = subprocess.run([str(exe)], capture_output=True, text=True)
+            CHECK(
+                r.returncode == 0 and "CRYPTO CORE OK" in r.stdout,
+                f"crypto core run {opt} failed:\n{r.stdout}",
+            )
+
+        rng_c = tdir / "rng_seam_test.c"
+        rng_c.write_text(RNG_HARNESS)
+        exe = tdir / "rng_seam_test"
+        cmd = [
+            cc,
+            "-std=c99",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-pedantic",
+            "-DM1_RNG_HOST_TEST",
+            "-I",
+            str(ROOT / "m1_csrc"),
+            str(ROOT / "m1_csrc" / "m1_rng.c"),
+            str(ROOT / "m1_csrc" / "m1_crypto.c"),
+            str(rng_c),
+            "-o",
+            str(exe),
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        CHECK(r.returncode == 0, f"rng seam compile failed: {r.stderr.strip()[:400]}")
+        if r.returncode == 0:
+            for scenario in (1, 2, 3, 4, 5):
+                r = subprocess.run(
+                    [str(exe), str(scenario)], capture_output=True, text=True
+                )
+                CHECK(
+                    r.returncode == 0 and "RNG SEAM OK" in r.stdout,
+                    f"rng seam scenario {scenario} failed:\n{r.stdout}",
+                )
+
+
+# ---------------------------------------------------------------------------
+# Static layer: wiring seams in the real sources
+# ---------------------------------------------------------------------------
+
+
+def static_checks():
+    # 1. HAL RNG module enabled
+    conf = source("Core/Inc/stm32h5xx_hal_conf.h")
+    CHECK(
+        "#define HAL_RNG_MODULE_ENABLED" in conf,
+        "HAL_RNG_MODULE_ENABLED not enabled in hal_conf.h",
+    )
+    CHECK(
+        "#define HAL_RNG_MODULE_ENABLED\n" in conf,
+        "HAL_RNG_MODULE_ENABLED line malformed",
+    )
+
+    # 2. MSP: HSI48 kernel clock selected before peripheral clock enable
+    msp = source("Core/Src/stm32h5xx_hal_msp.c")
+    CHECK(
+        "void HAL_RNG_MspInit(RNG_HandleTypeDef* hrng)" in msp,
+        "HAL_RNG_MspInit missing from stm32h5xx_hal_msp.c",
+    )
+    CHECK(
+        "RCC_PERIPHCLK_RNG" in msp and "RCC_RNGCLKSOURCE_HSI48" in msp,
+        "RNG kernel clock not set to HSI48 in MSP",
+    )
+    i_sel = msp.find("RCC_RNGCLKSOURCE_HSI48")
+    i_en = msp.find("__HAL_RCC_RNG_CLK_ENABLE()")
+    CHECK(0 <= i_sel < i_en, "HSI48 selection must precede RNG clock enable")
+
+    # 3. Build wiring: driver + app sources inside the -Werror gate
+    cml = source("cmake/m1_01/CMakeLists.txt")
+    CHECK(
+        "Drivers/STM32H5xx_HAL_Driver/Src/stm32h5xx_hal_rng.c" in cml,
+        "RNG HAL driver not in cmake source list",
+    )
+    i_app = cml.find("set(M1_APP_SOURCES")
+    i_end = cml.find(")", i_app)
+    app_block = cml[i_app:i_end]
+    CHECK(
+        "m1_csrc/m1_crypto.c" in app_block,
+        "m1_crypto.c not inside M1_APP_SOURCES (-Werror gate)",
+    )
+    CHECK(
+        "m1_csrc/m1_rng.c" in app_block,
+        "m1_rng.c not inside M1_APP_SOURCES (-Werror gate)",
+    )
+
+    # 4. Pure core include hygiene: match actual #include directives
+    #    (the header legitimately SAYS "no HAL, no FreeRTOS" in prose)
+    for f in ("m1_csrc/m1_crypto.c", "m1_csrc/m1_crypto.h"):
+        s = source(f)
+        includes = [
+            ln.strip() for ln in s.splitlines() if ln.strip().startswith("#include")
+        ]
+        for bad in (
+            "stm32h5xx_hal",
+            "main.h",
+            "FreeRTOS",
+            "cmsis_os",
+            "task.h",
+            "u8g2",
+        ):
+            CHECK(
+                not any(bad in inc for inc in includes),
+                f"{f} includes HAL/OS/UI header '{bad}'",
+            )
+        CHECK(
+            "malloc" not in s and "calloc" not in s and "free(" not in s,
+            f"{f} uses dynamic allocation",
+        )
+
+    # 5. RNG wrapper: HAL on target, no fallback anywhere in it
+    rng = source("m1_csrc/m1_rng.c")
+    CHECK(
+        "HAL_RNG_Init(" in rng and "HAL_RNG_GenerateRandomNumber" in rng,
+        "m1_rng.c target build does not use the HAL RNG driver",
+    )
+    for bad in ("srand", "rand(", "HAL_GetTick"):
+        CHECK(bad not in rng, f"m1_rng.c contains fallback pattern '{bad}'")
+
+    # 6. Boot ordering: m1_rng_init() before m1_tasks_init(), failure logged
+    sysinit = source("m1_csrc/m1_sys_init.c")
+    i_rng = sysinit.find("m1_rng_init()")
+    i_tasks = sysinit.find("m1_tasks_init();")
+    CHECK(0 < i_rng < i_tasks, "m1_rng_init() not called before m1_tasks_init()")
+    i_log = sysinit.find("HW RNG init failed")
+    CHECK(i_log > 0, "RNG init failure not logged")
+
+    # 7. Compiler barrier in m1_secure_zero
+    cr = source("m1_csrc/m1_crypto.c")
+    CHECK(
+        '__asm__ __volatile__("" ::: "memory")' in cr,
+        "m1_secure_zero missing the compiler memory barrier",
+    )
+
+    # 8. No-fallback grep proof over the crypto layer and the (current
+    #    and future) crypto consumers. The tree's decorative
+    #    srand(HAL_GetTick())/rand() sites (file-name suffixes, synthetic
+    #    NFC UIDs) never touch keys/IVs/credentials; the PER-FILE SITE
+    #    COUNTS of both srand and rand( are pinned EXACTLY, after
+    #    stripping comments, so a re-enabled srand in m1_sdcard_man.c
+    #    (whose only site is commented out), an extra site in an
+    #    already-tolerated file, or an all-new rand()/srand file
+    #    anywhere in m1_csrc fails the pin.
+    guarded = [
+        "m1_crypto.c",
+        "m1_crypto.h",
+        "m1_rng.c",
+        "m1_rng.h",
+        "m1_wifi.c",
+        "m1_wifi.h",
+        "m1_wifi_session_cache.c",
+        "m1_wifi_client_id.c",
+    ]
+    for f in guarded:
+        p = ROOT / "m1_csrc" / f
+        if not p.exists():
+            continue
+        s = p.read_text()
+        CHECK(
+            "srand" not in s and "rand(" not in s,
+            f"{f} contains rand()/srand (fallback risk)",
+        )
+    srand_sites = {}
+    rand_sites = {}
+    for p in (ROOT / "m1_csrc").glob("*.c"):
+        code = strip_c_comments(p.read_text(encoding="utf-8", errors="replace"))
+        n_srand = len(re.findall(r"\bsrand\s*\(", code))
+        n_rand = len(re.findall(r"\brand\s*\(", code))
+        if n_srand:
+            srand_sites[p.name] = n_srand
+        if n_rand:
+            rand_sites[p.name] = n_rand
+    CHECK(
+        srand_sites == {"m1_nfc.c": 2, "m1_save_filename.c": 1},
+        f"srand site drift: {srand_sites} != pinned counts "
+        "(decorative sites count-pinned per file: file-name suffixes / "
+        "synthetic NFC UIDs; m1_sdcard_man.c's site must stay "
+        "commented out)",
+    )
+    CHECK(
+        rand_sites == {"m1_nfc.c": 2, "m1_save_filename.c": 1},
+        f"rand() site drift: {rand_sites} != pinned counts "
+        "(a rand()-only file rides libc's deterministic default seed "
+        "and fails this pin just like a new srand site)",
+    )
+
+    # 9. KDF layout is pinned in-source: counter byte, label, 0x00,
+    #    L=0x00000100 -- the documented SP 800-108 layout.
+    CHECK('"m1-wifi-cred-v1"' in cr, "KDF domain-separation label changed")
+    CHECK(
+        "0x00000100" in cr or ("0x00u; /* L = 0x00000100 */" in cr),
+        "KDF L comment/layout drifted",
+    )
+
+
+def main():
+    cc = host_cc()
+    print(f"=== m1_crypto host tests (cc={cc}) ===")
+    run_compiled_tests(cc)
+    static_checks()
+    print(f"=== {PASSED} passed, {FAILED} failed ===")
+    if FAILED:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

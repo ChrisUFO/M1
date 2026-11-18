@@ -25,6 +25,7 @@
 #include "m1_sdcard.h"
 #include "m1_esp32_hal.h"
 #include "m1_settings_store.h"
+#include "m1_rng.h"
 #include "m1_feedback_manager.h"
 #include "battery.h"
 #include "m1_gpio.h"
@@ -189,6 +190,20 @@ void m1_system_init_task(void *param)
 			 * no recoverable .bak, or an absent SD card all leave the
 			 * compiled defaults active. */
 			(void)settings_init();
+
+			/* Hardware RNG for credential crypto (issue #42): bring it
+			 * up once, here -- deterministically after the SD/settings
+			 * stage and BEFORE m1_tasks_init() creates any task that
+			 * could consume randomness (the WiFi credential path lands
+			 * in the PR-9/PR-11 follow-ups). Init failure is NOT fatal
+			 * to the device, but it IS fatal to crypto: the failure
+			 * latches permanently inside m1_rng and every later
+			 * m1_rng_init()/m1_rng_bytes() call refuses -- there is
+			 * no time-based or pseudo-random
+			 * fallback anywhere. */
+			if (!m1_rng_init())
+				M1_LOG_E(M1_LOGDB_TAG,
+					"HW RNG init failed -- crypto refuses\r\n");
 
 			//m1_esp32_init();
 #if defined M1_DEBUG_CLI_ENABLE

@@ -7,12 +7,14 @@
 # suite incl. the LED-notification gate (PR-2), the RTC date/time suite
 # (PR-3), the streaming .ir loader suite (PR-4), the IRMP golden-decode
 # suite incl. the transmit-path vectors (PR-4), the IR browser suite
-# (PR-5), the IR favorites/recent + cycle-all suite (PR-6) and the
-# Sub-GHz Radio Settings suite incl. WDS provenance binding (PR-7). The
-# remaining pre-existing host tests under m1_csrc/test/ and
-# m1_csrc/tests/ are NOT run by this script yet; later units append their
-# own host tests to the list below by design, so a green run means exactly
-# the listed tests passed -- nothing more.
+# (PR-5), the IR favorites/recent + cycle-all suite (PR-6), the
+# Sub-GHz Radio Settings suite incl. WDS provenance binding (PR-7) and
+# the crypto + HW RNG suite incl. NIST/RFC/CAVP vectors and the RNG
+# failure seam (PR-8). The remaining pre-existing host tests under
+# m1_csrc/test/ and m1_csrc/tests/ are NOT run by this script yet;
+# later units append their own host tests to the list below by
+# design, so a green run means exactly the listed tests passed --
+# nothing more.
 #
 # CI runs this script (see .github/workflows/host-tests.yml). Append new
 # tests to the list below as they land -- keep one line per test so a
@@ -54,6 +56,7 @@ m1_csrc/test/m1_ir_golden_decode_test.py
 m1_csrc/test/m1_ir_browser_test.py
 m1_csrc/test/m1_ir_favorites_test.py
 m1_csrc/test/m1_subghz_radio_settings_test.py
+m1_csrc/test/m1_crypto_test.py
 m1_csrc/tests/test_backlight_startup.py
 "
 

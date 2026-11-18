@@ -11,6 +11,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: crypto + hardware RNG foundation (issue #42 part 1, PR-8 of the
+  Merge 3 series) — new pure-core module `m1_csrc/m1_crypto.c/.h`
+  (software AES-256 block/CBC per FIPS-197/NIST SP 800-38A with
+  explicit IV length and no padding assumptions, AES-CMAC per
+  RFC 4493/SP 800-38B with constant-time tag compare, a documented
+  UID-based key derivation per SP 800-108 KDF-in-CMAC-mode with domain
+  separation, and compiler-barriered `m1_secure_zero()`), plus the
+  mandatory STM32H5 hardware RNG wrapper `m1_csrc/m1_rng.c/.h`: official
+  ST HAL RNG driver vendored at tag v1.3.0 (byte-verified match with
+  the existing driver tree), `HAL_RNG_MODULE_ENABLED` enabled, HSI48
+  selected as the RNG kernel clock in `HAL_RNG_MspInit()`, initialized
+  deterministically in `m1_system_init_task()` before any consumer
+  task. Any RNG init or generate failure latches permanently and every
+  later `m1_rng_init()`/`m1_rng_bytes()` call refuses — there is no
+  time-based or pseudo-random fallback anywhere
+  (host-suite-proven; the pre-existing decorative `rand()`/`srand()`
+  sites are count-pinned per file — file-name suffixes and synthetic
+  NFC UIDs, never keys or IVs).
+  Threat-model honesty is documented in `docs/security.md` and the
+  module header: the UID-derived key hides credentials from
+  removed-SD-card reading only — no secure element, no TLS, no SPI-link
+  encryption, no side-channel hardening. Host suite
+  `m1_csrc/test/m1_crypto_test.py` (wired into
+  `scripts/run_host_tests.sh`) compiles the real sources against NIST
+  SP 800-38A AES-256 ECB/CBC vectors, all four RFC 4493 CMAC examples,
+  ten NIST CAVP `CMACGenAES256.rsp` vectors, plus an injectable
+  RNG-failure seam proving the refusal semantics and a zeroization
+  dead-store test run at `-O0`/`-O2`. No WiFi integration yet — the
+  encrypted `saved_networks.csv` field lands in the PR-9 follow-up.
 - Fork: Sub-GHz Radio Settings (issue #3) — the Sub-GHz menu gains a
   *Radio Settings* leaf with a modal screen (the established 128×64
   settings idiom) for modulation (Auto/OOK/2-FSK/2-GFSK/4-FSK/4-GFSK),
