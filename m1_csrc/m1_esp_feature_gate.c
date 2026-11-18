@@ -26,7 +26,7 @@
 
 #include <stdint.h>
 #include <stddef.h>     /* NULL */
-#include <string.h>     /* strstr, strncmp */
+#include <string.h>     /* strstr, memset */
 #include <ctype.h>      /* isdigit, isspace */
 #include <stdbool.h>
 
@@ -261,10 +261,9 @@ esp_fw_state_t esp_feature_gate_query(esp_feature_t feature,
         if (detail_out != NULL) { *detail_out = local; }
         return ESP_FW_ABSENT;
     }
-    minimum[0] = s_feature_min[feature][0];
-    minimum[1] = s_feature_min[feature][1];
-    minimum[2] = s_feature_min[feature][2];
-    minimum[3] = s_feature_min[feature][3];
+    /* Bounds already checked above, so this cannot fail; it keeps the
+     * table single-sourced through esp_feature_minimum(). */
+    (void)esp_feature_minimum(feature, minimum);
 
     /* Live handshake, step 1: is the console there at all? */
     if (!esp_gate_console_ping_seam(ESP_GATE_PING_TIMEOUT_MS))
