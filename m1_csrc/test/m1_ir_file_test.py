@@ -133,6 +133,13 @@ STRAY_DATA_FILE = (
     "name: A\r\ntype: parsed\r\nprotocol: SIRC\r\ndata: 1 2 3\r\n"
     "address: 01 00 00 00\r\ncommand: 02 00 00 00\r\n"
 )
+# The one documented exception to any-order fields: "data:" before "type:
+# raw" -- the samples arrive before the block type is known, so the line is
+# dropped and the block skips as malformed (safe, counted, never garbage).
+DATA_FIRST_FILE = (
+    "Filetype: IR signals file\r\nVersion: 1\r\n"
+    "name: D\r\ndata: 100 200 300\r\ntype: raw\r\n"
+)
 
 # The C harness. %s placeholders are filled with the C-escaped sources above;
 # this keeps every backslash sequence under python's control (no raw-string
@@ -181,6 +188,7 @@ static const char *S_EXTRA_KEY = "@EXTRA_KEY@";
 static const char *S_BIG_RAW = "@BIG_RAW@";
 static const char *S_EXACT_EVEN_RAW = "@EXACT_EVEN_RAW@";
 static const char *S_STRAY_DATA = "@STRAY_DATA@";
+static const char *S_DATA_FIRST = "@DATA_FIRST@";
 
 int main(void)
 {
@@ -219,7 +227,7 @@ int main(void)
 
     /* offsets must point at the "name:" lines (verifiable by reloading) */
     io1.pos = entries[0].file_offset;
-    r = m1_ir_file_parse_signal(str_read, &io1, &sig, NULL, 0);
+    r = m1_ir_file_parse_signal(str_read, &io1, entries[0].name, &sig, NULL, 0);
     CHECK_EQ(r, 0, "load entry 0");
     CHECK_EQ(sig.protocol, IRMP_NEC_PROTOCOL, "NECext resolves through the real map");
     CHECK_EQ(sig.address, 0x00003412UL, "signal address");
@@ -228,8 +236,21 @@ int main(void)
     CHECK_EQ(sig.duty_cycle, 33, "default duty cycle");
     CHECK(strcmp(sig.protocol_name, "NECext") == 0, "signal protocol name");
 
+    /* parsed load with a raw buffer supplied: raw fields stay zero (they are
+     * raw-block fields), so a flag-forgetting consumer can never transmit
+     * the bare leading pause the loader wrote into the buffer */
+    io1.pos = entries[0].file_offset;
+    r = m1_ir_file_parse_signal(str_read, &io1, entries[0].name, &sig, ticks, 16);
+    CHECK_EQ(r, 0, "parsed load with a raw buffer supplied");
+    CHECK_EQ(sig.raw_count, 0, "parsed load publishes no raw ticks");
+
+    /* stale-index guard: a different block at the seek offset is refused */
+    io1.pos = entries[0].file_offset;
+    r = m1_ir_file_parse_signal(str_read, &io1, entries[1].name, &sig, NULL, 0);
+    CHECK_EQ(r, -(long)M1_IR_FILE_ERR_MALFORMED, "expected-name mismatch refuses the load");
+
     io1.pos = entries[1].file_offset;
-    r = m1_ir_file_parse_signal(str_read, &io1, &sig, ticks, 16);
+    r = m1_ir_file_parse_signal(str_read, &io1, entries[1].name, &sig, ticks, 16);
     CHECK_EQ(r, 0, "load raw entry");
     CHECK_EQ(sig.flags & M1_IR_FILE_FLAG_RAW, M1_IR_FILE_FLAG_RAW, "raw flag");
     CHECK_EQ(sig.frequency, 38000UL, "raw frequency honored");
@@ -246,12 +267,12 @@ int main(void)
     /* ---------- 2: strict-skip on load ---------- */
     str_io_t io2 = { S_GHOST, 0 };
     memset(&sig, 0, sizeof sig);
-    r = m1_ir_file_parse_signal(str_read, &io2, &sig, NULL, 0);
+    r = m1_ir_file_parse_signal(str_read, &io2, NULL, &sig, NULL, 0);
     CHECK_EQ(r, -(long)M1_IR_FILE_ERR_UNKNOWN_PROTOCOL, "load refuses unknown protocol");
     CHECK_EQ(sig.protocol, 0, "no protocol number on refusal");
 
     str_io_t io2b = { S_UNK, 0 };
-    r = m1_ir_file_parse_signal(str_read, &io2b, &sig, NULL, 0);
+    r = m1_ir_file_parse_signal(str_read, &io2b, NULL, &sig, NULL, 0);
     CHECK_EQ(r, -(long)M1_IR_FILE_ERR_UNKNOWN_PROTOCOL, "sentinel name refused");
 
     /* ---------- 3: malformed variants never crash, always counted ---------- */
@@ -300,7 +321,7 @@ int main(void)
 
     str_io_t io10 = { S_BIG_RAW, 0 };
     io10.pos = entries[0].file_offset;
-    r = m1_ir_file_parse_signal(str_read, &io10, &sig, small, 4);
+    r = m1_ir_file_parse_signal(str_read, &io10, NULL, &sig, small, 4);
     CHECK_EQ(r, -(long)M1_IR_FILE_ERR_RAW_OVERFLOW, "raw overflow reported");
     CHECK_EQ(small[0], 10000, "bounded buffer holds the leading pause first");
     for (i = 1; i < 4; i++) CHECK(small[i] <= 80, "no out-of-bounds tick value");
@@ -312,14 +333,14 @@ int main(void)
      * frame -- overflow is the only safe answer. */
     memset(&sig, 0, sizeof sig);
     str_io_t io10b = { S_EXACT_EVEN_RAW, 0 };
-    r = m1_ir_file_parse_signal(str_read, &io10b, &sig, small, 4); /* cap = 1 + N */
+    r = m1_ir_file_parse_signal(str_read, &io10b, NULL, &sig, small, 4); /* cap = 1 + N */
     CHECK_EQ(r, -(long)M1_IR_FILE_ERR_RAW_OVERFLOW, "cap-exact-even raw overflows (pad has no room)");
     CHECK_EQ(sig.raw_count, 0, "no even raw_count published");
     CHECK_EQ(small[3], 30, "all N samples stored before the failed pad");
 
     str_io_t io10c = { S_EXACT_EVEN_RAW, 0 };
     memset(&sig, 0, sizeof sig);
-    r = m1_ir_file_parse_signal(str_read, &io10c, &sig, ticks, 5); /* cap = 2 + N */
+    r = m1_ir_file_parse_signal(str_read, &io10c, "E", &sig, ticks, 5); /* cap = 2 + N */
     CHECK_EQ(r, 0, "one slot of headroom: padded odd success");
     CHECK_EQ(sig.raw_count, 5, "pause + 3 samples + pad");
     CHECK_EQ(sig.raw_count & 1u, 1u, "odd OTA invariant upheld");
@@ -330,6 +351,14 @@ int main(void)
     n = m1_ir_file_parse_index(str_read, &io11, entries, 8, &stats, NULL);
     CHECK_EQ(n, 1, "stray data in parsed block tolerated (line ignored)");
     CHECK(strcmp(entries[0].protocol, "SIRC") == 0, "SIRC indexed");
+
+    /* documented any-order exception: data: before type: raw drops the
+     * samples (block type not yet known) and skips the block malformed */
+    str_io_t io11b = { S_DATA_FIRST, 0 };
+    n = m1_ir_file_parse_index(str_read, &io11b, entries, 8, &stats, NULL);
+    CHECK_EQ(n, 0, "data: before type: raw is not indexed");
+    CHECK_EQ(stats.blocks_seen, 1, "data-first block seen");
+    CHECK_EQ(stats.skipped_malformed, 1, "data-first block counted malformed");
 
     /* ---------- 5: index capacity bound ---------- */
     str_io_t io12 = { S_FILE1, 0 };
@@ -414,6 +443,7 @@ def main() -> int:
         ("@BIG_RAW@", BIG_RAW_FILE),
         ("@EXACT_EVEN_RAW@", EXACT_EVEN_RAW_FILE),
         ("@STRAY_DATA@", STRAY_DATA_FILE),
+        ("@DATA_FIRST@", DATA_FIRST_FILE),
     ):
         harness = harness.replace(token, c_escape(value))
 

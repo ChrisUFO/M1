@@ -112,7 +112,7 @@ static int load_ir_signal(const char *proto_name, const char *addr_hex,
     } // if ( n != 1 )
 
     io.pos = entry.file_offset;
-    if ( m1_ir_file_parse_signal(str_read, &io, sig, NULL, 0) != 0 )
+    if ( m1_ir_file_parse_signal(str_read, &io, entry.name, sig, NULL, 0) != 0 )
     {
         printf("FAIL: vector '%s' did not load\n", proto_name);
         failures++;

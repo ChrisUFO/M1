@@ -95,7 +95,7 @@ typedef struct
 	uint8_t duty_cycle; /* percent */
 	uint8_t protocol; /* IRMP protocol number, resolved via the one map */
 	uint8_t flags; /* M1_IR_FILE_FLAG_* */
-	uint16_t raw_count; /* number of valid tick entries when raw */
+	uint16_t raw_count; /* valid tick entries, raw blocks only (0 when parsed) */
 	uint16_t *raw_ticks; /* caller-provided buffer, 10us ticks */
 } S_M1_IR_File_Signal_t;
 
@@ -131,12 +131,18 @@ int32_t m1_ir_file_parse_index(S_M1_IR_File_Read_fn read_fn, void *io_ctx,
  * (the caller seeks to entry->file_offset first). Resolves the protocol name
  * through the single upstream map (ir_protocol_map_lookup); an unknown name
  * returns M1_IR_FILE_ERR_UNKNOWN_PROTOCOL without touching *sig_out.
+ * expected_name is the stale-index guard (m1_ir_file_signal_load passes
+ * entry->name): when non-NULL, the re-parsed block's name must match it or
+ * M1_IR_FILE_ERR_MALFORMED is returned -- SD content changed between index
+ * and load can never yield a different-but-valid signal.
  * Raw blocks fill sig_out->raw_ticks[0..raw_count-1] (leading pause included,
  * odd count enforced); a raw block that does not fit the buffer once the
  * leading pause and odd-count pad are accounted for returns
- * M1_IR_FILE_ERR_RAW_OVERFLOW. */
+ * M1_IR_FILE_ERR_RAW_OVERFLOW. raw_count/raw_ticks are raw-block fields:
+ * a parsed load always publishes raw_count == 0. */
 int32_t m1_ir_file_parse_signal(S_M1_IR_File_Read_fn read_fn, void *io_ctx,
-		S_M1_IR_File_Signal_t *sig_out, uint16_t *raw_ticks, uint16_t raw_ticks_cap);
+		const char *expected_name, S_M1_IR_File_Signal_t *sig_out,
+		uint16_t *raw_ticks, uint16_t raw_ticks_cap);
 
 /* Firmware shell (FatFs-backed, pure-core drivers) ------------------------ */
 
@@ -144,7 +150,9 @@ int32_t m1_ir_file_parse_signal(S_M1_IR_File_Read_fn read_fn, void *io_ctx,
 int32_t m1_ir_file_index(const char *path, S_M1_IR_File_Entry_t *entries,
 		uint16_t max_entries, S_M1_IR_File_Stats_t *stats, S_M1_IR_File_Notice_t notice);
 
-/* Load one indexed block on demand (opens the file, seeks, parses, closes). */
+/* Load one indexed block on demand (opens the file, seeks, parses, closes).
+ * The re-parsed block's name is verified against entry->name (stale-index
+ * guard): a mismatch returns M1_IR_FILE_ERR_MALFORMED. */
 int32_t m1_ir_file_signal_load(const char *path, const S_M1_IR_File_Entry_t *entry,
 		S_M1_IR_File_Signal_t *sig_out, uint16_t *raw_ticks, uint16_t raw_ticks_cap);
 

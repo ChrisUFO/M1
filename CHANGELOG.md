@@ -26,11 +26,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offset without buffering commands (no whole-file-in-RAM parsing, no
   legacy 64-command cap), and `m1_ir_file_signal_load()` re-parses one
   block on demand for transmit through the same `ir_remote_function_play`
-  data path; raw `data:` lines are token-streamed so unbounded line
-  lengths parse with a fixed 512-byte chunk reader, and raw samples land
-  in a caller-provided 10-µs tick buffer with the legacy leading-pause and
-  odd-count OTA invariants. Tolerance: blank lines, `#` comments, CRLF,
-  fields in any order and unknown keys; overlong keyword lines, bad values
+  data path, verifying the re-parsed block name against the index entry so
+  SD content changed between index and load can never yield a
+  different-but-valid signal; raw `data:` lines are token-streamed so
+  unbounded line lengths parse with a fixed 512-byte chunk reader, and raw
+  samples land in a caller-provided 10-µs tick buffer with the legacy
+  leading-pause and
+  odd-count OTA invariants (raw fields are raw-block-only: a parsed load
+  publishes `raw_count == 0`, never the leading pause). Tolerance: blank
+  lines, `#` comments, CRLF, unknown keys and fields in any order (one
+  exception: `data:` before `type: raw` drops the line and skips the block
+  as malformed — the block type is not yet known when the samples arrive);
+  overlong keyword lines, bad values
   and incomplete blocks are skipped and counted as malformed — never a
   crash. Strict-skip: an unknown protocol name skips its block, increments
   the skipped counter and fires the visible-notice hook the PR-5 browser

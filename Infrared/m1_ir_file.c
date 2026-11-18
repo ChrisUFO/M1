@@ -26,8 +26,10 @@
 *   -- or, for raw signals: type: raw / data: 175 7436 179 ...  (microseconds)
 *
 * Tolerated everywhere: blank lines, '#' comments, CRLF line endings, fields
-* in any order inside a block, and arbitrarily long raw "data:" lines (they
-* are token-streamed, never materialized). A keyword line longer than
+* in any order inside a block (one exception: "data:" before "type: raw" --
+* the samples arrive before the block type is known, so the line is dropped
+* and the block skips as malformed), and arbitrarily long raw "data:" lines
+* (they are token-streamed, never materialized). A keyword line longer than
 * M1_IR_FILE_LINE_LEN_MAX, a bad value, or a block with missing mandatory
 * fields skips that block as malformed (counted, never a crash). An unknown
 * protocol name skips its block under the strict-skip policy: counted in
@@ -564,15 +566,19 @@ static void m1_ir_block_finish_index(const S_M1_IR_Block_t *blk, S_M1_IR_File_En
 
 /*============================================================================*/
 /**
-  * @brief  Load-mode finalization: publish the one requested block
+  * @brief  Load-mode finalization: publish the one requested block.
+  *          expected_name (when non-NULL): stale-index guard -- the
+  *          re-parsed block must still carry this name or the load fails.
   * @retval 0 ok, negative S_M1_IR_File_Error_t
   */
 /*============================================================================*/
-static int32_t m1_ir_block_finish_load(const S_M1_IR_Block_t *blk, S_M1_IR_File_Signal_t *sig_out,
-		S_M1_IR_RawSink_t *sink)
+static int32_t m1_ir_block_finish_load(const S_M1_IR_Block_t *blk, const char *expected_name,
+		S_M1_IR_File_Signal_t *sig_out, S_M1_IR_RawSink_t *sink)
 {
 	if ( !blk->have_name || !blk->have_type || blk->malformed )
 		return -(int32_t)M1_IR_FILE_ERR_MALFORMED;
+	if ( expected_name && strcmp(blk->name, expected_name) )
+		return -(int32_t)M1_IR_FILE_ERR_MALFORMED; // stale index: another block
 	if ( blk->flags & M1_IR_FILE_FLAG_PARSED )
 	{
 		if ( !blk->have_protocol || !blk->have_addr || !blk->have_cmd )
@@ -603,7 +609,9 @@ static int32_t m1_ir_block_finish_load(const S_M1_IR_Block_t *blk, S_M1_IR_File_
 	sig_out->frequency = blk->frequency;
 	sig_out->duty_cycle = blk->duty_cycle;
 	sig_out->flags = blk->flags;
-	sig_out->raw_count = sink->count;
+	/* raw fields are raw-only: a parsed block must never publish the pause
+	 * already written into the buffer (bare-pause transmit hazard) */
+	sig_out->raw_count = (blk->flags & M1_IR_FILE_FLAG_RAW) ? sink->count : 0u;
 	sig_out->raw_ticks = sink->ticks;
 	return 0;
 } // static int32_t m1_ir_block_finish_load(...)
@@ -735,8 +743,8 @@ static int32_t m1_ir_check_header(S_M1_IR_Reader_t *r)
 /*============================================================================*/
 static int32_t m1_ir_parse_stream(S_M1_IR_Reader_t *r, S_M1_IR_File_Entry_t *entries,
 		uint16_t max_entries, S_M1_IR_File_Stats_t *stats,
-		S_M1_IR_File_Notice_t notice, S_M1_IR_File_Signal_t *sig_out,
-		S_M1_IR_RawSink_t *sink)
+		S_M1_IR_File_Notice_t notice, const char *expected_name,
+		S_M1_IR_File_Signal_t *sig_out, S_M1_IR_RawSink_t *sink)
 {
 	S_M1_IR_Block_t blk;
 	char key[M1_IR_FILE_KEY_LEN_MAX];
@@ -761,7 +769,7 @@ static int32_t m1_ir_parse_stream(S_M1_IR_Reader_t *r, S_M1_IR_File_Entry_t *ent
 			if ( load_mode && block_open )
 			{
 				/* the next block starts here: the requested one is complete */
-				got = m1_ir_block_finish_load(&blk, sig_out, sink);
+				got = m1_ir_block_finish_load(&blk, expected_name, sig_out, sink);
 				return got ? got : 1;
 			} // if ( load_mode && block_open )
 			if ( block_open )
@@ -792,7 +800,7 @@ static int32_t m1_ir_parse_stream(S_M1_IR_Reader_t *r, S_M1_IR_File_Entry_t *ent
 			} // if ( block_open && (blk.flags & M1_IR_FILE_FLAG_RAW) )
 			else
 			{
-				(void)m1_ir_read_value(r, val, (int32_t)sizeof(val)); // not a raw block: ignore
+				(void)m1_ir_read_value(r, val, (int32_t)sizeof(val)); // not a raw block (or "type: raw" not yet seen): ignore
 			} // else
 			continue;
 		} // if ( !strcmp(key, M1_IR_FILE_KEY_DATA) )
@@ -812,7 +820,7 @@ static int32_t m1_ir_parse_stream(S_M1_IR_Reader_t *r, S_M1_IR_File_Entry_t *ent
 	if ( block_open )
 	{
 		if ( load_mode )
-			return m1_ir_block_finish_load(&blk, sig_out, sink);
+			return m1_ir_block_finish_load(&blk, expected_name, sig_out, sink);
 		m1_ir_block_finish_index(&blk, entries, max_entries, stats, notice);
 	} // if ( block_open )
 
@@ -849,7 +857,7 @@ int32_t m1_ir_file_parse_index(S_M1_IR_File_Read_fn read_fn, void *io_ctx,
 	if ( ret )
 		return ret;
 
-	ret = m1_ir_parse_stream(&r, entries, max_entries, stats, notice, NULL, &sink);
+	ret = m1_ir_parse_stream(&r, entries, max_entries, stats, notice, NULL, NULL, &sink);
 	if ( ret < 0 )
 		return ret;
 
@@ -862,7 +870,8 @@ int32_t m1_ir_file_parse_index(S_M1_IR_File_Read_fn read_fn, void *io_ctx,
   */
 /*============================================================================*/
 int32_t m1_ir_file_parse_signal(S_M1_IR_File_Read_fn read_fn, void *io_ctx,
-		S_M1_IR_File_Signal_t *sig_out, uint16_t *raw_ticks, uint16_t raw_ticks_cap)
+		const char *expected_name, S_M1_IR_File_Signal_t *sig_out,
+		uint16_t *raw_ticks, uint16_t raw_ticks_cap)
 {
 	S_M1_IR_Reader_t r;
 	S_M1_IR_RawSink_t sink;
@@ -885,7 +894,7 @@ int32_t m1_ir_file_parse_signal(S_M1_IR_File_Read_fn read_fn, void *io_ctx,
 	if ( raw_ticks && raw_ticks_cap )
 		(void)m1_ir_raw_sink_put(&sink, M1_IR_FILE_RAW_LEADING_PAUSE_TICKS * M1_IR_FILE_RAW_TICK_US);
 
-	ret = m1_ir_parse_stream(&r, NULL, 0, NULL, NULL, sig_out, &sink);
+	ret = m1_ir_parse_stream(&r, NULL, 0, NULL, NULL, expected_name, sig_out, &sink);
 	if ( ret < 0 )
 		return ret;
 
@@ -986,7 +995,7 @@ int32_t m1_ir_file_signal_load(const char *path, const S_M1_IR_File_Entry_t *ent
 		return -(int32_t)M1_IR_FILE_ERR_IO;
 	} // if ( f_lseek(sd.fil, (FSIZE_t)entry->file_offset) != FR_OK )
 
-	ret = m1_ir_file_parse_signal(m1_ir_sd_read, &sd, sig_out, raw_ticks, raw_ticks_cap);
+	ret = m1_ir_file_parse_signal(m1_ir_sd_read, &sd, entry->name, sig_out, raw_ticks, raw_ticks_cap);
 
 	if ( sd.err && (ret >= 0) )
 		ret = -(int32_t)M1_IR_FILE_ERR_IO;
