@@ -653,6 +653,202 @@ uint8_t wifi_ap_scan_list(ctrl_cmd_t *app_req)
 
 
 
+/* Station join handler (PR-11, issue #42): CTRL_REQ_CONNECT_AP.
+ *
+ * Request shape (no in-tree requester exists yet -- this defines it for
+ * the paired firmware): app_req->msg_id == CTRL_REQ_CONNECT_AP,
+ * cmd_timeout_sec == DEFAULT_CTRL_RESP_CONNECT_AP_TIMEOUT (45 s), and
+ * app_req->u.wifi_ap_config.ssid/.pwd carry NUL-terminated SSID/PSK
+ * strings (<=32 / <=64 chars, no '"'/CR/LF -- the same grammar the
+ * STM32 join flow enforces before it ever builds a command).
+ *
+ * Sequence (same shape as wifi_ap_scan_list above): put the radio in
+ * station mode and wait OK, then send AT+CWJAP="<ssid>","<pwd>" and
+ * wait for the association markers. Response codes carried in
+ * resp_event_status as CTRL_RESP_CONNECT_AP:
+ *   SUCCESS                      associated ("WIFI GOT IP"/"OK")
+ *   CTRL_ERR_INVALID_ARGUMENT    ssid/psk failed the grammar checks
+ *   CTRL_ERR_INVALID_PASSWORD    AT +CWJAP:<2> (wrong password)
+ *   CTRL_ERR_NO_AP_FOUND         AT +CWJAP:<3> (AP not found)
+ *   CTRL_ERR_NOT_CONNECTED       +CWJAP:<1|4|other> or FAIL
+ *   CTRL_ERR_REQUEST_TIMEOUT     no marker before the timeout
+ * The plaintext PSK rides only the join command buffer, which is wiped
+ * (volatile stores) before it is freed. */
+uint8_t wifi_connect_ap(ctrl_cmd_t *app_req)
+{
+	char *rx_buf = NULL;
+	char *resp_buf = NULL;
+	char *join_cmd = NULL;
+	char *fail_buf = NULL;
+	int rx_buf_len = 0;
+	uint32_t rx_uid;
+	uint8_t ret;
+	uint8_t join_status = CTRL_ERR_REQUEST_TIMEOUT;
+	uint32_t tick_t0, tick_pass;
+	size_t i;
+
+	tick_t0 = HAL_GetTick();
+	esp_queue_reset(ctrl_msg_Q);
+
+	/* Grammar checks BEFORE anything is sent: the AT command quotes both
+	 * fields, so a '"' would terminate one early and CR/LF would split
+	 * the line. */
+	{
+		const char *ssid = (const char *)app_req->u.wifi_ap_config.ssid;
+		const char *pwd = (const char *)app_req->u.wifi_ap_config.pwd;
+		size_t ssid_len = strnlen(ssid, SSID_LENGTH);
+		size_t pwd_len = strnlen(pwd, PASSWORD_LENGTH);
+
+		if ( (ssid_len == SSID_LENGTH) || (pwd_len == PASSWORD_LENGTH) )
+		{
+			app_req->resp_event_status = CTRL_ERR_INVALID_ARGUMENT;
+			return CTRL_ERR_INCORRECT_ARG;
+		}
+		for ( i=0; i<ssid_len; i++ )
+			if ( (ssid[i]=='"') || (ssid[i]=='\r') || (ssid[i]=='\n') )
+			{
+				app_req->resp_event_status = CTRL_ERR_INVALID_ARGUMENT;
+				return CTRL_ERR_INCORRECT_ARG;
+			}
+		for ( i=0; i<pwd_len; i++ )
+			if ( (pwd[i]=='"') || (pwd[i]=='\r') || (pwd[i]=='\n') )
+			{
+				app_req->resp_event_status = CTRL_ERR_INVALID_ARGUMENT;
+				return CTRL_ERR_INCORRECT_ARG;
+			}
+	}
+
+	app_req->at_cmd = strdup(CONCAT_CMD_PARAM(ESP32C6_AT_REQ_WIFI_MODE, ESP32C6_WIFI_MODE_STA));
+	app_req->cmd_resp = strdup(ESP32C6_AT_RES_OK);
+	app_req->cmd_len = strlen(app_req->at_cmd);
+	ret = spi_AT_app_send_command(app_req);
+	if ( ret==SUCCESS )
+	{
+		ret = ERROR;
+		while (true)
+		{
+			tick_pass = HAL_GetTick() - tick_t0;
+			tick_pass /= MILLISEC_TO_SEC;
+			if ( tick_pass ) // at least one second has passed?
+			{
+				tick_t0 += MILLISEC_TO_SEC; // Update tick_t0
+				if ( app_req->cmd_timeout_sec > tick_pass )
+				{
+					app_req->cmd_timeout_sec -= tick_pass;
+				}
+				else
+					break; // Timeout
+			} // if ( tick_pass )
+			esp_free_mem(&resp_buf);
+			rx_buf = spi_AT_app_get_response(&rx_buf_len, &rx_uid, app_req->cmd_timeout_sec);
+			resp_buf = rx_buf;
+			rx_buf = m1_resp_string_strip(rx_buf, CR_LF);
+			if ( !rx_buf )
+				continue;
+			if ( rx_uid != current_uid ) // Not the expected response?
+				continue;
+			if ( strcmp(rx_buf, app_req->cmd_resp) ) // Not the expected response?
+				continue;
+			ret = SUCCESS;
+			break;
+		} // while ( true )
+		if ( ret==SUCCESS )
+		{
+			esp_free_mem(&app_req->at_cmd);
+			esp_free_mem(&app_req->cmd_resp);
+			/* AT+CWJAP="<ssid>","<pwd>" -- carries the plaintext PSK */
+			join_cmd = malloc(SSID_LENGTH + PASSWORD_LENGTH + 24);
+			if ( !join_cmd )
+			{
+				esp_free_mem(&resp_buf);
+				app_req->resp_event_status = CTRL_ERR_MEMORY_FAILURE;
+				return ERROR;
+			}
+			snprintf(join_cmd, SSID_LENGTH + PASSWORD_LENGTH + 24, "%s\"%s\",\"%s\"" ESP32C6_AT_REQ_CRLF,
+					 ESP32C6_AT_REQ_CONNECT_AP,
+					 (const char *)app_req->u.wifi_ap_config.ssid,
+					 (const char *)app_req->u.wifi_ap_config.pwd);
+			app_req->at_cmd = join_cmd;
+			app_req->cmd_len = strlen(join_cmd);
+			app_req->cmd_resp = NULL;
+			ret = spi_AT_app_send_command(app_req);
+			while ( ret==SUCCESS )
+			{
+				esp_free_mem(&resp_buf);
+				rx_buf = spi_AT_app_get_response(&rx_buf_len, &rx_uid, app_req->cmd_timeout_sec);
+				resp_buf = rx_buf;
+				if ( rx_buf && rx_buf_len)
+				{
+					if ( rx_uid != current_uid ) // Not the expected response?
+						continue;
+					fail_buf = strstr(rx_buf, ESP32C6_AT_RES_CONN_AP_FAIL);
+					if ( fail_buf!=NULL ) // "+CWJAP:<code>": the join was refused
+					{
+						const char *cp = fail_buf + strlen(ESP32C6_AT_RES_CONN_AP_FAIL);
+						int code = 0;
+						while ( (*cp>='0') && (*cp<='9') )
+							code = (code*10) + (*(cp++) - '0');
+						join_status = (code==2) ? CTRL_ERR_INVALID_PASSWORD :
+						              (code==3) ? CTRL_ERR_NO_AP_FOUND :
+						                          CTRL_ERR_NOT_CONNECTED;
+						break;
+					}
+					if ( strstr(rx_buf, ESP32C6_AT_RES_CONN_GOT_IP)!=NULL ||
+						 strstr(rx_buf, ESP32C6_AT_RES_OK)!=NULL )
+					{
+						join_status = SUCCESS; // Complete and exit
+						break;
+					}
+					tick_pass = HAL_GetTick() - tick_t0;
+					tick_pass /= MILLISEC_TO_SEC;
+					if ( tick_pass ) // at least one second has passed?
+					{
+						tick_t0 += MILLISEC_TO_SEC; // Update tick_t0
+						if ( app_req->cmd_timeout_sec > tick_pass )
+						{
+							app_req->cmd_timeout_sec -= tick_pass;
+						}
+						else
+							break; // Timeout
+					} // if ( tick_pass )
+				} // if ( rx_buf && rx_buf_len)
+				else
+					ret = ERROR;
+			} // while ( ret==SUCCESS )
+			/* PSK hygiene: the join command carried the plaintext -- wipe
+			 * it (volatile stores, so it cannot be elided) before free. */
+			if ( join_cmd )
+			{
+				volatile char *wipe = join_cmd;
+				while ( *wipe ) *(wipe++) = 0;
+			}
+			app_req->at_cmd = NULL; /* join_cmd freed below with the others */
+		} // if ( ret==SUCCESS )
+	} // if ( ret==SUCCESS )
+	esp_free_mem(&resp_buf);
+	if ( join_cmd )
+		free(join_cmd);
+	esp_free_mem(&app_req->at_cmd);
+	esp_free_mem(&app_req->cmd_resp);
+	if ( join_status==SUCCESS )
+	{
+		ret = SUCCESS;
+		app_req->msg_type = CTRL_RESP;
+		app_req->msg_id = CTRL_RESP_CONNECT_AP;
+		app_req->resp_event_status = SUCCESS;
+	} // if ( join_status==SUCCESS )
+	else
+	{
+		ret = ERROR;
+		app_req->msg_id = CTRL_RESP_CONNECT_AP;
+		app_req->resp_event_status = join_status;
+	} // else
+
+	return ret;
+} // uint8_t wifi_connect_ap(ctrl_cmd_t *app_req)
+
+
+
 uint8_t ble_scan_list(ctrl_cmd_t *app_req)
 {
 	char *rx_buf = NULL;
