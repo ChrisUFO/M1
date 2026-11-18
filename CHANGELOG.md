@@ -11,6 +11,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: Wi-Fi join flow + ESP32 join handler (issue #42 completion,
+  PR-11 of the Merge 3 series) — the user-facing join/reconnect
+  experience over the PR-9 encrypted-credential store and the PR-10
+  live feature gate, plus the ESP-side station-connect handler.
+  - STM32 join (`m1_csrc/m1_wifi.c/.h`): a new Wi-Fi → Join Network
+    leaf (saved-network picker + live-scan picker), a Join Network
+    action in the Networks flow, and a Join action in the saved
+    browser, all funneling into one gated transport: console verb
+    `join "<ssid>" "<psk>"` + CRLF over the ESP32 UART session every
+    shipped Wi-Fi tool uses, reply read to the `">> "` prompt and
+    classified by markers (`JOINED…` / `JOIN_FAIL`; anything else is
+    an honest timeout). Grammar is enforced before anything is sent:
+    SSID 0..32 and PSK 8..63 printable-no-quote chars, or the exact
+    64-hex PMK form — so a secret that cannot be transmitted safely
+    (embedded quote/CR/LF) is refused, never mangled onto the wire.
+  - PSK entry: PLAN named `m1_vkb_get_filename`, but that keyboard is
+    filename-oriented (20-char cap, lowercase+digits+`_.` charset,
+    plaintext field) and cannot take a WPA secret; the smallest
+    password-style editor on the existing key/char UI ships instead —
+    a masked rotor over the full 94-char printable-minus-quote
+    alphabet (exactly the join-legal charset, host-test-pinned), with
+    in-editor 8..64 validation, `<` delete / `>` save pseudo-cells,
+    and BACK-cancel that zeroizes the buffer. Only the cursor cell
+    ever shows a live character.
+  - Gate + flash-gate: the join transport runs the PR-10 live
+    handshake first — the ESP32 must answer `version` with
+    `ESPFW` ≥ the join minimum (bumped to 1.1.0.0, the paired image
+    version). ABSENT/OLDER show the gate's diagnostic ("ESP not
+    responding" / "ESP fw unknown" / "ESP update required") and send
+    nothing. A stale DR2/DR3 record still never gates.
+  - ESP-side handler (`Esp_spi_at/.../esp_app_main.c`, same style as
+    the scan handlers): `wifi_connect_ap()` serves
+    `CTRL_REQ_CONNECT_AP` — validates the SSID/PSK grammar, sets
+    station mode, issues `AT+CWJAP="<ssid>","<pwd>"`, and answers
+    `CTRL_RESP_CONNECT_AP` with mapped response codes
+    (`SUCCESS`/`CTRL_ERR_INVALID_ARGUMENT`/`CTRL_ERR_INVALID_PASSWORD`
+    /`CTRL_ERR_NO_AP_FOUND`/`CTRL_ERR_NOT_CONNECTED`/
+    `CTRL_ERR_REQUEST_TIMEOUT`) within the 45 s
+    `DEFAULT_CTRL_RESP_CONNECT_AP_TIMEOUT`; the paired-firmware
+    version constant (`ESP32C6_FW_VERSION_LINE`, `ESPFW 1.1.0.0`) is
+    defined in `esp_at_list.h` and pinned to the STM32 gate minimum
+    by the host suite.
+  - Reconnect: exactly one attempt per boot, on first Wi-Fi-menu
+    entry (the ESP32 is deliberately not powered at raw boot) —
+    reconnect candidate is the first credentialed row in store order,
+    re-verified and re-decrypted at join time, bounded by a 15 s
+    budget, with clear failure states ("Reconnect failed", "Saved PSK
+    unusable") and a silent zero-cost no-op when nothing is
+    credentialed.
+  - PSK hygiene: the plaintext exists only in the editor buffer, the
+    decrypted `wifi_cred_get_psk()` buffer, and the static command
+    buffer — each zeroized with `m1_secure_zero()` on every exit path
+    (the ESP-side handler wipes its `AT+CWJAP` command before free).
+    Credentials are sealed through the PR-9 store only after a
+    successful join; the PSK is never logged and never appears in an
+    error string.
+  - Tests + docs: host suite `m1_csrc/test/m1_wifi_join_test.py`
+    (real extracted join core linked with the real crypto zeroization:
+    PSK/SSID grammar battery, rotor round trip proving every
+    editor-producible PSK is join-legal, exact command construction
+    incl. hidden/open forms and the no-truncation overflow wipe,
+    reply classification, reconnect pick; the ESP pairing/version-gate
+    battery compiled from the real gate core — the in-repo ESP app's
+    version line parses to exactly the join minimum, pre-pairing and
+    dead consoles refuse; static wiring checks incl. gate-before-send,
+    buffer zeroization, no logging in the join section, menu wiring,
+    and runner wiring), wired into `scripts/run_host_tests.sh`;
+    `docs/security/wifi-credential-threat-model.md` extended with the
+    join-path plaintext exposure; `docs/architecture.md` inter-
+    processor interface note for the `join` verb and the paired
+    `CTRL_REQ_CONNECT_AP` handler. On-device join/reboot-reconnect
+    verification is tracked as a hardware-acceptance follow-up.
 - Fork: ESP32 feature-gate utility — live firmware handshake, four
   states, per-feature minimums (PR-10 of the Merge 3 series; the
   shared mechanism consumed by the future Wi-Fi join flow and BLE
