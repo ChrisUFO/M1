@@ -14,15 +14,19 @@
 *    HAL_RNG_MspInit() in Core/Src/stm32h5xx_hal_msp.c). There is NO
 *    software, time-based or counter-based fallback: if m1_rng_init()
 *    fails, or any generate call fails, m1_rng_bytes() returns false --
-*    forever (failure is sticky) -- and the caller's crypto path must
-*    refuse. Never seed an IV or key from HAL_GetTick(), a counter, RAM
+*    forever (failure is sticky and permanent: no later m1_rng_init()
+*    can clear it) -- and the caller's crypto path must refuse. Never
+*    seed an IV or key from HAL_GetTick(), a counter, RAM
 *    scraps or any other deterministic source.
 *
 * 2. Init ordering. m1_rng_init() is called once from
 *    m1_system_init_task() (m1_csrc/m1_sys_init.c), after the SD card /
 *    settings load and before m1_tasks_init() -- deterministically before
-*    any task that may consume randomness. It is idempotent; safe to
-*    re-call.
+*    any task that may consume randomness. It is idempotent while the
+*    wrapper has never failed; once any init or generate failure has
+*    occurred the failure latch is permanent, so a later m1_rng_init()
+*    also refuses (re-calling is safe precisely because it can never
+*    resurrect a failed RNG).
 *
 * 3. Buffer contract. m1_rng_buf[0 .. len-1] is fully written on
 *    success. On failure the partial output is zeroized (m1_secure_zero)
@@ -52,7 +56,8 @@
 /* Initialize the hardware RNG. Returns true when the peripheral is
  * usable. On any HAL init failure, or when the post-init generate probe
  * fails, the wrapper is marked unusable and stays unusable: every later
- * m1_rng_init()/m1_rng_bytes() call fails. No fallback exists. */
+ * m1_rng_init()/m1_rng_bytes() call fails (the failure latch is
+ * permanent -- a later init cannot clear it). No fallback exists. */
 bool m1_rng_init(void);
 
 /* True iff the RNG initialized successfully and has not failed since.
@@ -62,7 +67,8 @@ bool m1_rng_ok(void);
 /* Fill buf[0 .. len-1] with hardware-random bytes. Returns false (and
  * leaves the buffer zeroized) when the wrapper is not initialized, when
  * buf is NULL, or when any word generation fails; a generate failure is
- * sticky -- subsequent calls fail too. */
+ * sticky and permanent -- subsequent m1_rng_bytes() and m1_rng_init()
+ * calls fail too. */
 bool m1_rng_bytes(uint8_t *buf, size_t len);
 
 #endif /* M1_RNG_H_ */

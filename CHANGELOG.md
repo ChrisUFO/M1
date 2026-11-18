@@ -23,8 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the existing driver tree), `HAL_RNG_MODULE_ENABLED` enabled, HSI48
   selected as the RNG kernel clock in `HAL_RNG_MspInit()`, initialized
   deterministically in `m1_system_init_task()` before any consumer
-  task. Any RNG init or generate failure is sticky and `m1_rng_bytes()`
-  refuses — there is no time-based or pseudo-random fallback anywhere
+  task. Any RNG init or generate failure latches permanently and every
+  later `m1_rng_init()`/`m1_rng_bytes()` call refuses — there is no
+  time-based or pseudo-random fallback anywhere
   (host-suite-proven; the three pre-existing decorative `rand()` sites
   are file-name suffixes and synthetic NFC UIDs, never keys or IVs).
   Threat-model honesty is documented in `docs/security.md` and the

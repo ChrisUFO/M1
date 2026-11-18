@@ -530,11 +530,11 @@ int main(int argc, char **argv)
         uint8_t buf[16];
         if (m1_rng_bytes(buf, sizeof(buf))) FAILF("bytes succeeded after failed init");
         /* Even after the HAL 'recovers', the wrapper must stay refused:
-         * g_m1_rng_ready was never set, and a later init attempt may
-         * succeed (idempotent init is allowed) -- but bytes may not
-         * run before ANY successful init. */
+         * the failure latch is permanent -- a later m1_rng_init()
+         * cannot resurrect the RNG. */
         h_init_ok = true;
-        if (m1_rng_ok()) FAILF("rng_ok flipped true without re-init");
+        if (m1_rng_init()) FAILF("init resurrected the RNG after HAL init failure (latch not permanent)");
+        if (m1_rng_ok()) FAILF("rng_ok flipped true after re-init");
     } else if (scenario == 2) {
         /* Init OK; then generate fails on the FIRST word of a byte
          * request: refuse + zero buffer + sticky. (A probe-time
@@ -583,17 +583,18 @@ int main(int argc, char **argv)
         if (!m1_rng_init()) FAILF("re-init failed");
         if (h_init_calls != 1) FAILF("re-init re-ran HAL init (%u)", h_init_calls);
     } else if (scenario == 5) {
-        /* Probe-time generate failure: init itself refuses, wrapper
-         * stays not-ready; a later init attempt with recovered HAL is
-         * allowed (idempotent init), and only then does it come up. */
+        /* Probe-time generate failure: init itself refuses and the
+         * permanent latch engages -- even with a fully recovered HAL,
+         * a later init must not resurrect the RNG. */
         h_fail_after = 0;
         if (m1_rng_init()) FAILF("init succeeded despite probe generate failure");
         if (m1_rng_ok()) FAILF("rng_ok true after probe failure");
         uint8_t buf[4];
         if (m1_rng_bytes(buf, sizeof(buf))) FAILF("bytes succeeded after probe failure");
         h_fail_after = 0xFFFFFFFFu;
-        if (!m1_rng_init()) FAILF("recovery init refused after HAL recovered");
-        if (!m1_rng_ok()) FAILF("rng_ok false after recovery init");
+        if (m1_rng_init()) FAILF("recovery init resurrected the RNG (latch not permanent)");
+        if (m1_rng_ok()) FAILF("rng_ok true after recovery init (latch not permanent)");
+        if (m1_rng_bytes(buf, sizeof(buf))) FAILF("bytes succeeded after recovery init refusal");
     } else {
         FAILF("unknown scenario %d", scenario);
     }

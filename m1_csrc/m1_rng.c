@@ -79,14 +79,21 @@ static bool m1_rng_hal_generate(uint32_t *word)
 /***************************** V A R I A B L E S ******************************/
 
 /* Sticky readiness: set only after init + one successful generate
- * probe; cleared forever by any generate failure. */
+ * probe; cleared by any generate failure.
+ *
+ * Permanent failure latch: set by ANY init or generate failure and
+ * never cleared. It is consulted by m1_rng_init() and m1_rng_bytes(),
+ * so a later init cannot resurrect the RNG once anything has failed
+ * (m1_rng.h contract 1/2: refusal is sticky and permanent). */
 static bool g_m1_rng_ready = false;
+static bool g_m1_rng_failed = false;
 
 /*************** F U N C T I O N   I M P L E M A T I O N ****************/
 
 /*============================================================================*/
 /**
-  * @brief Initialize the hardware RNG (idempotent, sticky on failure).
+  * @brief Initialize the hardware RNG (idempotent while healthy,
+  *   permanently refusing after any failure).
   * @see m1_rng.h contract 1/2.
   */
 /*============================================================================*/
@@ -97,15 +104,27 @@ bool m1_rng_init(void)
 	if (g_m1_rng_ready)
 		return true; /* Already up: idempotent */
 
-	if (!m1_rng_hal_init())
+	/* Permanent latch: once ANY init or generate failure occurred, no
+	 * later init may bring the RNG back -- the crypto path refuses
+	 * for the rest of the boot. */
+	if (g_m1_rng_failed)
 		return false;
 
-	/* Generate probe: a peripheral that initializes but cannot produce
-	 * a word is not an entropy source. Failure leaves the wrapper
-	 * marked not-ready (and stays sticky: g_m1_rng_ready is never set),
-	 * so m1_rng_bytes() refuses. */
-	if (!m1_rng_hal_generate(&probe))
+	if (!m1_rng_hal_init())
+	{
+		g_m1_rng_failed = true;
 		return false;
+	}
+
+	/* Generate probe: a peripheral that initializes but cannot produce
+	 * a word is not an entropy source. Failure latches permanently:
+	 * g_m1_rng_ready is never set and g_m1_rng_failed blocks every
+	 * later m1_rng_init()/m1_rng_bytes() call. */
+	if (!m1_rng_hal_generate(&probe))
+	{
+		g_m1_rng_failed = true;
+		return false;
+	}
 
 	m1_secure_zero(&probe, sizeof(probe));
 
@@ -133,7 +152,7 @@ bool m1_rng_bytes(uint8_t *buf, size_t len)
 {
 	size_t off;
 
-	if (!g_m1_rng_ready || (buf == NULL))
+	if (!g_m1_rng_ready || g_m1_rng_failed || (buf == NULL))
 		return false;
 
 	for (off = 0u; off < len; off += sizeof(uint32_t))
@@ -148,10 +167,12 @@ bool m1_rng_bytes(uint8_t *buf, size_t len)
 		if (!m1_rng_hal_generate(&word))
 		{
 			/* Sticky refusal: zero the partial output, mark the
-			 * wrapper unusable, fail. No fallback, no retry loop
-			 * papering over a dead peripheral. */
+			 * wrapper unusable, latch the failure permanently,
+			 * fail. No fallback, no retry loop papering over a
+			 * dead peripheral, and no later init resurrection. */
 			m1_secure_zero(buf, len);
 			g_m1_rng_ready = false;
+			g_m1_rng_failed = true;
 			return false;
 		}
 

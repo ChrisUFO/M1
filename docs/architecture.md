@@ -358,8 +358,9 @@ consumer) are split into a pure core and one hardware-coupled wrapper:
 - *Ownership*: single-consumer by design — the WiFi credential path
   (the only planned user) runs in the UI task; the wrapper is not
   ISR-safe and callers serialize access.
-- *Failure semantics*: any RNG init or generate failure is sticky;
-  `m1_rng_bytes()` refuses forever after (partial output zeroized).
+- *Failure semantics*: any RNG init or generate failure latches
+  permanently; every later `m1_rng_init()`/`m1_rng_bytes()` call
+  refuses (partial output zeroized).
   There is no time-based or pseudo-random fallback anywhere in the
   tree (host suite pins the three decorative `rand()` sites — file
   name suffixes and synthetic NFC UIDs — which never touch keys or

@@ -196,9 +196,10 @@ void m1_system_init_task(void *param)
 			 * stage and BEFORE m1_tasks_init() creates any task that
 			 * could consume randomness (the WiFi credential path lands
 			 * in the PR-9/PR-11 follow-ups). Init failure is NOT fatal
-			 * to the device, but it IS fatal to crypto: the failure is
-			 * sticky inside m1_rng and every later m1_rng_bytes() call
-			 * refuses -- there is no time-based or pseudo-random
+			 * to the device, but it IS fatal to crypto: the failure
+			 * latches permanently inside m1_rng and every later
+			 * m1_rng_init()/m1_rng_bytes() call refuses -- there is
+			 * no time-based or pseudo-random
 			 * fallback anywhere. */
 			if (!m1_rng_init())
 				M1_LOG_E(M1_LOGDB_TAG,
