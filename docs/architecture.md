@@ -40,7 +40,7 @@ Buttons ─┐
 | LF RFID | `lfrfid/`, `m1_csrc/m1_rfid.c` | Protocol decode/emulation/write and UI |
 | Sub-GHz | `Sub_Ghz/`, `m1_csrc/m1_sub_ghz.c` | Radio control, capture, decode, replay |
 | Infrared | `Infrared/`, `m1_csrc/m1_infrared.c` | IR receive, decode, transmit, remote data |
-| ESP32 | `Esp_spi_at/`, `Esp32_serial_flasher/`, `m1_csrc/m1_esp32*` | Hosted SPI communication and ESP32 update |
+| ESP32 | `Esp_spi_at/`, `Esp32_serial_flasher/`, `m1_csrc/m1_esp32*`, `m1_csrc/m1_esp_feature_gate.c/.h` | Hosted SPI communication, ESP32 update, UART console session, and the live firmware feature gate (see "ESP32 co-processor interface") |
 | USB | `USB/`, `m1_csrc/m1_usb_cdc_msc.c` | CDC console/bridge and MSC storage |
 | Storage | `FatFs/`, `m1_csrc/m1_sdcard*`, `m1_csrc/m1_storage.c` | SD-card detection, mounting, file operations |
 | Crypto + HW RNG | `m1_csrc/m1_crypto.c`, `m1_csrc/m1_rng.c` | Soft AES-256/CBC/CMAC/UID-KDF primitives and the mandatory hardware RNG wrapper (see "Crypto and hardware RNG") |
@@ -370,6 +370,41 @@ consumer) are split into a pure core and one hardware-coupled wrapper:
   [security](security.md#wi-fi-credential-crypto-and-hardware-rng)
   for the honest limits (no secure element, no TLS, no SPI-link
   encryption, no side-channel hardening).
+
+## ESP32 co-processor interface
+
+The STM32 talks to the ESP32-C6 co-processor over two links, and the
+distinction matters for capability decisions:
+
+- *ESP32 UART console* — the session every shipped Wi-Fi/BT/capture
+  tool uses (`m1_csrc/m1_esp_uart_transport.c`: `esp32_uart_write()`
+  plus `esp32_uart_read_complete_prompt()` against the `">> "` prompt;
+  commands like `scan -a`, `list -s`, `mode -b`, `stop`). The console
+  firmware itself is maintained outside this repository.
+- *Persisted version record* — `m1_csrc/m1_esp_version.c` keeps "the
+  version the STM32 last installed on the ESP32" in RTC/TAMP backup
+  registers DR2/DR3 (VBAT domain) for the Web Manager's flash-skip
+  decision. The vendor SPI-AT master sources under `Esp_spi_at/`
+  (compiled TUs incl. `ctrl_api.h`'s control enums) exist in-tree but
+  no shipped application feature issues SPI control requests.
+
+*Feature gating* (issue #42/#11 prerequisite, PR-10): an ESP32-side
+feature (Wi-Fi join handler, BLE advertise command) may only run when
+the **live** ESP32 firmware answers for itself.
+`m1_csrc/m1_esp_feature_gate.c/.h` performs the live handshake at
+connect time — a bounded `"\r\n"` prompt ping, then the read-only
+`version` console verb, with the reply marker
+`ESPFW <major>.<minor>.<patch>.<rc>` as the shared contract with the
+external console firmware (until an image answers, the gate honestly
+reports ABSENT, which is a refusal, not a fault) — and normalizes the
+answer into four states against a per-feature minimum table:
+ABSENT (no live answer), OLDER, EQUIVALENT, NEWER. Only EQUIVALENT
+and NEWER may execute a gated feature (`esp_feature_gate_allows()`).
+The DR2/DR3 record is *never* trusted for a capability decision
+(VBAT-dependent and blind to external re-flashes); it is surfaced in
+the query result as diagnostics only (`cache_disagrees` makes a stale
+record visible), and the gate never writes it. Task-context only,
+caller owns the ESP32 session, no dynamic allocation.
 
 ## Infrared subsystem
 

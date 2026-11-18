@@ -11,6 +11,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: ESP32 feature-gate utility — live firmware handshake, four
+  states, per-feature minimums (PR-10 of the Merge 3 series; the
+  shared mechanism consumed by the future Wi-Fi join flow and BLE
+  advertisement editor, which carry no consumers yet by design) —
+  new `m1_csrc/m1_esp_feature_gate.c/.h`. Every gate decision comes
+  from a version the ESP32 reports over the shipped UART console
+  session RIGHT NOW: a bounded `"\r\n"` prompt ping, then the
+  read-only `version` console verb, reply parsed for the
+  `ESPFW <major>.<minor>.<patch>.<rc>` marker that the external ESP32
+  console firmware is expected to answer with (the vendor SPI-AT
+  `CTRL_REQ_GET_FW_VERSION` enum has no shipped requester and is
+  deliberately not used — no parallel protocol). The answer is
+  normalized into four states against a per-feature minimum-version
+  table (versions compared field-by-field, numerically, rc as a plain
+  fourth number): ABSENT (no live answer — console dead, round trip
+  failed, or no recognizable version; the honest unknown), OLDER,
+  EQUIVALENT, NEWER; only EQUIVALENT/NEWER may execute a gated
+  feature (`esp_feature_gate_allows()`), and each state/reason maps
+  to short user-facing diagnostics ("ESP not responding", "ESP link
+  failed", "ESP fw unknown", "ESP update required", "ESP fw
+  supported", "ESP fw newer"). The persisted DR2/DR3 record
+  (`m1cp_esp_version_get()`) is VBAT-dependent and describes what the
+  STM32 last installed, not what is running, so it NEVER gates: it is
+  reported in the query result as diagnostics only —
+  `cache_disagrees` makes a stale record visible when the live answer
+  disagrees — and the gate never writes it (the record's meaning
+  feeds the Web Manager's flash-skip decision). Both feature minimums
+  start at a version no shipped ESP32 image reports, so the gate
+  refuses until the paired firmware lands; PR-11 (join handler) and
+  PR-12 (advertise command) own their entries. Console-touching
+  operations sit behind a host-injectable seam (same technique as
+  `m1_rng.c`), no dynamic allocation, task-context contract documented
+  in the module header; inter-processor interface note added to
+  `docs/architecture.md`. Host suite
+  `m1_csrc/test/m1_esp_feature_gate_test.py` (real gate core + real
+  version record, simulated ESP32 console: version-compare vectors,
+  reply-parsing battery incl. garbled/embedded markers and negatives,
+  the full four-state query matrix, and the stale-cache battery — a
+  record claiming `{9,9,9,9}`/`{2,0,0,0}` never lifts a dead console
+  or an older/absent live answer, and a cleared record with current
+  live firmware still allows) plus 7 static source checks, wired into
+  `scripts/run_host_tests.sh`.
 - Fork: Wi-Fi credential encryption at rest on the saved-networks store
   (issue #42 part 2, PR-9 of the Merge 3 series) — `saved_networks.csv`
   rows gain an OPTIONAL 8th `credential` column carrying
