@@ -574,6 +574,7 @@ set(M1_APP_SOURCES
     ../../m1_csrc/m1_manager_fwupdate.c
     ../../m1_csrc/m1_manager_espupdate.c
     ../../m1_csrc/m1_esp_version.c
+    ../../m1_csrc/m1_esp_feature_gate.c
     ../../m1_csrc/m1_virtual_kb.c
     ../../m1_csrc/m1_watchdog.c
     ../../m1_csrc/m1_wifi.c
