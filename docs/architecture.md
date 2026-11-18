@@ -43,6 +43,7 @@ Buttons ─┐
 | ESP32 | `Esp_spi_at/`, `Esp32_serial_flasher/`, `m1_csrc/m1_esp32*` | Hosted SPI communication and ESP32 update |
 | USB | `USB/`, `m1_csrc/m1_usb_cdc_msc.c` | CDC console/bridge and MSC storage |
 | Storage | `FatFs/`, `m1_csrc/m1_sdcard*`, `m1_csrc/m1_storage.c` | SD-card detection, mounting, file operations |
+| Crypto + HW RNG | `m1_csrc/m1_crypto.c`, `m1_csrc/m1_rng.c` | Soft AES-256/CBC/CMAC/UID-KDF primitives and the mandatory hardware RNG wrapper (see "Crypto and hardware RNG") |
 | Third-party platform | `Drivers/`, `Middlewares/` | STM32 HAL, CMSIS, FreeRTOS, display libraries |
 
 ## Startup and runtime model
@@ -335,6 +336,39 @@ includes so the host suite compiles the real sources.
   HAL_RTC_SetTime/SetDate own calendar init-mode entry/exit; seconds
   restart at 00 (minute granularity) and the true weekday is computed
   and stored.
+
+## Crypto and hardware RNG
+
+Credential-protection primitives (issue #42, landed PR-8 before any
+consumer) are split into a pure core and one hardware-coupled wrapper:
+
+- `m1_csrc/m1_crypto.c/.h` — software AES-256 block/CBC (FIPS-197 /
+  SP 800-38A), AES-CMAC (RFC 4493 / SP 800-38B), a UID-based key
+  derivation (SP 800-108 KDF in CMAC mode, domain-separated for
+  WiFi credentials), constant-time tag compare, and
+  `m1_secure_zero()` (volatile stores + compiler barrier). No HAL,
+  FreeRTOS, or allocation: the host suite compiles the real sources
+  against NIST/RFC/CAVP known-answer vectors.
+- `m1_csrc/m1_rng.c/.h` — the mandatory STM32H5 hardware RNG wrapper.
+  Kernel clock HSI48, selected in `HAL_RNG_MspInit()`
+  (`Core/Src/stm32h5xx_hal_msp.c`); initialized once from
+  `m1_system_init_task()` after SD/settings and before
+  `m1_tasks_init()`, with one generate probe.
+
+- *Ownership*: single-consumer by design — the WiFi credential path
+  (the only planned user) runs in the UI task; the wrapper is not
+  ISR-safe and callers serialize access.
+- *Failure semantics*: any RNG init or generate failure is sticky;
+  `m1_rng_bytes()` refuses forever after (partial output zeroized).
+  There is no time-based or pseudo-random fallback anywhere in the
+  tree (host suite pins the three decorative `rand()` sites — file
+  name suffixes and synthetic NFC UIDs — which never touch keys or
+  IVs).
+- *Threat model*: the UID-derived key hides credentials from
+  removed-SD-card casual reading only; see
+  [security](security.md#wi-fi-credential-crypto-and-hardware-rng)
+  for the honest limits (no secure element, no TLS, no SPI-link
+  encryption, no side-channel hardening).
 
 ## Infrared subsystem
 

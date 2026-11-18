@@ -32,6 +32,44 @@ All external and removable-media input must be treated as untrusted.
 | Version and region checks | Update result codes and metadata | Policy hooks exist; exact enforced policy needs tests |
 | FreeRTOS stack/malloc hooks | Fatal hooks in `m1_tasks.c` | Fail-stop behavior; not memory isolation |
 | Bus mutexes | I2C, RF SPI, logging and subsystem locks | Protects concurrency when consistently used |
+| Wi-Fi credential crypto | Soft AES-256-CBC + AES-CMAC over a UID-derived key (`m1_csrc/m1_crypto.c`), HW RNG for IVs (`m1_csrc/m1_rng.c`) | At-rest hiding from removed-SD-card reading; **not** secrecy against a physical attacker — see below |
+
+## Wi-Fi credential crypto and hardware RNG
+
+Issue #42 (part 1, PR-8) introduces the primitive layer; the CSV field
+that uses it lands in a follow-up. The security posture, stated
+plainly:
+
+**What is protected.** Wi-Fi credentials written to the SD card are
+encrypted (AES-256-CBC) and authenticated (AES-CMAC, RFC 4493) under a
+key derived from the STM32H5 96-bit UID (SP 800-108 KDF in CMAC mode,
+domain-separated). Someone who picks up the SD card — or images it —
+cannot read the PSK without also having the device.
+
+**What is NOT protected — the honesty list.**
+
+- The UID is readable by any SWD debugger and by arbitrary code
+  execution on the device. Anyone with the device *and* the card can
+  re-derive the key. This is **key hiding, not secrecy against a
+  physical attacker**; there is no secure element on this hardware.
+- The soft AES implementation is not side-channel hardened (straight
+  table lookups; only the CMAC tag comparison is constant-time).
+- The STM32↔ESP32 SPI link carries the plaintext PSK during a join;
+  SPI-link encryption is out of scope.
+- No TLS, no 802.1X enterprise support, no credential roaming.
+
+**Hardware RNG is mandatory.** IVs come only from the STM32H5 RNG
+peripheral (HSI48 kernel clock, brought up at boot before any
+consumer). On any init or generate failure the wrapper refuses
+permanently — the crypto path fails closed. There is no time-based or
+pseudo-random fallback anywhere in the tree; the host suite pins the
+three pre-existing decorative `srand(HAL_GetTick())`/`rand()` sites
+(saved-file name suffixes and synthetic NFC tag UIDs) as the complete
+tolerated set — none of them produce keys or IVs.
+
+**Out of scope (tracked as non-goals for this series):** secure
+element or hardware key storage, TLS, SPI-link encryption, and
+side-channel hardening.
 
 ## Unverified or undocumented claims
 
@@ -51,6 +89,9 @@ explicitly accepted risk.
 4. Are SWD and other debug interfaces disabled or access-controlled in
    production?
 5. What secrets or personal data can exist on the SD card or ESP32?
+   (Wi-Fi credentials: see "Wi-Fi credential crypto and hardware RNG"
+   above — encrypted at rest under a UID-derived key with an explicit
+   physical-attacker limit.)
 6. How are Wi-Fi credentials stored, cleared, and protected?
 7. What is the trust model for ESP32 firmware and its update binary?
 8. What parser fuzzing or malformed-input testing covers radio and storage
