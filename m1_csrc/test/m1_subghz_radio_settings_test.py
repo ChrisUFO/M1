@@ -12,9 +12,11 @@ no mocks of the code under test):
    MODEM_FREQ_DEV words, modulation/bandwidth lookups, and the screen's
    stepping/clamping/row-model logic.
 2. Provenance layer: parses the REAL WDS-generated headers under
-   Sub_Ghz/radio_config/ and asserts the bandwidth preset table bytes and
-   the two FSK deviation anchor words EQUAL what those headers emit --
-   the table cannot silently drift from its sources.
+   Sub_Ghz/radio_config/ and asserts the bandwidth preset table bytes,
+   the two FSK deviation anchor words, and the per-band
+   MODEM_CLKGEN_BAND byte EQUAL what those headers emit (the last also
+   cross-bound to radio_band_outdiv[]) -- the tables cannot silently
+   drift from their sources.
 3. Static layer: reads the real sources and verifies the wiring seams --
    the override hook is invoked in BOTH opmode setters after the preset
    load/tune and before the radio enters RX/TX (re-application ordering),
@@ -157,6 +159,17 @@ def parse_fsk_dev_word(path):
     return (chunk[10] << 16) | (chunk[11] << 8) | dev0[0]
 
 
+def parse_clkgen_band(path):
+    """MODEM_CLKGEN_BAND byte from a WDS header: property 0x20/0x51 rides
+    as the second (and last) payload byte of the MODEM_RAW_SEARCH2_2
+    property command (start ID 0x50 -> RAW_SEARCH2, 0x51 -> BAND)."""
+    t = source(path)
+    pfx = re.findall(r"#define\s+(RF_[A-Z0-9_]+)_MODEM_RAW_SEARCH2_2", t)[0]
+    vals = hex_define_values(t, pfx + "_MODEM_RAW_SEARCH2_2")
+    assert len(vals) == 2, f"{path}: expected RAW_SEARCH2+CLKGEN_BAND pair"
+    return vals[1]
+
+
 BW_HEADERS = {
     10: "Sub_Ghz/radio_config/si4463_revc2_433_075_rxtx_spacing25_bw10_baud4_8_error1_10_OOK.h",
     100: "Sub_Ghz/radio_config/si4463_revc2_433_92_rxtx_spacing250_bw100_baud10_error1_10_OOK.h",
@@ -173,6 +186,57 @@ FSK_HEADERS = {
         4,
     ): "Sub_Ghz/radio_config/m1_sub_ghz_915_rxtx_spc25_bwauto_baud106_dev200_e1_10_fsk.h",
 }
+
+# Per-band WDS base headers in RadioConfigList / S_M1_SubGHz_Band order.
+# RadioConfigList indices 6/7 deliberately load the 433.920/434.059
+# configurations in swapped order (reordered upstream), so the binding
+# below follows the header each band index ACTUALLY loads.
+BAND_HEADERS = [
+    (
+        "300",
+        "Sub_Ghz/radio_config/si4463_revc2_300_rxtx_spacing250_bw200_baud10_error1_10_OOK.h",
+    ),
+    (
+        "310",
+        "Sub_Ghz/radio_config/si4463_revc2_310_rxtx_spacing250_bw100_baud10_error1_10_OOK.h",
+    ),
+    (
+        "315",
+        "Sub_Ghz/radio_config/si4463_revc2_315_rxtx_spacing250_bw100_baud10_error1_10_OOK.h",
+    ),
+    (
+        "345",
+        "Sub_Ghz/radio_config/si4463_revc2_345_rxtx_spacing250_bw100_baud10_error1_10_OOK.h",
+    ),
+    (
+        "372",
+        "Sub_Ghz/radio_config/si4463_revc2_372_rxtx_spacing250_bw200_baud10_error1_10_OOK.h",
+    ),
+    (
+        "390",
+        "Sub_Ghz/radio_config/si4463_revc2_390_rxtx_spacing250_bw100_baud10_error1_10_OOK.h",
+    ),
+    (
+        "433 (loads 433.920 cfg)",
+        "Sub_Ghz/radio_config/si4463_revc2_433_92_rxtx_spacing250_bw100_baud10_error1_10_OOK.h",
+    ),
+    (
+        "433.920 (loads 434.059 cfg)",
+        "Sub_Ghz/radio_config/si4463_revc2_433_rxtx_spacing250_bw200_baud10_error1_10_OOK.h",
+    ),
+    (
+        "915",
+        "Sub_Ghz/radio_config/m1_sub_ghz_915_rxtx_spc25_bwauto_baud106_dev200_e1_10_fsk.h",
+    ),
+]
+
+# MODEM_CLKGEN_BAND byte -> PLL outdiv, per the consecutive BAND enum
+# {4,6,8,12,16} -> {0x08..0x0C} encoding documented in m1_sub_ghz_api.c.
+# The 0x09->6 meaning itself remains flagged for hardware acceptance
+# (follow-up #80); the suite pins that radio_band_outdiv[] matches the
+# bytes the repo's headers actually emit, so neither the table nor a
+# regenerated header can drift silently.
+CLKGEN_BAND_TO_OUTDIV = {0x08: 4, 0x09: 6, 0x0A: 8, 0x0B: 12}
 
 
 # --------------------------------------------------------------------------
@@ -557,6 +621,37 @@ def static_layer():
         "SI446x_Apply_Modem_Config" in api_c and "SI446X_GROUP_CHFLT" in api_c,
         "apply implementation present in the driver",
     )
+
+    # radio_band_outdiv[] vs the WDS headers' own MODEM_CLKGEN_BAND bytes
+    # (property 0x20/0x51, the second payload byte of MODEM_RAW_SEARCH2_2):
+    # the per-band outdiv must equal the encoding of the byte emitted by
+    # the header that band index actually loads (RadioConfigList order --
+    # indices 6/7 load the 433.920/434.059 headers swapped). Converts the
+    # chain's single inferred constant (0x09 -> outdiv 6, on which every
+    # 345/372/390 MHz deviation encoding scales) from a code comment into
+    # test-pinned evidence and catches drift if anyone regenerates a
+    # radio_config/ header or edits the table.
+    m_tbl = re.search(
+        r"static const uint8_t radio_band_outdiv\[SUB_GHZ_BAND_EOL\]\s*=\s*\{([^}]*)\}",
+        api_c,
+        re.S,
+    )
+    CHECK(m_tbl is not None, "radio_band_outdiv table found in the driver source")
+    if m_tbl:
+        tbl_body = re.sub(r"/\*.*?\*/", " ", m_tbl.group(1), flags=re.S)
+        outdiv_tbl = [int(tok) for tok in tbl_body.split(",") if tok.strip()]
+        CHECK(len(outdiv_tbl) == 9, "outdiv table covers all 9 bands")
+        for idx, (band, path) in enumerate(BAND_HEADERS):
+            byte = parse_clkgen_band(path)
+            CHECK(
+                byte in CLKGEN_BAND_TO_OUTDIV,
+                f"band {band}: header MODEM_CLKGEN_BAND 0x{byte:02X} is a known BAND encoding",
+            )
+            if idx < len(outdiv_tbl):
+                CHECK(
+                    outdiv_tbl[idx] == CLKGEN_BAND_TO_OUTDIV[byte],
+                    f"band {band}: outdiv {outdiv_tbl[idx]} == encoding of header byte 0x{byte:02X}",
+                )
 
     # Region-gate decision mirror (same technique as the tx-region test):
     # bounds MUST equal the SUBGHZ_FCC_ISM_BAND_* macros in m1_sub_ghz.c,

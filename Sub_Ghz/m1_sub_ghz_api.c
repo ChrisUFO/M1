@@ -131,7 +131,11 @@ static uint8_t radio_mod_type = MODEM_MOD_TYPE_OOK;
  * deviation words in the repo's WDS FSK headers and radio_tune_exact_hz();
  * the 0x09 encoding used by the 345/372/390 MHz headers is mapped to
  * outdiv 6 per the consecutive BAND enum {4,6,8,12,16} -> {0x08..0x0C}
- * (inferred - flagged for hardware acceptance in the deviation path). */
+ * (inferred - flagged for hardware acceptance in the deviation path).
+ * This table is host-test-bound to the MODEM_CLKGEN_BAND bytes those
+ * headers emit for every band (m1_csrc/test/
+ * m1_subghz_radio_settings_test.py), so neither an edited table nor a
+ * regenerated radio_config/ header can drift past the suite. */
 static uint32_t radio_last_outdiv = 0;
 static const uint8_t radio_band_outdiv[SUB_GHZ_BAND_EOL] =
 {

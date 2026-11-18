@@ -36,11 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (copied verbatim, host-test-bound to the headers; nominal achieved
   widths 10.75/109.93/219.87 kHz), the deviation encoding is verified
   against the repo's WDS FSK headers (2 kHz→0x000083 @outdiv 8,
-  200 kHz→0x00199A @outdiv 4), and the dBm→PA map is a documented
-  NOMINAL linear-in-code approximation anchored at 0x7F≡+20 dBm —
+  200 kHz→0x00199A @outdiv 4), the per-band outdiv table is bound to
+  the base headers' own MODEM_CLKGEN_BAND bytes for all nine bands
+  (0x0B→12, 0x09→6, 0x0A→8, 0x08→4 — pinning the previously inferred
+  0x09→6 as header-consistent evidence), and the dBm→PA map is a
+  documented NOMINAL linear-in-code approximation anchored at
+  0x7F≡+20 dBm —
   absolute power accuracy is deferred to hardware acceptance (follow-up
   issue). New host suite
-  `m1_csrc/test/m1_subghz_radio_settings_test.py` (98 checks: compiled
+  `m1_csrc/test/m1_subghz_radio_settings_test.py` (118 checks: compiled
   pure cores for the driver/screen decision logic, WDS-header provenance
   binding, override-ordering/region-gate/no-ISR static seams, menu and
   store-default wiring), wired into `scripts/run_host_tests.sh`;
