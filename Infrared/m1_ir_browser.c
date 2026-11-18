@@ -109,8 +109,7 @@ typedef struct
 /*============================================================================*/
 static void m1_irb_win_move(S_M1_IRB_Win_t *w, uint16_t count, int16_t delta)
 {
-	int32_t sel;
-	uint32_t max_top;
+	int32_t sel, max_top;
 
 	if ( (w == NULL) || (count == 0u) )
 		return;
@@ -121,15 +120,16 @@ static void m1_irb_win_move(S_M1_IRB_Win_t *w, uint16_t count, int16_t delta)
 		sel = (int32_t)count - 1;
 	w->sel = (uint16_t)sel;
 
-	if ( w->sel < w->top )
+	if ( (int32_t)w->sel < (int32_t)w->top )
 		w->top = w->sel;
-	if ( (uint32_t)(w->sel - w->top) >= (uint32_t)M1_IR_BROWSER_ROWS )
+	if ( (int32_t)(w->sel - w->top) >= M1_IR_BROWSER_ROWS )
 		w->top = (uint16_t)(w->sel - M1_IR_BROWSER_ROWS + 1u);
-	if ( (uint32_t)(count - w->top) < (uint32_t)M1_IR_BROWSER_ROWS )
-	{
-		max_top = (uint32_t)count - M1_IR_BROWSER_ROWS;
-		w->top = (max_top > 0u) ? (uint16_t)max_top : 0u;
-	}
+	max_top = (int32_t)count - M1_IR_BROWSER_ROWS; /* signed: no underflow
+													* when count < ROWS */
+	if ( max_top < 0 )
+		max_top = 0;
+	if ( (int32_t)w->top > max_top )
+		w->top = (uint16_t)max_top;
 } // static void m1_irb_win_move(...)
 
 /*============================================================================*/
