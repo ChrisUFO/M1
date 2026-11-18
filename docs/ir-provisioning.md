@@ -73,6 +73,9 @@ is simply not scanned — nothing past a bound is read.
 - **Category without `.ir` files:** a notice; BACK returns to the category
   list.
 - **Unreadable file:** a notice; the browser stays on the device list.
+- **Empty raw signal:** a `.ir` entry whose raw `data:` line carries no samples
+  (or a count the transmitter could not play safely) is refused with an
+  "Empty raw signal" notice — a bare pause is never transmitted.
 - **Unknown protocol names inside a `.ir` file** (strict-skip): the affected
   buttons are skipped — never transmitted as garbage — and one aggregated
   notice names the count and the first offending protocol after the file is

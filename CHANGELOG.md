@@ -27,18 +27,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   where, unreadable files and unsupported signals map to plain notices,
   scan limits surface as a `+` truncation marker in the list title, and
   unknown-protocol blocks strict-skip into one aggregated notice per file
-  (via the PR-4 hook), never a garbage transmit. The IR subsystem is now
+  (via the PR-4 hook), never a garbage transmit. Raw playback is gated on
+  the loaded tick count: an empty or zero-sample `data:` line, a
+  bare-leading-pause count or any even count (the loader edge cases
+  tracked in issue #74), and a parsed block claiming `protocol: raw` are
+  all refused with an error notice before the payload is published — a
+  bare pause or polarity-flipped frame can never be transmitted. The IR
+  subsystem is now
   formally single-owner: a module-level busy guard
   (`m1_ir_subsys_acquire/release`) is held by learn, saved-remote replay,
   the universal remotes, the browser session and the CLI transmit test, so
   no two IR functions can overlap (the guard is what extends the UI-task
   serialization to the CLI task). Static workspaces only — no dynamic
   allocation in screen loops. Host suite
-  `m1_csrc/test/m1_ir_browser_test.py` (51 checks): compiled pure-core
-  pagination/search/classification/label/notice math plus static seams for
-  the menu wiring, the guard on every entry point, the empty-library hint
-  and the loader hookup. Favorites/recent and the explicit "cycle all in
-  category" submenu action are deliberately left for the next unit.
+  `m1_csrc/test/m1_ir_browser_test.py` (56 checks): compiled pure-core
+  pagination/search/classification/label/notice math, a second harness
+  compiling the REAL PR-4 loader + protocol map to prove the empty-data-line
+  raw blocks land on the non-transmittable side of the TX gate, plus static
+  seams for the menu wiring, the guard on every entry point, the
+  empty-library hint and the loader hookup. Favorites/recent and the
+  explicit "cycle all in category" submenu action are deliberately left
+  for the next unit.
 - Fork: IR data layer — streaming `.ir` loader, strict-skip policy and an
   IRMP golden-decode regression suite (issue #43 part 1; no user-visible UX
   yet, the browser lands in the next units). The protocol table in

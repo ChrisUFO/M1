@@ -10,15 +10,22 @@ mocks of the code under test):
    follow), .ir device-file classification (the scan-entry type mapping
    behind category/device lists), case-insensitive search matching,
    display-name derivation (relative path kept, ".ir" stripped, truncation),
-   bounded path joins, and the aggregated strict-skip notice lines.
+   bounded path joins, and the aggregated strict-skip notice lines. A
+   second harness compiles the REAL PR-4 loader core + protocol map with
+   the browser core and feeds in-memory .ir blocks through the full
+   browser TX-side decision: empty and spaces-only raw "data:" lines
+   (zero real samples, issue #74) must land on the non-transmittable side
+   of the raw gate while a real raw signal stays transmittable.
 2. Static layer: reads the actual source files and verifies the wiring
    seams -- the Infrared menu entry (browser leaf record, parent count 5,
    the four upstream category entries intact), the single-owner IRMP busy
    guard (declared in m1_infrared.h, defined with a critical-section
    test-and-set, acquired/released on every IR entry point: learn,
    saved-remote replay, universal remotes, the browser session, and the
-   CLI mtest transmit), the empty-library hint screen, and the aggregated
-   strict-skip hook passed to the PR-4 loader.
+   CLI mtest transmit), the empty-library hint screen, the aggregated
+   strict-skip hook passed to the PR-4 loader, and the raw playback gate
+   (odd/non-empty tick count checked before the payload is published;
+   "protocol: raw" on a parsed block refused).
 
 Usage: python3 m1_csrc/test/m1_ir_browser_test.py
 """
@@ -73,16 +80,20 @@ CC = host_cc()
 SANITIZERS = ["-fsanitize=address,undefined"]
 
 
-def compile_run(tmp, name, code):
+def compile_run(tmp, name, code, includes=None):
     """Compile+run a generated TU. Sanitizers when the toolchain has the
     runtime (CI); plain build otherwise (some MinGW hosts)."""
     src = Path(tmp) / f"{name}.c"
     src.write_text(code)
     exe = Path(tmp) / name
+    inc = []
+    for d in includes or []:
+        inc += ["-I", str(d)]
     for extra in (SANITIZERS, []):
         cmd = (
             [CC, "-std=c11", "-Wall", "-Wextra", "-Wno-unused-function", "-g"]
             + extra
+            + inc
             + [str(src), "-o", str(exe)]
         )
         r = subprocess.run(cmd, capture_output=True, text=True)
@@ -101,6 +112,40 @@ def define_of(text, name):
     m = re.search(rf"#define\s+{name}\s+(\d+)", text)
     assert m, f"{name} not found"
     return int(m.group(1))
+
+
+# Extraction markers + constants for the REAL PR-4 loader core and protocol
+# map (same technique as m1_ir_file_test.py), used by the raw-gate
+# integration test below.
+IR_FILE_BEGIN = (
+    "/* ===================== M1_IR_FILE_PURE_CORE_BEGIN ===================== */"
+)
+IR_FILE_END = (
+    "/* ====================== M1_IR_FILE_PURE_CORE_END ====================== */"
+)
+MAP_BEGIN = (
+    "/* ===================== IR_PROTOCOL_MAP_PURE_BEGIN ===================== */"
+)
+MAP_END = "/* ====================== IR_PROTOCOL_MAP_PURE_END ====================== */"
+
+IRMP_CONSTANTS = """
+#define IRMP_UNKNOWN_PROTOCOL 0
+#define IRMP_SIRCS_PROTOCOL 1
+#define IRMP_NEC_PROTOCOL 2
+#define IRMP_SAMSUNG_PROTOCOL 3
+#define IRMP_KASEIKYO_PROTOCOL 4
+#define IRMP_RC5_PROTOCOL 5
+#define IRMP_RC6_PROTOCOL 6
+#define IRMP_SAMSUNG32_PROTOCOL 7
+#define IRMP_NEC42_PROTOCOL 8
+#define IRMP_NEC8_PROTOCOL 9
+#define IRMP_RCA_PROTOCOL 10
+#define IRMP_PIONEER_PROTOCOL 11
+#define IRMP_SIRCS15_PROTOCOL 12
+#define IRMP_SIRCS20_PROTOCOL 13
+#define IRMP_RC5X_PROTOCOL 14
+#define IRMP_RAW_PROTOCOL 15
+"""
 
 
 def pure_core_tests():
@@ -242,6 +287,16 @@ def pure_core_tests():
             m1_irb_skip_add(NULL, "x");               /* no crash */
         }
 
+        /* ---- raw transmittability gate (issue #74 consumer side) ---- */
+        assert(m1_irb_raw_tx_ok(0) == 0);             /* no ticks at all */
+        assert(m1_irb_raw_tx_ok(1) == 0);             /* bare leading pause */
+        assert(m1_irb_raw_tx_ok(2) == 0);             /* even: polarity hazard */
+        assert(m1_irb_raw_tx_ok(3) == 1);             /* pause + mark + space */
+        assert(m1_irb_raw_tx_ok(4) == 0);
+        assert(m1_irb_raw_tx_ok(5) == 1);
+        assert(m1_irb_raw_tx_ok(65534) == 0);
+        assert(m1_irb_raw_tx_ok(65535) == 1);
+
         puts("pure-core ok");
         return 0;
     }
@@ -251,6 +306,113 @@ def pure_core_tests():
     out = compile_run(tempfile.gettempdir(), "m1_ir_browser_core", harness)
     CHECK("pure-core ok" in out, "pure core harness ran to completion")
     CHECK("FAIL" not in out, "no pure-core case failed (see assert output)")
+
+
+def raw_gate_integration_tests():
+    """Layer 1b: the REAL PR-4 loader feeding the browser raw gate. The
+    loader's empty/zero-sample data-line results (issue #74) must land on
+    the non-transmittable side of m1_irb_raw_tx_ok, and a real raw signal
+    must not be over-refused."""
+    browser = source("Infrared/m1_ir_browser.c")
+    ir_file = source("Infrared/m1_ir_file.c")
+    remotes = source("Infrared/m1_ir_remotes.c")
+
+    core = region(
+        browser,
+        "/* ===================== M1_IR_BROWSER_PURE_CORE_BEGIN ===================== */",
+        "/* ====================== M1_IR_BROWSER_PURE_CORE_END ====================== */",
+    )
+    loader = region(ir_file, IR_FILE_BEGIN, IR_FILE_END)
+    pmap = region(remotes, MAP_BEGIN, MAP_END)
+
+    harness = (
+        "#include <stdint.h>\n"
+        "#include <stddef.h>\n"
+        "#include <stdio.h>\n"
+        "#include <string.h>\n"
+        "#include <assert.h>\n"
+        '#include "m1_ir_file.h"\n'
+        '#include "m1_ir_browser.h"\n'
+        + IRMP_CONSTANTS
+        + "typedef struct { const char *protocol_name; uint8_t protocol_number; } "
+        "S_M1_IR_Protocol_Mapping_t;\n"
+        + pmap
+        + "\n"
+        + loader
+        + "\n"
+        + core
+        + """
+    typedef struct { const char *p; size_t left; } str_io_t;
+
+    static int32_t str_read(void *ctx, char *dst, int32_t len)
+    {
+        str_io_t *s = (str_io_t *)ctx;
+        int32_t n = 0;
+        while ( (n < len) && (s->left > 0) )
+        {
+            dst[n] = s->p[n];
+            n++;
+            s->left--;
+        }
+        return n;
+    }
+
+    /* Full browser-TX-side decision for one in-memory raw block: load it
+     * exactly like irb_transmit does (stale-index name guard included),
+     * then apply the browser gate. */
+    static int browser_raw_transmittable(const char *text, const char *name)
+    {
+        S_M1_IR_File_Signal_t sig;
+        static uint16_t ticks[4096];
+        str_io_t io = { text, strlen(text) };
+        int32_t got = m1_ir_file_parse_signal(str_read, &io, name, &sig,
+                                              ticks, 4096);
+        if ( got != 0 )
+            return -1;                    /* loader refused */
+        if ( !(sig.flags & M1_IR_FILE_FLAG_RAW) )
+            return -2;                    /* not a raw block at all */
+        return (int)m1_irb_raw_tx_ok(sig.raw_count);
+    }
+
+    int main(void)
+    {
+        int r;
+
+        /* empty data line: zero real samples -> NOT transmittable */
+        r = browser_raw_transmittable(
+            "Filetype: IR signals file\\r\\nVersion: 1\\r\\n"
+            "name: Ghost\\r\\ntype: raw\\r\\nfrequency: 38000\\r\\n"
+            "data:\\r\\n", "Ghost");
+        assert(r == 0);
+
+        /* spaces-only data line: same refusal */
+        r = browser_raw_transmittable(
+            "Filetype: IR signals file\\r\\nVersion: 1\\r\\n"
+            "name: Ghost\\r\\ntype: raw\\r\\n"
+            "data:   \\r\\n", "Ghost");
+        assert(r == 0);
+
+        /* real raw signal: pause + samples -> transmittable */
+        r = browser_raw_transmittable(
+            "Filetype: IR signals file\\r\\nVersion: 1\\r\\n"
+            "name: Power\\r\\ntype: raw\\r\\nfrequency: 38000\\r\\n"
+            "data: 175 7436 179 4913 175 600\\r\\n", "Power");
+        assert(r == 1);
+
+        puts("raw-gate ok");
+        return 0;
+    }
+    """
+    )
+
+    out = compile_run(
+        tempfile.gettempdir(),
+        "m1_ir_browser_raw_gate",
+        harness,
+        includes=[ROOT / "Infrared"],
+    )
+    CHECK("raw-gate ok" in out, "raw-gate integration harness ran to completion")
+    CHECK("FAIL" not in out, "no raw-gate case failed (see assert output)")
 
 
 def static_seam_tests():
@@ -475,9 +637,31 @@ def static_seam_tests():
         "browser data access goes through the PR-4 streaming loader",
     )
 
+    # --- raw playback gate (issue #74 consumer side)
+    tx = fn_body(
+        browser,
+        "static uint8_t irb_transmit(const char *path, uint16_t entry_idx)\n{",
+        "} // static uint8_t irb_transmit(",
+    )
+    CHECK(
+        "if ( !m1_irb_raw_tx_ok(sig.raw_count) )" in tx
+        and tx.index("m1_irb_raw_tx_ok(sig.raw_count)")
+        < tx.index("ir_universal_payload.rawdata_counter = sig.raw_count"),
+        "raw payload is published only after the odd/non-empty tick-count gate",
+    )
+    CHECK(
+        "proto_no == IRMP_RAW_PROTOCOL" in tx,
+        '"protocol: raw" on a parsed block is refused (no timings to play)',
+    )
+    CHECK(
+        'irb_notice("Empty raw signal", "Nothing to send"' in browser,
+        "empty raw signal maps to a plain error notice",
+    )
+
 
 def main():
     pure_core_tests()
+    raw_gate_integration_tests()
     static_seam_tests()
     print(f"\n{PASSED} passed, {FAILED} failed")
     if FAILED:

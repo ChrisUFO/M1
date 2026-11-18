@@ -23,7 +23,11 @@
 * signal is published into ir_universal_payload exactly as the upstream
 * universal remotes do, then irsnd_generate_tx_data() + infrared_transmit()
 * play it. Raw blocks stream into the module-static tick buffer through
-* m1_ir_file_signal_load(); nothing here allocates at run time.
+* m1_ir_file_signal_load(); nothing here allocates at run time. A raw
+* signal only transmits when its tick count is odd and longer than the
+* lone leading pause -- empty/zero-sample data lines, bare-pause counts
+* and even counts (the loader edge cases tracked in issue #74) surface
+* as an error notice instead.
 *
 * See m1_ir_browser.h for the ownership rule and the 0:/IR SD convention;
 * docs/ir-provisioning.md documents the side-load steps.
@@ -383,6 +387,24 @@ static uint8_t m1_irb_skip_lines(const S_M1_IRB_SkipAcc_t *acc, char *l1, uint8_
 	}
 	return 1;
 } // static uint8_t m1_irb_skip_lines(...)
+/*============================================================================*/
+/**
+  * @brief  Is a raw tick count transmittable? The OTA raw path keys its
+  *         mark/space polarity off an ODD count that starts with the
+  *         leading pause, so a real signal is odd AND longer than the
+  *         lone pause. The loader's empty/zero-sample data-line results
+  *         (raw_count == 0, the bare leading pause, or an even count --
+  *         issue #74) must never reach the transmitter: they would play
+  *         a bare pause or flip the polarity of every following frame.
+  */
+/*============================================================================*/
+#define M1_IRB_TX_ERR_EMPTY_RAW	0x80u /* browser-local code, outside the
+										* S_M1_IR_File_Error_t range */
+
+static uint8_t m1_irb_raw_tx_ok(uint16_t raw_count)
+{
+	return (uint8_t)((raw_count >= 3u) && ((raw_count & 0x01u) != 0u));
+} // static uint8_t m1_irb_raw_tx_ok(uint16_t raw_count)
 /* ====================== M1_IR_BROWSER_PURE_CORE_END ====================== */
 
 /**************************** V A R I A B L E S ******************************/
@@ -897,6 +919,9 @@ static uint8_t irb_transmit(const char *path, uint16_t entry_idx)
 
 	if ( sig.flags & M1_IR_FILE_FLAG_RAW )
 	{
+		if ( !m1_irb_raw_tx_ok(sig.raw_count) ) /* empty/zero-sample raw block
+												* (issue #74): never transmit */
+			return M1_IRB_TX_ERR_EMPTY_RAW;
 		ir_universal_payload.ir_data_type = IR_DATATYPE_RAW;
 		ir_universal_payload.rawdata_counter = sig.raw_count;
 		ir_universal_payload.pprawdata = sig.raw_ticks;
@@ -907,6 +932,9 @@ static uint8_t irb_transmit(const char *path, uint16_t entry_idx)
 	{
 		if ( ir_protocol_map_lookup(sig.protocol_name, &proto_no) )
 			return (uint8_t)M1_IR_FILE_ERR_UNKNOWN_PROTOCOL; /* strict-skip held at load too */
+		if ( proto_no == IRMP_RAW_PROTOCOL )
+			return M1_IRB_TX_ERR_EMPTY_RAW; /* "protocol: raw" on a parsed block carries
+											* no timings (issue #74): raw_count == 0 */
 		ir_universal_payload.ir_data_type = IR_DATATYPE_PARSED;
 		ir_universal_payload.pprotocol = (uint8_t *)sig.protocol_name;
 		ir_universal_payload.address = sig.address;
@@ -1254,7 +1282,9 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 			if ( tx_err )
 			{
 				m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
-				switch ( (S_M1_IR_File_Error_t)tx_err )
+				/* switch on the raw code: it mixes S_M1_IR_File_Error_t
+				 * values with the browser-local M1_IRB_TX_ERR_EMPTY_RAW */
+				switch ( tx_err )
 				{
 					case M1_IR_FILE_ERR_IO:
 						irb_notice("Can't read file", "Check SD card", M1_IRB_NOTICE_MS_DEFAULT);
@@ -1264,6 +1294,9 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 						break;
 					case M1_IR_FILE_ERR_RAW_OVERFLOW:
 						irb_notice("Raw signal", "too long", M1_IRB_NOTICE_MS_DEFAULT);
+						break;
+					case M1_IRB_TX_ERR_EMPTY_RAW:
+						irb_notice("Empty raw signal", "Nothing to send", M1_IRB_NOTICE_MS_DEFAULT);
 						break;
 					case M1_IR_FILE_ERR_UNKNOWN_PROTOCOL:
 						irb_notice("Unsupported", "protocol skipped", M1_IRB_NOTICE_MS_DEFAULT);
