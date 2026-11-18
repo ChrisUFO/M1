@@ -441,6 +441,14 @@ S_M1_Menu_t menu_Wifi_Networks =
     "Networks", wifi_scan_networks, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
+/* Join Network (issue #42): leaf tool -- saved-network and scan-result
+ * pickers, masked PSK entry, gated console join, encrypted save, and the
+ * once-per-boot reconnect hook (menu_wifi_init). */
+S_M1_Menu_t menu_Wifi_Join =
+{
+    "Join Network", wifi_join_network, NULL, NULL, 0, 0, NULL, NULL, {NULL}
+};
+
 S_M1_Menu_t menu_Wifi_Deauth =
 {
     "Deauth Client", wifi_deauth_client, NULL, NULL, 0, 0, NULL, NULL, {NULL}
@@ -472,9 +480,9 @@ S_M1_Menu_t menu_Capture_Network =
  * (m1_gui_submenu_update). MonstaShark is third in the Wi-Fi menu. */
 S_M1_Menu_t menu_Wifi =
 {
-    "Wi-Fi", menu_wifi_init, menu_wifi_exit, NULL, 6, 0, menu_m1_icon_wifi, NULL,
-    {&menu_Wifi_Networks, &menu_Wifi_Deauth, &menu_Capture_Network, &menu_Wifi_Handshake,
-     &menu_Wifi_Beacon, &menu_Wifi_Survey}
+    "Wi-Fi", menu_wifi_init, menu_wifi_exit, NULL, 7, 0, menu_m1_icon_wifi, NULL,
+    {&menu_Wifi_Networks, &menu_Wifi_Join, &menu_Wifi_Deauth, &menu_Capture_Network,
+     &menu_Wifi_Handshake, &menu_Wifi_Beacon, &menu_Wifi_Survey}
 };
 
 /*------------------------------ > Bluetooth ---------------------------------*/

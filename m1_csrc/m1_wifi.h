@@ -36,6 +36,20 @@ void wifi_saved_browser(void);
 void wifi_config(void);
 uint8_t wifi_ap_sta_scan_list(ctrl_cmd_t *app_req, uint8_t target);
 
+/* Wi-Fi join flow (PR-11, PLAN section 14; issue #42 completion).
+ *
+ * wifi_join_network: the Wi-Fi -> Join Network leaf -- pick a network from
+ * a live scan or the saved store, enter/reuse a PSK (masked editor /
+ * encrypted store), join through the gated console verb, and seal the
+ * credential into the saved-networks store after a successful join.
+ *
+ * wifi_join_reconnect_boot: the once-per-boot reconnect attempt (first
+ * Wi-Fi-menu entry). Silent no-op without a credentialed network;
+ * bounded by WIFI_JOIN_RECONNECT_TIMEOUT_MS; shows a clear failure
+ * state otherwise. Both are Wi-Fi UI task context only. */
+void wifi_join_network(void);
+void wifi_join_reconnect_boot(void);
+
 /* Encrypted PSK credentials on the saved-networks CSV (issue #42 part 2).
  * Field: base64(iv||ct)":"base64(cmac); AES-256-CBC over a fixed 64-byte
  * framed plaintext, AES-CMAC over iv||ct, key derived from the device UID
