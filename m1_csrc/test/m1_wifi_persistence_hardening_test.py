@@ -14,6 +14,7 @@ under fault injection.
 
 From the repository root: python3 m1_csrc/test/m1_wifi_persistence_hardening_test.py
 """
+
 import re
 import subprocess
 import tempfile
@@ -31,15 +32,18 @@ def function(text, name):
     assert match, name
     start = match.start()
     depth = 1
-    body = text[match.end():]
-    for token in re.finditer(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|'
-                             r'//[^\n]*|/\*[\s\S]*?\*/|[{}]', body):
+    body = text[match.end() :]
+    for token in re.finditer(
+        r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|'
+        r"//[^\n]*|/\*[\s\S]*?\*/|[{}]",
+        body,
+    ):
         if token.group() == "{":
             depth += 1
         elif token.group() == "}":
             depth -= 1
         if depth == 0:
-            return text[start:match.end() + token.end()]
+            return text[start : match.end() + token.end()]
     raise AssertionError(name)
 
 
@@ -65,13 +69,53 @@ def simple_typedef(text, name):
     return text[start_idx:end_idx]
 
 
-def build_run(tmp, name, text):
+def host_cc():
+    """Same compiler probe as m1_crypto_test.py / m1_ir_favorites_test.py:
+    cc (POSIX) then gcc/clang (a Windows host has no cc)."""
+    for cc in ("cc", "gcc", "clang"):
+        try:
+            subprocess.run([cc, "--version"], capture_output=True, check=True)
+            return cc
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    raise AssertionError("no usable host C compiler (cc/gcc/clang) found")
+
+
+# Per-build sanitizer availability, so the final banner reports what
+# actually ran (plain builds on toolchains without libasan/libubsan).
+SANITIZER_MODES = []
+
+
+def build_run(tmp, name, text, extra_sources=None, extra_flags=None):
     src = Path(tmp) / f"{name}.c"
     src.write_text(text)
     exe = Path(tmp) / name
-    subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Wno-unused-function",
-                     "-fsanitize=address,undefined", "-g",
-                     str(src), "-o", str(exe)], cwd=ROOT, check=True)
+    cmd = [
+        host_cc(),
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-Wno-unused-function",
+        "-g",
+    ]
+    if extra_flags:
+        cmd += extra_flags
+    cmd.append(str(src))
+    if extra_sources:
+        cmd += [str(s) for s in extra_sources]
+    cmd += ["-o", str(exe)]
+    # Sanitizers when the toolchain ships the runtime (Linux/macOS CI),
+    # plain build otherwise -- same fallback policy as the
+    # feedback-manager suite in scripts/run_host_tests.sh (e.g. WinLibs
+    # mingw has no libasan/libubsan).
+    r = subprocess.run(
+        cmd + ["-fsanitize=address,undefined"], cwd=ROOT, capture_output=True, text=True
+    )
+    if r.returncode != 0:
+        subprocess.run(cmd, cwd=ROOT, check=True)
+        SANITIZER_MODES.append(False)
+    else:
+        SANITIZER_MODES.append(True)
     subprocess.run([str(exe)], check=True)
 
 
@@ -83,7 +127,7 @@ def build_run(tmp, name, text):
 # FR_EXIST if the destination already exists, it does not overwrite), with
 # fault-injection knobs so tests can force a specific call to fail.
 # ============================================================================
-VFS_STUBS = r'''
+VFS_STUBS = r"""
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -314,7 +358,7 @@ FRESULT f_getfree(const char *path, DWORD *nclst, FATFS **fatfs)
 
 static int g_pass = 0, g_fail = 0;
 #define CHECK(c, m) do { if (c) { g_pass++; } else { g_fail++; printf("  FAIL: %s\n", (m)); } } while (0)
-'''
+"""
 
 
 def eapol_tests(tmp):
@@ -323,7 +367,7 @@ def eapol_tests(tmp):
     code += "\n" + define(wifi, "WIFI_EAPOL_SPACE_MARGIN_BYTES")
     code += "\n" + function(wifi, "wifi_sd_has_free_bytes")
     code += "\n" + function(wifi, "wifi_eapol_save")
-    code += r'''
+    code += r"""
 int main(void)
 {
     FIL dummy; (void)dummy;
@@ -394,11 +438,11 @@ int main(void)
     printf("wifi_eapol_save / wifi_sd_has_free_bytes: %d/%d checks passed\n", g_pass, g_pass + g_fail);
     return g_fail ? 1 : 0;
 }
-'''
+"""
     build_run(tmp, "eapol_tests", code)
 
 
-SAVED_NET_STUB_PRELUDE = r'''
+SAVED_NET_STUB_PRELUDE = r"""
 typedef struct {
     char ssid[33];
     char bssid[18];
@@ -412,12 +456,12 @@ typedef struct {
  * logic under test treats it as an opaque field -- not the real function,
  * disclosed here rather than pulled from the unavailable vendor header. */
 static const char *wifi_auth_mode_to_str(int mode) { return mode ? "WPA2" : "OPEN"; }
-'''
+"""
 
-SAVED_NET_MAIN_START = r'''
+SAVED_NET_MAIN_START = r"""
 int main(void)
 {
-'''
+"""
 
 
 def saved_networks_tests(tmp):
@@ -432,18 +476,28 @@ def saved_networks_tests(tmp):
     code += "\n" + define(wifi, "WIFI_SAVED_MAX")
     code += "\n" + define(wifi, "WIFI_SAVED_FMT_VER")
     code += "\n" + define(wifi, "WIFI_SAVED_LINE_MAX")
+    code += "\n" + define(wifi, "WIFI_SAVED_LINE_BUF")
+    code += "\n" + define(wifi, "WIFI_CRED_FIELD_MAX")
     code += "\n" + simple_typedef(wifi, "wifi_saved_entry_t")
     code += "\n" + line(wifi, r"^static wifi_saved_entry_t g_saved\[WIFI_SAVED_MAX\];$")
     code += "\n" + line(wifi, r"^static uint16_t g_saved_count = 0;$")
     code += SAVED_NET_STUB_PRELUDE
-    for fn in ("wifi_bssid_to_upper", "wifi_bssid_is_canonical", "wifi_parse_int_field",
-               "wifi_csv_quote", "wifi_csv_next_field", "wifi_saved_find",
-               "wifi_saved_recover_replace", "wifi_saved_load",
-               "wifi_saved_write_recoverable", "wifi_saved_add_or_update",
-               "wifi_saved_delete_index"):
+    for fn in (
+        "wifi_bssid_to_upper",
+        "wifi_bssid_is_canonical",
+        "wifi_parse_int_field",
+        "wifi_csv_quote",
+        "wifi_csv_next_field",
+        "wifi_saved_find",
+        "wifi_saved_recover_replace",
+        "wifi_saved_load",
+        "wifi_saved_write_recoverable",
+        "wifi_saved_add_or_update",
+        "wifi_saved_delete_index",
+    ):
         code += "\n" + function(wifi, fn)
     code += SAVED_NET_MAIN_START
-    code += r'''
+    code += r"""
     wifi_scanlist_t ap;
     memset(&ap, 0, sizeof(ap));
     strcpy(ap.ssid, "TestNet"); strcpy(ap.bssid, "aa:bb:cc:dd:ee:01");
@@ -628,11 +682,11 @@ def saved_networks_tests(tmp):
     printf("saved-networks recoverable persistence: %d/%d checks passed\n", g_pass, g_pass + g_fail);
     return g_fail ? 1 : 0;
 }
-'''
+"""
     build_run(tmp, "saved_networks_tests", code)
 
 
-PICKPATH_STUBS = r'''
+PICKPATH_STUBS = r"""
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -702,7 +756,7 @@ FRESULT f_stat(const char *path, FILINFO *fi)
 
 static int g_pass = 0, g_fail = 0;
 #define CHECK(c, m) do { if (c) { g_pass++; } else { g_fail++; printf("  FAIL: %s\n", (m)); } } while (0)
-'''
+"""
 
 
 def cap_pick_path_tests(tmp):
@@ -710,7 +764,7 @@ def cap_pick_path_tests(tmp):
     code = PICKPATH_STUBS
     code += "\n" + line(cap, r"typedef enum \{[\s\S]*?\} cap_pick_result_t;")
     code += "\n" + function(cap, "cap_pick_path")
-    code += r'''
+    code += r"""
 int main(void)
 {
     char path[64];
@@ -762,7 +816,7 @@ int main(void)
     printf("cap_pick_path: %d/%d checks passed\n", g_pass, g_pass + g_fail);
     return g_fail ? 1 : 0;
 }
-'''
+"""
     build_run(tmp, "cap_pick_path_tests", code)
 
 
@@ -777,22 +831,36 @@ def capture_open_write_checks_source_text():
     against the real, committed source text instead of by execution."""
     cap = source("m1_csrc/m1_capture_link.c")
     checks = [
-        ("capture file opened with FA_CREATE_NEW (never overwrites)",
-         "f_open(&cf, out->path, FA_CREATE_NEW | FA_WRITE)" in cap),
-        ("SHB write result is checked",
-         "if (m1_pcapng_write_shb(&ctx.w, &si) != 0) { out->sd_ok = false; }" in cap),
-        ("IDB write result is checked",
-         "if (m1_pcapng_write_idb(&ctx.w, &ii) != 0) { out->sd_ok = false; }" in cap),
-        ("ISB write result is checked",
-         "if (m1_pcapng_write_isb(&ctx.w, ctx.iface_id, 0, &stx) != 0) { out->sd_ok = false; }" in cap),
-        ("final flush result is checked",
-         "if (cap_pcap_flush(&ctx) != 0) { out->sd_ok = false; }" in cap),
-        ("final f_sync result is checked",
-         "if (f_sync(&cf) != FR_OK) { out->sd_ok = false; }" in cap),
-        ("final f_close result is checked",
-         "if (f_close(&cf) != FR_OK) { out->sd_ok = false; }" in cap),
-        ("no .part workflow was introduced",
-         ".part" not in cap),
+        (
+            "capture file opened with FA_CREATE_NEW (never overwrites)",
+            "f_open(&cf, out->path, FA_CREATE_NEW | FA_WRITE)" in cap,
+        ),
+        (
+            "SHB write result is checked",
+            "if (m1_pcapng_write_shb(&ctx.w, &si) != 0) { out->sd_ok = false; }" in cap,
+        ),
+        (
+            "IDB write result is checked",
+            "if (m1_pcapng_write_idb(&ctx.w, &ii) != 0) { out->sd_ok = false; }" in cap,
+        ),
+        (
+            "ISB write result is checked",
+            "if (m1_pcapng_write_isb(&ctx.w, ctx.iface_id, 0, &stx) != 0) { out->sd_ok = false; }"
+            in cap,
+        ),
+        (
+            "final flush result is checked",
+            "if (cap_pcap_flush(&ctx) != 0) { out->sd_ok = false; }" in cap,
+        ),
+        (
+            "final f_sync result is checked",
+            "if (f_sync(&cf) != FR_OK) { out->sd_ok = false; }" in cap,
+        ),
+        (
+            "final f_close result is checked",
+            "if (f_close(&cf) != FR_OK) { out->sd_ok = false; }" in cap,
+        ),
+        ("no .part workflow was introduced", ".part" not in cap),
     ]
     passed = 0
     for msg, ok in checks:
@@ -800,7 +868,9 @@ def capture_open_write_checks_source_text():
             passed += 1
         else:
             print(f"  FAIL: {msg}")
-    print(f"capture open/write-check source verification: {passed}/{len(checks)} checks passed")
+    print(
+        f"capture open/write-check source verification: {passed}/{len(checks)} checks passed"
+    )
     assert passed == len(checks)
 
 
@@ -810,4 +880,17 @@ if __name__ == "__main__":
         saved_networks_tests(tmp)
         cap_pick_path_tests(tmp)
     capture_open_write_checks_source_text()
-    print("All Wi-Fi/MonstaShark persistence hardening host tests PASS (ASan/UBSan).")
+    if all(SANITIZER_MODES):
+        print(
+            "All Wi-Fi/MonstaShark persistence hardening host tests PASS (ASan/UBSan)."
+        )
+    elif any(SANITIZER_MODES):
+        print(
+            "All Wi-Fi/MonstaShark persistence hardening host tests PASS "
+            "(mixed sanitizer availability -- see per-build note)."
+        )
+    else:
+        print(
+            "All Wi-Fi/MonstaShark persistence hardening host tests PASS "
+            "(plain build: this toolchain ships no ASan/UBSan runtime)."
+        )

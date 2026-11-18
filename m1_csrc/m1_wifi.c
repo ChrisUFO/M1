@@ -38,6 +38,8 @@
 #include "res_string.h"
 #include "m1_wifi_session_cache.h"
 #include "m1_wifi_client_id.h"
+#include "m1_crypto.h"
+#include "m1_rng.h"
 
 /*************************** D E F I N E S ************************************/
 
@@ -103,11 +105,33 @@
 #define WIFI_SAVED_BAK_PATH         DRIVE0_WIFI "/saved_networks.bak"
 #define WIFI_SAVED_MAX              64
 #define WIFI_SAVED_FMT_VER          1
+/* Optional per-network encrypted-PSK field (PR-9, issue #42 part 2).
+ *
+ * Row layout stays FMT_VER=1 with the seven legacy columns
+ * (version,ssid,bssid,channel,rssi,security,timestamp) plus ONE optional
+ * trailing column:
+ *
+ *   credential = base64(iv || ciphertext) ":" base64(cmac)
+ *
+ * AES-256-CBC (no padding -- fixed 64-byte framed plaintext, see the
+ * wifi_cred_* helpers below) under the UID-derived key from m1_crypto.h;
+ * the IV is one AES block of hardware-RNG output (m1_rng_bytes(); the
+ * save refuses if the RNG refuses); the CMAC (RFC 4493, AES-256 key) is
+ * computed over iv||ciphertext so both are integrity-protected. Rows
+ * WITHOUT the column (or with an empty one) remain valid legacy rows:
+ * no stored PSK. See docs/security/wifi-credential-threat-model.md.
+ *
+ * Size budget: iv(16)+ct(64)=80 bytes -> 108 base64 chars; cmac(16)
+ * bytes -> 24 base64 chars; plus the ':' separator -> 133 chars max. */
+#define WIFI_CRED_FIELD_MAX         136u /* 133 chars + NUL + slack      */
 /* Line buffer for bounded line-by-line load: must comfortably exceed the
- * writer's own longest possible record (line[160] in
- * wifi_saved_write_recoverable()) so a genuine record is never mistaken
- * for an overlong one. */
-#define WIFI_SAVED_LINE_MAX         192
+ * writer's own longest possible record (line[WIFI_SAVED_LINE_BUF] in
+ * wifi_saved_write_recoverable(), worst case ~280 chars: max-quoted
+ * ssid/security plus the full 133-char credential column) so a genuine
+ * record is never mistaken for an overlong one. */
+#define WIFI_SAVED_LINE_MAX         384u
+/* Writer-side row assembly buffer (see WIFI_SAVED_LINE_MAX above). */
+#define WIFI_SAVED_LINE_BUF         320u
 //************************** S T R U C T U R E S *******************************
 
 /***************************** V A R I A B L E S ******************************/
@@ -4880,10 +4904,24 @@ void wifi_survey(void)
 
 /*============================================================================*/
 /* SAVED NETWORKS — SD-backed reconnaissance target list                       */
-/* CSV format, BSSID = persistent identity. No client/password/handshake data. */
+/* CSV format, BSSID = persistent identity. No client/handshake data.          */
 /* Columns: version,ssid,bssid,channel,rssi,security,timestamp                 */
-/* (timestamp left empty until a valid wall-clock source is confirmed).        */
+/* (timestamp left empty until a valid wall-clock source is confirmed) plus,   */
+/* since PR-9 (issue #42 part 2), an OPTIONAL 8th column "credential" carrying */
+/* the encrypted PSK as base64(iv||ct)":"base64(cmac) — empty/absent = no PSK. */
+/* FMT_VER stays 1: rows with or without the optional column are both valid.   */
 /*============================================================================*/
+
+/* Credential verification state of a saved row (set at load time and
+ * re-checked at unseal time; PR-11's join path skips non-OK rows). */
+typedef enum {
+    WIFI_CRED_ABSENT = 0, /* no credential column content: legacy row   */
+    WIFI_CRED_OK     = 1, /* parsed and CMAC-verified under this device's
+                           * UID-derived key (still decrypted+re-checked
+                           * at join time)                               */
+    WIFI_CRED_INVALID = 2 /* present but structurally bad, truncated,
+                           * tampered (wrong CMAC) or foreign-key        */
+} wifi_cred_state_t;
 
 typedef struct {
     char ssid[33];       /* may be empty for a hidden network */
@@ -4891,6 +4929,9 @@ typedef struct {
     int  channel;
     int  rssi;
     char security[16];   /* text, e.g. "WPA2"; unknown values preserved */
+    char psk_enc[WIFI_CRED_FIELD_MAX]; /* optional credential column text;
+                                        * empty = no stored PSK */
+    uint8_t cred_state;  /* wifi_cred_state_t */
 } wifi_saved_entry_t;
 
 static wifi_saved_entry_t g_saved[WIFI_SAVED_MAX];
@@ -5107,7 +5148,15 @@ static uint8_t wifi_saved_load(void)
             fp = wifi_csv_next_field(fp, ch, sizeof(ch));
             fp = wifi_csv_next_field(fp, rs, sizeof(rs));
             fp = wifi_csv_next_field(fp, e.security, sizeof(e.security));
-            (void)wifi_csv_next_field(fp, ts, sizeof(ts));
+            fp = wifi_csv_next_field(fp, ts, sizeof(ts));
+            /* Optional 8th column (encrypted credential). Legacy rows
+             * without it parse as an empty field = no stored PSK; rows
+             * written by this writer always carry the column position
+             * (empty when unset). Bounded copy: an over-long field
+             * truncates and is later rejected by CMAC verification,
+             * never misparsed. Fields beyond the 8th are ignored,
+             * exactly as fields beyond the 7th always were. */
+            (void)wifi_csv_next_field(fp, e.psk_enc, sizeof(e.psk_enc));
 
             /* Require the exact supported format version (not merely a
              * leading digit), a structurally-canonical BSSID, and bounded
@@ -5148,11 +5197,17 @@ static uint8_t wifi_saved_write_recoverable(void)
     FRESULT fr;
     UINT bw = 0;
     uint16_t i;
-    char line[160];
+    char line[WIFI_SAVED_LINE_BUF];
     char qssid[70];
     char qsec[36];
     bool had_prior_final;
-    static const char hdr[] = "#M1SAVEDNET\r\nversion,ssid,bssid,channel,rssi,security,timestamp\r\n";
+    /* Optional 8th "credential" column: ALWAYS emitted (empty when the
+     * network has no stored PSK) so the CSV shape is stable, exactly as
+     * the timestamp column is always emitted empty. The credential text
+     * is base64(iv||ct)":"base64(cmac) — no commas or quotes, so it is
+     * written as a bare field. */
+    static const char hdr[] =
+        "#M1SAVEDNET\r\nversion,ssid,bssid,channel,rssi,security,timestamp,credential\r\n";
 
     if (fs_directory_ensure(DRIVE0_WIFI) != FR_OK) { return 1U; }
 
@@ -5167,9 +5222,10 @@ static uint8_t wifi_saved_write_recoverable(void)
         int n;
         wifi_csv_quote(qssid, sizeof(qssid), g_saved[i].ssid);
         wifi_csv_quote(qsec, sizeof(qsec), g_saved[i].security);
-        n = snprintf(line, sizeof(line), "%d,%s,%s,%d,%d,%s,\r\n",
+        n = snprintf(line, sizeof(line), "%d,%s,%s,%d,%d,%s,,%s\r\n",
                      WIFI_SAVED_FMT_VER, qssid, g_saved[i].bssid,
-                     g_saved[i].channel, g_saved[i].rssi, qsec);
+                     g_saved[i].channel, g_saved[i].rssi, qsec,
+                     g_saved[i].psk_enc);
         if ((n <= 0) || (n >= (int)sizeof(line))) { f_close(&f); f_unlink(WIFI_SAVED_TMP_PATH); return 1U; }
         fr = f_write(&f, line, (UINT)n, &bw);
         if ((fr != FR_OK) || (bw != (UINT)n)) { f_close(&f); f_unlink(WIFI_SAVED_TMP_PATH); return 1U; }
