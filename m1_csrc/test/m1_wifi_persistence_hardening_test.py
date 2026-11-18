@@ -14,6 +14,7 @@ under fault injection.
 
 From the repository root: python3 m1_csrc/test/m1_wifi_persistence_hardening_test.py
 """
+
 import re
 import subprocess
 import tempfile
@@ -31,15 +32,18 @@ def function(text, name):
     assert match, name
     start = match.start()
     depth = 1
-    body = text[match.end():]
-    for token in re.finditer(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|'
-                             r'//[^\n]*|/\*[\s\S]*?\*/|[{}]', body):
+    body = text[match.end() :]
+    for token in re.finditer(
+        r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|'
+        r"//[^\n]*|/\*[\s\S]*?\*/|[{}]",
+        body,
+    ):
         if token.group() == "{":
             depth += 1
         elif token.group() == "}":
             depth -= 1
         if depth == 0:
-            return text[start:match.end() + token.end()]
+            return text[start : match.end() + token.end()]
     raise AssertionError(name)
 
 
@@ -65,13 +69,67 @@ def simple_typedef(text, name):
     return text[start_idx:end_idx]
 
 
-def build_run(tmp, name, text):
+def enum_typedef(text, name):
+    """Extract a 'typedef enum { ... } name;' block, anchored on the
+    closing marker (same anti-runaway technique as simple_typedef --
+    a naive non-greedy regex would start at the file's FIRST 'typedef
+    enum {' and swallow everything up to this one's closer)."""
+    end_marker = "} " + name + ";"
+    end_idx = text.index(end_marker) + len(end_marker)
+    start_idx = text.rindex("typedef enum", 0, end_idx)
+    return text[start_idx:end_idx]
+
+
+def host_cc():
+    """Same compiler probe as m1_crypto_test.py / m1_ir_favorites_test.py:
+    cc (POSIX) then gcc/clang (a Windows host has no cc)."""
+    for cc in ("cc", "gcc", "clang"):
+        try:
+            subprocess.run([cc, "--version"], capture_output=True, check=True)
+            return cc
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    raise AssertionError("no usable host C compiler (cc/gcc/clang) found")
+
+
+# Per-build sanitizer availability, so the final banner reports what
+# actually ran (plain builds on toolchains without libasan/libubsan).
+SANITIZER_MODES = []
+
+
+def build_run(tmp, name, text, extra_sources=None, extra_flags=None):
     src = Path(tmp) / f"{name}.c"
     src.write_text(text)
     exe = Path(tmp) / name
-    subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Wno-unused-function",
-                     "-fsanitize=address,undefined", "-g",
-                     str(src), "-o", str(exe)], cwd=ROOT, check=True)
+    cmd = [
+        host_cc(),
+        "-std=c11",
+        # The extracted store code calls strnlen(), which POSIX/glibc exposes
+        # only under a feature macro; -std=c11 alone hides it on Linux CI.
+        "-D_GNU_SOURCE",
+        "-Wall",
+        "-Wextra",
+        "-Wno-unused-function",
+        "-g",
+    ]
+    if extra_flags:
+        cmd += extra_flags
+    cmd.append(str(src))
+    if extra_sources:
+        cmd += [str(s) for s in extra_sources]
+    cmd += ["-o", str(exe)]
+    # Sanitizers when the toolchain ships the runtime (Linux/macOS CI),
+    # plain build otherwise -- same fallback policy as the
+    # feedback-manager suite in scripts/run_host_tests.sh (e.g. WinLibs
+    # mingw has no libasan/libubsan).
+    r = subprocess.run(
+        cmd + ["-fsanitize=address,undefined"], cwd=ROOT, capture_output=True, text=True
+    )
+    if r.returncode != 0:
+        subprocess.run(cmd, cwd=ROOT, check=True)
+        SANITIZER_MODES.append(False)
+    else:
+        SANITIZER_MODES.append(True)
     subprocess.run([str(exe)], check=True)
 
 
@@ -83,7 +141,7 @@ def build_run(tmp, name, text):
 # FR_EXIST if the destination already exists, it does not overwrite), with
 # fault-injection knobs so tests can force a specific call to fail.
 # ============================================================================
-VFS_STUBS = r'''
+VFS_STUBS = r"""
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -314,7 +372,7 @@ FRESULT f_getfree(const char *path, DWORD *nclst, FATFS **fatfs)
 
 static int g_pass = 0, g_fail = 0;
 #define CHECK(c, m) do { if (c) { g_pass++; } else { g_fail++; printf("  FAIL: %s\n", (m)); } } while (0)
-'''
+"""
 
 
 def eapol_tests(tmp):
@@ -323,7 +381,7 @@ def eapol_tests(tmp):
     code += "\n" + define(wifi, "WIFI_EAPOL_SPACE_MARGIN_BYTES")
     code += "\n" + function(wifi, "wifi_sd_has_free_bytes")
     code += "\n" + function(wifi, "wifi_eapol_save")
-    code += r'''
+    code += r"""
 int main(void)
 {
     FIL dummy; (void)dummy;
@@ -394,11 +452,11 @@ int main(void)
     printf("wifi_eapol_save / wifi_sd_has_free_bytes: %d/%d checks passed\n", g_pass, g_pass + g_fail);
     return g_fail ? 1 : 0;
 }
-'''
+"""
     build_run(tmp, "eapol_tests", code)
 
 
-SAVED_NET_STUB_PRELUDE = r'''
+SAVED_NET_STUB_PRELUDE = r"""
 typedef struct {
     char ssid[33];
     char bssid[18];
@@ -412,38 +470,80 @@ typedef struct {
  * logic under test treats it as an opaque field -- not the real function,
  * disclosed here rather than pulled from the unavailable vendor header. */
 static const char *wifi_auth_mode_to_str(int mode) { return mode ? "WPA2" : "OPEN"; }
-'''
+/* Real wifi_cred_device_uid() reads the STM32H5 UID words through the
+ * HAL (not host-buildable); the credential codec compiled here calls
+ * this injected stand-in, which is exactly the foreign-UID test seam
+ * (change t_uid between seal and load to simulate another device). */
+#include "m1_crypto.h"
+static uint8_t t_uid[M1_UID_LEN] = {0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xAA,0xBB,0xCC};
+static void wifi_cred_device_uid(uint8_t uid[M1_UID_LEN]) { memcpy(uid, t_uid, M1_UID_LEN); }
+"""
 
-SAVED_NET_MAIN_START = r'''
+SAVED_NET_MAIN_START = r"""
 int main(void)
 {
-'''
+"""
+
+
+def saved_net_prefix(wifi, provision_h):
+    """Defines + types + seams shared by every saved-networks host
+    program: the size/#define set, the credential-state enum, the entry
+    typedef, the in-memory store globals, and the stand-in prelude with
+    the injectable device-UID seam (real crypto linked from
+    m1_crypto.c via -I)."""
+    code = VFS_STUBS
+    code += "\n" + define(provision_h, "M1_SD_DIR_WIFI")
+    for d in (
+        "DRIVE0_WIFI",
+        "WIFI_SAVED_PATH",
+        "WIFI_SAVED_TMP_PATH",
+        "WIFI_SAVED_BAK_PATH",
+        "WIFI_SAVED_MAX",
+        "WIFI_SAVED_FMT_VER",
+        "WIFI_SAVED_LINE_MAX",
+        "WIFI_SAVED_LINE_BUF",
+        "WIFI_CRED_FIELD_MAX",
+        "WIFI_PSK_MAX_CHARS",
+        "WIFI_PSK_PT_LEN",
+        "WIFI_PSK_IV_LEN",
+        "WIFI_PSK_CT_LEN",
+        "WIFI_CRED_B64_IVCT_LEN",
+        "WIFI_CRED_B64_MAC_LEN",
+    ):
+        code += "\n" + define(wifi, d)
+    code += "\n" + enum_typedef(wifi, "wifi_cred_state_t")
+    code += "\n" + simple_typedef(wifi, "wifi_saved_entry_t")
+    code += "\n" + line(wifi, r"^static wifi_saved_entry_t g_saved\[WIFI_SAVED_MAX\];$")
+    code += "\n" + line(wifi, r"^static uint16_t g_saved_count = 0;$")
+    code += SAVED_NET_STUB_PRELUDE
+    return code
 
 
 def saved_networks_tests(tmp):
     wifi = source("m1_csrc/m1_wifi.c")
     provision_h = source("m1_csrc/m1_sdcard_provision.h")
-    code = VFS_STUBS
-    code += "\n" + define(provision_h, "M1_SD_DIR_WIFI")
-    code += "\n" + define(wifi, "DRIVE0_WIFI")
-    code += "\n" + define(wifi, "WIFI_SAVED_PATH")
-    code += "\n" + define(wifi, "WIFI_SAVED_TMP_PATH")
-    code += "\n" + define(wifi, "WIFI_SAVED_BAK_PATH")
-    code += "\n" + define(wifi, "WIFI_SAVED_MAX")
-    code += "\n" + define(wifi, "WIFI_SAVED_FMT_VER")
-    code += "\n" + define(wifi, "WIFI_SAVED_LINE_MAX")
-    code += "\n" + simple_typedef(wifi, "wifi_saved_entry_t")
-    code += "\n" + line(wifi, r"^static wifi_saved_entry_t g_saved\[WIFI_SAVED_MAX\];$")
-    code += "\n" + line(wifi, r"^static uint16_t g_saved_count = 0;$")
-    code += SAVED_NET_STUB_PRELUDE
-    for fn in ("wifi_bssid_to_upper", "wifi_bssid_is_canonical", "wifi_parse_int_field",
-               "wifi_csv_quote", "wifi_csv_next_field", "wifi_saved_find",
-               "wifi_saved_recover_replace", "wifi_saved_load",
-               "wifi_saved_write_recoverable", "wifi_saved_add_or_update",
-               "wifi_saved_delete_index"):
+    code = saved_net_prefix(wifi, provision_h)
+    for fn in (
+        "wifi_bssid_to_upper",
+        "wifi_bssid_is_canonical",
+        "wifi_parse_int_field",
+        "wifi_csv_quote",
+        "wifi_csv_next_field",
+        "wifi_b64_val",
+        "wifi_b64_decode",
+        "wifi_cred_key",
+        "wifi_cred_parse_verify",
+        "wifi_cred_check",
+        "wifi_saved_find",
+        "wifi_saved_recover_replace",
+        "wifi_saved_load",
+        "wifi_saved_write_recoverable",
+        "wifi_saved_add_or_update",
+        "wifi_saved_delete_index",
+    ):
         code += "\n" + function(wifi, fn)
     code += SAVED_NET_MAIN_START
-    code += r'''
+    code += r"""
     wifi_scanlist_t ap;
     memset(&ap, 0, sizeof(ap));
     strcpy(ap.ssid, "TestNet"); strcpy(ap.bssid, "aa:bb:cc:dd:ee:01");
@@ -628,11 +728,561 @@ def saved_networks_tests(tmp):
     printf("saved-networks recoverable persistence: %d/%d checks passed\n", g_pass, g_pass + g_fail);
     return g_fail ? 1 : 0;
 }
-'''
-    build_run(tmp, "saved_networks_tests", code)
+"""
+    build_run(
+        tmp,
+        "saved_networks_tests",
+        code,
+        extra_sources=[ROOT / "m1_csrc" / "m1_crypto.c"],
+        extra_flags=["-I", str(ROOT / "m1_csrc")],
+    )
 
 
-PICKPATH_STUBS = r'''
+CRED_RNG_SEAM = r"""
+/* Injectable hardware-RNG seam (real m1_rng.c is HAL-bound): a
+ * deterministic stream so tests can reproduce fields, plus a
+ * failure knob proving the seal refuses instead of falling back.
+ * Signature pinned by the real header. */
+#include "m1_rng.h"
+static bool t_rng_fail = false;
+static int  t_rng_calls = 0;
+static unsigned t_rng_state = 0x1234u;
+bool m1_rng_bytes(uint8_t *buf, size_t len)
+{
+    size_t i;
+    t_rng_calls++;
+    if (t_rng_fail) { return false; }
+    for (i = 0; i < len; i++)
+    {
+        t_rng_state = (t_rng_state * 1103515245u) + 12345u;
+        buf[i] = (uint8_t)(t_rng_state >> 16);
+    }
+    return true;
+}
+"""
+
+
+def saved_networks_cred_tests(tmp):
+    """PR-9 encrypted-credential battery: base64 vectors, seal/unseal
+    round-trips, RNG refusal, 7/8-column compatibility, ciphertext
+    tamper, wrong CMAC, truncation, foreign-UID via the injectable key
+    seam, corrupt-row tolerance, rollback, and the host-testable
+    zeroization contracts."""
+    wifi = source("m1_csrc/m1_wifi.c")
+    provision_h = source("m1_csrc/m1_sdcard_provision.h")
+    code = saved_net_prefix(wifi, provision_h)
+    code += CRED_RNG_SEAM
+    for fn in (
+        "wifi_bssid_to_upper",
+        "wifi_bssid_is_canonical",
+        "wifi_parse_int_field",
+        "wifi_csv_quote",
+        "wifi_csv_next_field",
+        "wifi_b64_encode",
+        "wifi_b64_val",
+        "wifi_b64_decode",
+        "wifi_cred_key",
+        "wifi_cred_parse_verify",
+        "wifi_cred_check",
+        "wifi_cred_seal",
+        "wifi_cred_unseal",
+        "wifi_saved_find",
+        "wifi_saved_recover_replace",
+        "wifi_saved_load",
+        "wifi_saved_write_recoverable",
+        "wifi_saved_add_or_update",
+        "wifi_saved_delete_index",
+        "wifi_cred_set_psk",
+        "wifi_cred_get_psk",
+    ):
+        code += "\n" + function(wifi, fn)
+    code += SAVED_NET_MAIN_START
+    code += r"""
+    wifi_scanlist_t ap;
+    /* +2: one NUL for the max PSK, and one more byte so the "65 chars is
+     * refused" over-length case can be built without overflowing. */
+    char psk[WIFI_PSK_MAX_CHARS + 2];
+    char out[WIFI_PSK_MAX_CHARS + 1];
+    char field[WIFI_CRED_FIELD_MAX];
+    char field2[WIFI_CRED_FIELD_MAX];
+    char row[512];
+    char filebuf[8192];
+    char *hit;
+    size_t i;
+    int commas;
+
+    memset(&ap, 0, sizeof(ap));
+    strcpy(ap.ssid, "CredNet"); strcpy(ap.bssid, "aa:bb:cc:dd:ee:01");
+    ap.channel = 6; ap.rssi = -50;
+
+    /* ---- Part A: base64 helpers (RFC 4648 vectors + strictness) ---- */
+
+    /* 1: 3-byte group encodes without padding */
+    {
+        uint8_t in[3] = { 'M', 'a', 'n' };
+        CHECK(wifi_b64_encode(in, 3, out, sizeof(out)) && strcmp(out, "TWFu") == 0,
+              "base64 'Man' -> 'TWFu'");
+        memset(out, 0, sizeof(out));
+    }
+    /* 2: 2-byte tail pads once */
+    {
+        uint8_t in[2] = { 'M', 'a' };
+        CHECK(wifi_b64_encode(in, 2, out, sizeof(out)) && strcmp(out, "TWE=") == 0,
+              "base64 2-byte tail -> 'TWE='");
+        memset(out, 0, sizeof(out));
+    }
+    /* 3: 1-byte tail pads twice */
+    {
+        uint8_t in[1] = { 'M' };
+        CHECK(wifi_b64_encode(in, 1, out, sizeof(out)) && strcmp(out, "TQ==") == 0,
+              "base64 1-byte tail -> 'TQ=='");
+        memset(out, 0, sizeof(out));
+    }
+    /* 4: exact-size 80-byte round trip (the real iv||ct size) */
+    {
+        uint8_t in[80], back[80];
+        size_t n = 0;
+        for (i = 0; i < 80; i++) { in[i] = (uint8_t)(i * 7 + 3); }
+        CHECK(wifi_b64_encode(in, 80, field, sizeof(field)) && strlen(field) == 108,
+              "80 bytes encode to exactly 108 chars");
+        CHECK(wifi_b64_decode(field, strlen(field), back, sizeof(back), &n) && n == 80,
+              "108 chars decode back to exactly 80 bytes");
+        CHECK(memcmp(in, back, 80) == 0, "80-byte base64 round trip is byte-exact");
+    }
+    /* 5: strict decode rejects every malformation */
+    {
+        uint8_t db[80];
+        size_t n = 0;
+        CHECK(!wifi_b64_decode("", 0, db, sizeof(db), &n), "empty base64 rejected");
+        CHECK(!wifi_b64_decode("TWFuX", 5, db, sizeof(db), &n), "length %% 4 != 0 rejected");
+        CHECK(!wifi_b64_decode("TW!u", 4, db, sizeof(db), &n), "non-alphabet char rejected");
+        CHECK(!wifi_b64_decode("TW=u", 4, db, sizeof(db), &n), "mid-string '=' rejected");
+        CHECK(!wifi_b64_decode("T===", 4, db, sizeof(db), &n), "three pads rejected");
+        CHECK(!wifi_b64_decode("TWFu", 4, db, 2, &n), "destination too small rejected");
+    }
+    /* 6: encode refuses an undersized destination without writing */
+    {
+        uint8_t in[3] = { 1, 2, 3 };
+        char tiny[3];
+        tiny[0] = 'Z';
+        CHECK(!wifi_b64_encode(in, 3, tiny, sizeof(tiny)) && tiny[0] == 'Z',
+              "encode with too-small dst fails and leaves dst untouched");
+    }
+
+    /* ---- Part B: seal/unseal (direct, crypto real, RNG injected) ---- */
+
+    /* 7: field shape and round trip */
+    strcpy(psk, "CorrectHorse9");
+    CHECK(wifi_cred_seal(psk, field, sizeof(field)), "seal succeeds");
+    CHECK(strlen(field) == 133 && field[108] == ':',
+          "field is base64(iv||ct):base64(cmac) with exact lengths 108+1+24");
+    memset(out, 0xAA, sizeof(out));
+    CHECK(wifi_cred_unseal(field, out, sizeof(out)) && strcmp(out, psk) == 0,
+          "unseal returns the sealed PSK");
+    /* 8: fresh IV per seal */
+    CHECK(wifi_cred_seal(psk, field2, sizeof(field2)) && strcmp(field, field2) != 0,
+          "two seals of the same PSK differ (fresh RNG IV)");
+    /* 9: length bounds: empty and >64 refused, 64-char (hex-PMK form) accepted */
+    CHECK(!wifi_cred_seal("", field, sizeof(field)), "empty PSK refused");
+    memset(psk, 'k', 65); psk[65] = '\0';
+    CHECK(!wifi_cred_seal(psk, field, sizeof(field)), "65-char PSK refused");
+    memset(psk, '0', 64); psk[64] = '\0';
+    CHECK(wifi_cred_seal(psk, field, sizeof(field)), "64-char hex-PMK form accepted");
+    memset(out, 0xAA, sizeof(out));
+    CHECK(wifi_cred_unseal(field, out, sizeof(out)) && strlen(out) == 64,
+          "64-char PSK round-trips");
+    /* 10: RNG refusal -> seal refuses, output untouched */
+    strcpy(psk, "abc");
+    memset(field, 0x5A, sizeof(field) - 1); field[sizeof(field) - 1] = '\0';
+    strcpy(field2, field);
+    t_rng_fail = true;
+    CHECK(!wifi_cred_seal(psk, field, sizeof(field)), "RNG failure refuses the seal");
+    t_rng_fail = false;
+    CHECK(strcmp(field, field2) == 0, "refused seal leaves the field untouched");
+    /* 11: malformed fields refuse the unseal (fail closed) */
+    {
+        const char *bad[] = {
+            "AAAA",                               /* no ':'            */
+            ":",                                  /* both parts empty  */
+            "TWFu:TWFu",                          /* wrong part lengths*/
+            "TWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTWFuTW==:TWFu", /* 104 */
+        };
+        int k;
+        for (k = 0; k < 4; k++)
+        {
+            memset(out, 0xAA, sizeof(out));
+            CHECK(!wifi_cred_unseal(bad[k], out, sizeof(out)), "malformed field refused");
+            for (i = 0; i < sizeof(out); i++) { if (out[i] != 0) { break; } }
+            CHECK(i == sizeof(out), "failed unseal zeroizes the output buffer");
+        }
+    }
+
+    /* ---- Part C: set/get through the real store ---- */
+
+    /* 12: set_psk on a saved network persists an encrypted field */
+    vfs_reset(); fault_reset(); g_saved_count = 0;
+    CHECK(wifi_saved_add_or_update(&ap) == 1, "seed network for credential tests");
+    strcpy(psk, "hunter2networks");
+    {
+        size_t plen = strlen(psk);
+        CHECK(wifi_cred_set_psk("AA:BB:CC:DD:EE:01", psk) == 0, "set_psk reports ok");
+        for (i = 0; i < plen; i++) { if (psk[i] != 0) { break; } }
+        CHECK(i == plen, "set_psk absorbs (zeroizes) the caller's plaintext PSK");
+    }
+    strcpy(field, g_saved[0].psk_enc);
+    CHECK(field[0] != '\0' && g_saved[0].cred_state == WIFI_CRED_OK,
+          "in-memory entry carries the sealed field and OK state");
+    /* 13: the file holds the sealed field, never the plaintext */
+    strcpy(filebuf, vfs_get(WIFI_SAVED_PATH));
+    CHECK(strstr(filebuf, field) != NULL, "persisted CSV contains the sealed field text");
+    CHECK(strstr(filebuf, "hunter2networks") == NULL, "plaintext PSK never appears in the CSV");
+    hit = strstr(filebuf, field);
+    CHECK(hit > filebuf && hit[-1] == '"' && hit[strlen(field)] == '"',
+          "credential is the trailing 8th column, emitted quoted");
+    for (commas = 0, hit = filebuf; *hit; hit++) { if (*hit == ',') { commas++; } }
+    CHECK(commas == 14, "header (7) + data row (7) each separate 8 columns");
+    CHECK(strstr(filebuf, "timestamp,credential") != NULL, "header names the credential column");
+    /* 14: reload verifies + join-time decrypt round-trips through the file */
+    g_saved_count = 0; fault_reset();
+    CHECK(wifi_saved_load() == 0 && g_saved_count == 1, "reload after set_psk succeeds");
+    CHECK(g_saved[0].cred_state == WIFI_CRED_OK, "reload classifies the credential OK");
+    memset(out, 0xAA, sizeof(out));
+    CHECK(wifi_cred_get_psk(0, out, sizeof(out)) && strcmp(out, "hunter2networks") == 0,
+          "get_psk decrypts the stored credential at join time");
+    /* 15: absent/OOB handling */
+    memset(out, 0xAA, sizeof(out));
+    CHECK(!wifi_cred_get_psk(1, out, sizeof(out)), "out-of-range index refused");
+    for (i = 0; i < sizeof(out); i++) { if (out[i] != 0) { break; } }
+    CHECK(i == sizeof(out), "refused get_psk zeroizes the output buffer");
+    /* 16: scan refresh preserves the credential */
+    ap.rssi = -42;
+    CHECK(wifi_saved_add_or_update(&ap) == 0, "refresh scan data on the saved network");
+    CHECK(strcmp(g_saved[0].psk_enc, field) == 0 && g_saved[0].cred_state == WIFI_CRED_OK,
+          "credential survives a scan-data refresh");
+    CHECK(strstr(vfs_get(WIFI_SAVED_PATH), field) != NULL,
+          "credential survives the rewrite to SD");
+    /* 17: unknown network */
+    strcpy(psk, "whatever1");
+    CHECK(wifi_cred_set_psk("AA:BB:CC:DD:EE:77", psk) == 1, "set_psk on unknown BSSID -> 1");
+    /* 18: clearing */
+    CHECK(wifi_cred_set_psk("AA:BB:CC:DD:EE:01", NULL) == 0, "clear (NULL) reports ok");
+    CHECK(g_saved[0].psk_enc[0] == '\0' && g_saved[0].cred_state == WIFI_CRED_ABSENT,
+          "cleared entry is ABSENT");
+    g_saved_count = 0; fault_reset();
+    CHECK(wifi_saved_load() == 0 && g_saved_count == 1 && g_saved[0].cred_state == WIFI_CRED_ABSENT,
+          "cleared credential reloads as legacy-style ABSENT row");
+    memset(out, 0xAA, sizeof(out));
+    CHECK(!wifi_cred_get_psk(0, out, sizeof(out)), "get_psk on ABSENT credential fails");
+    /* 19: save failure rolls back to the OLD credential */
+    strcpy(psk, "newpsk12345");
+    CHECK(wifi_cred_set_psk("AA:BB:CC:DD:EE:01", psk) == 0, "re-set credential before failure test");
+    strcpy(field2, g_saved[0].psk_enc);
+    strcpy(psk, "replacement9");
+    fault_open(WIFI_SAVED_TMP_PATH, FR_DISK_ERR);
+    CHECK(wifi_cred_set_psk("AA:BB:CC:DD:EE:01", psk) == 2, "save failure reports 2");
+    CHECK(strcmp(g_saved[0].psk_enc, field2) == 0 && g_saved[0].cred_state == WIFI_CRED_OK,
+          "save failure rolls the credential back to the stored one");
+    CHECK(strstr(vfs_get(WIFI_SAVED_PATH), field2) != NULL, "file still holds the old credential");
+    /* 20: RNG refusal on set_psk changes nothing */
+    fault_reset();
+    strcpy(psk, "refused-psk-1");
+    t_rng_fail = true;
+    CHECK(wifi_cred_set_psk("AA:BB:CC:DD:EE:01", psk) == 3, "RNG refusal reports 3");
+    t_rng_fail = false;
+    for (i = 0; i < strlen("refused-psk-1"); i++) { if (psk[i] != 0) { break; } }
+    CHECK(i == strlen("refused-psk-1"), "refused set_psk still absorbs the plaintext");
+    CHECK(strcmp(g_saved[0].psk_enc, field2) == 0, "refused set_psk leaves the stored credential intact");
+
+    /* ---- Part D: 7-column (legacy) / 8-column compatibility ---- */
+
+    /* 21: legacy rows without the credential column stay valid */
+    vfs_reset(); fault_reset(); g_saved_count = 0;
+    vfs_put(WIFI_SAVED_PATH,
+        "#M1SAVEDNET\r\n"
+        "1,\"Legacy\",AA:BB:CC:DD:EE:20,6,-50,\"WPA2\",\r\n"
+        "1,\"LegacyTs\",AA:BB:CC:DD:EE:21,6,-50,\"WPA2\",1729000000\r\n"
+        "1,\"Empty8\",AA:BB:CC:DD:EE:22,6,-50,\"WPA2\",\r\n");
+    CHECK(wifi_saved_load() == 0, "legacy/mixed-column file loads");
+    CHECK(g_saved_count == 3, "all three rows load");
+    CHECK(g_saved[0].cred_state == WIFI_CRED_ABSENT && g_saved[1].cred_state == WIFI_CRED_ABSENT
+              && g_saved[2].cred_state == WIFI_CRED_ABSENT,
+          "rows without credential content are ABSENT (unencrypted-by-absence)");
+    /* 22: hand-spliced 8-column row with a really sealed field verifies OK */
+    strcpy(psk, "spliced-psk-1");
+    CHECK(wifi_cred_seal(psk, field, sizeof(field)), "seal for spliced row");
+    snprintf(row, sizeof(row), "1,\"Splice\",AA:BB:CC:DD:EE:33,6,-50,\"WPA2\",,%s\r\n", field);
+    snprintf(filebuf, sizeof(filebuf), "#M1SAVEDNET\r\n%s", row);
+    vfs_reset(); fault_reset(); g_saved_count = 0;
+    vfs_put(WIFI_SAVED_PATH, filebuf);
+    CHECK(wifi_saved_load() == 0 && g_saved_count == 1 && g_saved[0].cred_state == WIFI_CRED_OK,
+          "spliced 8-column row with valid field classifies OK");
+    memset(out, 0, sizeof(out));
+    CHECK(wifi_cred_get_psk(0, out, sizeof(out)) && strcmp(out, "spliced-psk-1") == 0,
+          "spliced row's credential decrypts");
+    /* 23: a 9th field is ignored, exactly as pre-9th fields always were */
+    snprintf(filebuf, sizeof(filebuf), "#M1SAVEDNET\r\n1,\"Nine\",AA:BB:CC:DD:EE:34,6,-50,\"WPA2\",,%s,extra\r\n", field);
+    vfs_reset(); fault_reset(); g_saved_count = 0;
+    vfs_put(WIFI_SAVED_PATH, filebuf);
+    CHECK(wifi_saved_load() == 0 && g_saved_count == 1 && g_saved[0].cred_state == WIFI_CRED_OK,
+          "fields beyond the credential column are ignored");
+    /* 23b: the writer quotes the credential column, so hostile text with
+     * an embedded comma round-trips verbatim (load -> save -> load) and
+     * every rewritten row keeps exactly 8 columns. A bare re-emission
+     * would turn the quoted 8th field "a,b:c" into a 9-column row and
+     * silently truncate the stored text to "a" on the next load. */
+    strcpy(psk, "roundtrip-1");
+    CHECK(wifi_cred_seal(psk, field, sizeof(field)), "seal canonical field for round trip");
+    snprintf(filebuf, sizeof(filebuf),
+        "#M1SAVEDNET\r\n"
+        "1,\"Canon\",AA:BB:CC:DD:EE:40,6,-50,\"WPA2\",,%s\r\n"
+        "1,\"Hostile\",AA:BB:CC:DD:EE:41,6,-50,\"WPA2\",,\"a,b:c\"\r\n",
+        field);
+    vfs_reset(); fault_reset(); g_saved_count = 0;
+    vfs_put(WIFI_SAVED_PATH, filebuf);
+    CHECK(wifi_saved_load() == 0 && g_saved_count == 2, "comma-bearing hostile file loads");
+    CHECK(strcmp(g_saved[0].psk_enc, field) == 0 && g_saved[0].cred_state == WIFI_CRED_OK,
+          "canonical sealed field parses from a bare column");
+    CHECK(strcmp(g_saved[1].psk_enc, "a,b:c") == 0 && g_saved[1].cred_state == WIFI_CRED_INVALID,
+          "hostile comma-bearing field unquotes to its full text, INVALID");
+    CHECK(wifi_saved_write_recoverable() == 0, "rewrite of the hostile row succeeds");
+    strcpy(filebuf, vfs_get(WIFI_SAVED_PATH));
+    hit = strstr(filebuf, field);
+    CHECK(hit != NULL && hit[-1] == '"' && hit[strlen(field)] == '"',
+          "canonical credential re-emitted verbatim, quoted");
+    CHECK(strstr(filebuf, ",\"a,b:c\"\r\n") != NULL,
+          "hostile credential re-emitted verbatim as the quoted last column");
+    {
+        /* every comma-bearing line (column header + both rows) must carry
+         * exactly 7 commas outside quoted regions -> a stable 8-column
+         * shape; the comma inside "a,b:c" must not count as a separator,
+         * and only the comma-less "#M1SAVEDNET" magic line is exempt */
+        int outside = 0, inq = 0, bad = 0;
+        for (hit = filebuf; *hit; hit++)
+        {
+            if (*hit == '"') { inq = !inq; }
+            else if ((*hit == ',') && !inq) { outside++; }
+            else if (*hit == '\n') { if (outside != 7 && outside != 0) { bad = 1; } outside = 0; inq = 0; }
+        }
+        CHECK(!bad && outside == 0, "rewritten file keeps exactly 8 columns per row");
+    }
+    g_saved_count = 0; fault_reset();
+    CHECK(wifi_saved_load() == 0 && g_saved_count == 2, "reload after rewrite succeeds");
+    CHECK(strcmp(g_saved[0].psk_enc, field) == 0 && g_saved[0].cred_state == WIFI_CRED_OK,
+          "canonical credential survives the load/save/load round trip unchanged");
+    CHECK(strcmp(g_saved[1].psk_enc, "a,b:c") == 0 && g_saved[1].cred_state == WIFI_CRED_INVALID,
+          "hostile credential survives the load/save/load round trip unchanged");
+
+    /* 23c: the absolute structural worst case round-trips. A 32-quote
+     * SSID, a 15-quote security string, INT_MIN channel/RSSI and a
+     * 135-quote credential (the "" escape branch at its maximum, built
+     * by doubling inside this source) make a 419-byte row:
+     * 1 + 66 + 17 + 11 + 11 + 32 + 0 + 272 + 7 commas + CRLF. The old
+     * 320-byte writer bound rejected this shape and, because a save
+     * rewrites the whole store, disabled every subsequent save; the
+     * new bound must accept it AND the loader must re-read it, or the
+     * store could not read back a file it just wrote. */
+    {
+        char ws[33], wsec[16], wc[WIFI_CRED_FIELD_MAX];
+        char q_ws[2 * 33 + 2], q_sec[2 * 16 + 2];
+        char q_wc[(2 * WIFI_CRED_FIELD_MAX) + 8];
+        char *nl, *nl2;
+        int rowlen = -1;
+
+        memset(ws, '"', 32); ws[32] = '\0';    /* max-length all-quote SSID */
+        memset(wsec, '"', 15); wsec[15] = '\0';/* max-length all-quote security */
+        memset(wc, '"', 135); wc[135] = '\0';  /* max-length all-quote credential */
+        wifi_csv_quote(q_ws, sizeof(q_ws), ws);
+        wifi_csv_quote(q_sec, sizeof(q_sec), wsec);
+        wifi_csv_quote(q_wc, sizeof(q_wc), wc);
+        snprintf(filebuf, sizeof(filebuf),
+            "#M1SAVEDNET\r\n"
+            "1,%s,AA:BB:CC:DD:EE:42,-2147483648,-2147483648,%s,,%s\r\n",
+            q_ws, q_sec, q_wc);
+        vfs_reset(); fault_reset(); g_saved_count = 0;
+        vfs_put(WIFI_SAVED_PATH, filebuf);
+        CHECK(wifi_saved_load() == 0 && g_saved_count == 1, "worst-case quote-heavy file loads");
+        CHECK(strcmp(g_saved[0].ssid, ws) == 0,
+              "max-length all-quote SSID unescapes to its full 32 chars on load");
+        CHECK(strcmp(g_saved[0].security, wsec) == 0,
+              "max-length all-quote security unescapes to its full 15 chars on load");
+        CHECK(strcmp(g_saved[0].psk_enc, wc) == 0 && g_saved[0].cred_state == WIFI_CRED_INVALID,
+              "135-quote credential unescapes to its full text, INVALID");
+        CHECK(wifi_saved_write_recoverable() == 0,
+              "save of the 419-byte worst-case row does NOT fail");
+        strcpy(filebuf, vfs_get(WIFI_SAVED_PATH));
+        nl = strchr(filebuf, '\n');                 /* end of "#M1SAVEDNET" */
+        nl = nl ? strchr(nl + 1, '\n') : NULL;      /* end of column header */
+        nl2 = nl ? strchr(nl + 1, '\n') : NULL;     /* end of the data row */
+        CHECK(nl2 != NULL && (rowlen = (int)(nl2 - nl)) == 419,
+              "rewritten worst-case row is exactly 419 bytes incl. CRLF");
+        CHECK(rowlen + 1 <= (int)WIFI_SAVED_LINE_BUF && rowlen <= (int)WIFI_SAVED_LINE_MAX - 1,
+              "worst-case row fits the writer buffer and the loader cap (read-back invariant)");
+        g_saved_count = 0; fault_reset();
+        CHECK(wifi_saved_load() == 0 && g_saved_count == 1,
+              "reload after worst-case rewrite succeeds");
+        CHECK(strcmp(g_saved[0].psk_enc, wc) == 0 && strcmp(g_saved[0].ssid, ws) == 0,
+              "worst-case SSID and credential survive load/save/load verbatim");
+        {
+            int outside = 0, inq = 0, bad = 0;
+            for (hit = filebuf; *hit; hit++)
+            {
+                if (*hit == '"') { inq = !inq; }
+                else if ((*hit == ',') && !inq) { outside++; }
+                else if (*hit == '\n') { if (outside != 7 && outside != 0) { bad = 1; } outside = 0; inq = 0; }
+            }
+            CHECK(!bad && outside == 0, "worst-case rewrite keeps exactly 8 columns per row");
+        }
+    }
+
+    /* 23d: size-boundary tripwire. A 331-byte row (20-char plain SSID,
+     * ordinary channel/RSSI/security, 135-quote credential) lands
+     * between the old 320-byte writer bound, which rejected it and
+     * suspended every save, and the new 448-byte bound: it must save
+     * and reload successfully. */
+    {
+        char wc[WIFI_CRED_FIELD_MAX];
+        char q_wc[(2 * WIFI_CRED_FIELD_MAX) + 8];
+        char *nl, *nl2;
+
+        memset(wc, '"', 135); wc[135] = '\0';
+        wifi_csv_quote(q_wc, sizeof(q_wc), wc);
+        snprintf(filebuf, sizeof(filebuf),
+            "#M1SAVEDNET\r\n"
+            "1,\"01234567890123456789\",AA:BB:CC:DD:EE:43,6,-50,\"WPA2\",,%s\r\n",
+            q_wc);
+        vfs_reset(); fault_reset(); g_saved_count = 0;
+        vfs_put(WIFI_SAVED_PATH, filebuf);
+        CHECK(wifi_saved_load() == 0 && g_saved_count == 1
+                  && strcmp(g_saved[0].psk_enc, wc) == 0,
+              "boundary-size hostile file loads with the credential verbatim");
+        CHECK(wifi_saved_write_recoverable() == 0,
+              "331-byte row (old bound: save suspended) now saves successfully");
+        strcpy(filebuf, vfs_get(WIFI_SAVED_PATH));
+        nl = strchr(filebuf, '\n');                 /* end of "#M1SAVEDNET" */
+        nl = nl ? strchr(nl + 1, '\n') : NULL;      /* end of column header */
+        nl2 = nl ? strchr(nl + 1, '\n') : NULL;     /* end of the data row */
+        CHECK(nl2 != NULL && (int)(nl2 - nl) == 331,
+              "rewritten boundary row is exactly 331 bytes incl. CRLF");
+        g_saved_count = 0; fault_reset();
+        CHECK(wifi_saved_load() == 0 && g_saved_count == 1
+                  && strcmp(g_saved[0].psk_enc, wc) == 0,
+              "boundary row reloads with the credential verbatim");
+    }
+
+    /* ---- Part E: tamper / wrong CMAC / truncation / foreign UID ---- */
+
+    /* helper: re-seed one credentialed network and return its field text */
+    #define RESEED_CRED() \
+        do { \
+            vfs_reset(); fault_reset(); g_saved_count = 0; \
+            (void)wifi_saved_add_or_update(&ap); \
+            strcpy(psk, "tamper-me-123"); \
+            CHECK(wifi_cred_set_psk("AA:BB:CC:DD:EE:01", psk) == 0, "reseed credentialed network"); \
+            strcpy(field2, g_saved[0].psk_enc); \
+        } while (0)
+
+    /* 24: flip one ciphertext byte -> INVALID, row survives, join skips */
+    RESEED_CRED();
+    strcpy(filebuf, vfs_get(WIFI_SAVED_PATH));
+    hit = strstr(filebuf, field2);
+    CHECK(hit != NULL, "tamper test finds the field in the file");
+    hit[10] = (hit[10] == 'A') ? 'B' : 'A'; /* inside base64(iv||ct) */
+    vfs_put(WIFI_SAVED_PATH, filebuf);
+    g_saved_count = 0; fault_reset();
+    CHECK(wifi_saved_load() == 0 && g_saved_count == 1, "tampered row still loads (no brick)");
+    CHECK(strcmp(g_saved[0].bssid, "AA:BB:CC:DD:EE:01") == 0, "tampered row keeps its identity");
+    CHECK(g_saved[0].cred_state == WIFI_CRED_INVALID, "flipped ciphertext byte -> INVALID");
+    memset(out, 0xAA, sizeof(out));
+    CHECK(!wifi_cred_get_psk(0, out, sizeof(out)), "join-time decrypt of tampered credential fails");
+    for (i = 0; i < sizeof(out); i++) { if (out[i] != 0) { break; } }
+    CHECK(i == sizeof(out), "tampered get_psk leaves the output zeroized");
+    CHECK(g_saved[0].cred_state == WIFI_CRED_INVALID, "entry stays marked unusable");
+    /* 25: flip one CMAC byte -> INVALID */
+    RESEED_CRED();
+    strcpy(filebuf, vfs_get(WIFI_SAVED_PATH));
+    hit = strstr(filebuf, field2);
+    hit[108 + 1 + 5] = (hit[108 + 1 + 5] == 'A') ? 'B' : 'A'; /* inside base64(cmac) */
+    vfs_put(WIFI_SAVED_PATH, filebuf);
+    g_saved_count = 0; fault_reset();
+    CHECK(wifi_saved_load() == 0 && g_saved_count == 1 &&
+              g_saved[0].cred_state == WIFI_CRED_INVALID,
+          "wrong CMAC -> INVALID, row still a valid target");
+    /* 26: truncated credential (4 chars cut from iv||ct) -> INVALID */
+    RESEED_CRED();
+    strcpy(filebuf, vfs_get(WIFI_SAVED_PATH));
+    hit = strstr(filebuf, field2);
+    memmove(hit + 40, hit + 44, strlen(hit + 44) + 1);
+    vfs_put(WIFI_SAVED_PATH, filebuf);
+    g_saved_count = 0; fault_reset();
+    CHECK(wifi_saved_load() == 0 && g_saved_count == 1 &&
+              g_saved[0].cred_state == WIFI_CRED_INVALID,
+          "truncated field -> INVALID");
+    /* 27: ':mac' half missing entirely -> INVALID */
+    RESEED_CRED();
+    strcpy(filebuf, vfs_get(WIFI_SAVED_PATH));
+    hit = strstr(filebuf, field2);
+    hit[108] = '\0'; /* cut the separator and everything after */
+    vfs_put(WIFI_SAVED_PATH, filebuf);
+    g_saved_count = 0; fault_reset();
+    CHECK(wifi_saved_load() == 0 && g_saved_count == 1 &&
+              g_saved[0].cred_state == WIFI_CRED_INVALID,
+          "field without the mac half -> INVALID");
+    /* 28: foreign device UID (SD moved to another unit) -> INVALID, and back */
+    RESEED_CRED();
+    t_uid[0] ^= 0xFF; /* different device */
+    g_saved_count = 0; fault_reset();
+    CHECK(wifi_saved_load() == 0 && g_saved_count == 1 &&
+              g_saved[0].cred_state == WIFI_CRED_INVALID,
+          "credential sealed under another device's UID -> INVALID");
+    t_uid[0] ^= 0xFF; /* back to the sealing device */
+    g_saved_count = 0; fault_reset();
+    CHECK(wifi_saved_load() == 0 && g_saved[0].cred_state == WIFI_CRED_OK,
+          "same file verifies OK again on the sealing device (marking is per-verification)");
+    /* 29: oversized garbage credential field -> row loads, INVALID */
+    {
+        static const char *big =
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAA:TWFuTWFuTWFuTWFu";
+        snprintf(filebuf, sizeof(filebuf),
+                 "#M1SAVEDNET\r\n1,\"Big\",AA:BB:CC:DD:EE:35,6,-50,\"WPA2\",,%s\r\n", big);
+        vfs_reset(); fault_reset(); g_saved_count = 0;
+        vfs_put(WIFI_SAVED_PATH, filebuf);
+        CHECK(wifi_saved_load() == 0 && g_saved_count == 1 &&
+                  g_saved[0].cred_state == WIFI_CRED_INVALID,
+              "oversized credential field loads the row but marks the credential INVALID");
+    }
+    /* 30: corrupt rows mixed with good ones do not brick the store */
+    strcpy(psk, "goodone12345");
+    CHECK(wifi_cred_seal(psk, field, sizeof(field)), "seal for the mixed-file row");
+    snprintf(filebuf, sizeof(filebuf),
+        "#M1SAVEDNET\r\n"
+        "garbage,not,a,bssid\r\n"
+        "1,\"Good\",AA:BB:CC:DD:EE:36,6,-50,\"WPA2\",,%s\r\n"
+        "1,\"BadCred\",AA:BB:CC:DD:EE:37,6,-50,\"WPA2\",,!!not-base64-at-all:!!\r\n"
+        "99,\"WrongVer\",AA:BB:CC:DD:EE:38,6,-50,\"WPA2\",\r\n",
+        field);
+    vfs_reset(); fault_reset(); g_saved_count = 0;
+    vfs_put(WIFI_SAVED_PATH, filebuf);
+    CHECK(wifi_saved_load() == 0 && g_saved_count == 2, "mixed corrupt file loads its two valid rows");
+    CHECK(g_saved[0].cred_state == WIFI_CRED_OK && g_saved[1].cred_state == WIFI_CRED_INVALID,
+          "good credential OK, garbage credential INVALID");
+    CHECK(wifi_saved_add_or_update(&ap) == 1, "store remains writable after loading corruption");
+
+    printf("saved-networks encrypted-credential battery: %d/%d checks passed\n", g_pass, g_pass + g_fail);
+    return g_fail ? 1 : 0;
+}
+"""
+    build_run(
+        tmp,
+        "saved_networks_cred_tests",
+        code,
+        extra_sources=[ROOT / "m1_csrc" / "m1_crypto.c"],
+        extra_flags=["-I", str(ROOT / "m1_csrc")],
+    )
+
+
+PICKPATH_STUBS = r"""
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -702,7 +1352,7 @@ FRESULT f_stat(const char *path, FILINFO *fi)
 
 static int g_pass = 0, g_fail = 0;
 #define CHECK(c, m) do { if (c) { g_pass++; } else { g_fail++; printf("  FAIL: %s\n", (m)); } } while (0)
-'''
+"""
 
 
 def cap_pick_path_tests(tmp):
@@ -710,7 +1360,7 @@ def cap_pick_path_tests(tmp):
     code = PICKPATH_STUBS
     code += "\n" + line(cap, r"typedef enum \{[\s\S]*?\} cap_pick_result_t;")
     code += "\n" + function(cap, "cap_pick_path")
-    code += r'''
+    code += r"""
 int main(void)
 {
     char path[64];
@@ -762,7 +1412,7 @@ int main(void)
     printf("cap_pick_path: %d/%d checks passed\n", g_pass, g_pass + g_fail);
     return g_fail ? 1 : 0;
 }
-'''
+"""
     build_run(tmp, "cap_pick_path_tests", code)
 
 
@@ -777,22 +1427,36 @@ def capture_open_write_checks_source_text():
     against the real, committed source text instead of by execution."""
     cap = source("m1_csrc/m1_capture_link.c")
     checks = [
-        ("capture file opened with FA_CREATE_NEW (never overwrites)",
-         "f_open(&cf, out->path, FA_CREATE_NEW | FA_WRITE)" in cap),
-        ("SHB write result is checked",
-         "if (m1_pcapng_write_shb(&ctx.w, &si) != 0) { out->sd_ok = false; }" in cap),
-        ("IDB write result is checked",
-         "if (m1_pcapng_write_idb(&ctx.w, &ii) != 0) { out->sd_ok = false; }" in cap),
-        ("ISB write result is checked",
-         "if (m1_pcapng_write_isb(&ctx.w, ctx.iface_id, 0, &stx) != 0) { out->sd_ok = false; }" in cap),
-        ("final flush result is checked",
-         "if (cap_pcap_flush(&ctx) != 0) { out->sd_ok = false; }" in cap),
-        ("final f_sync result is checked",
-         "if (f_sync(&cf) != FR_OK) { out->sd_ok = false; }" in cap),
-        ("final f_close result is checked",
-         "if (f_close(&cf) != FR_OK) { out->sd_ok = false; }" in cap),
-        ("no .part workflow was introduced",
-         ".part" not in cap),
+        (
+            "capture file opened with FA_CREATE_NEW (never overwrites)",
+            "f_open(&cf, out->path, FA_CREATE_NEW | FA_WRITE)" in cap,
+        ),
+        (
+            "SHB write result is checked",
+            "if (m1_pcapng_write_shb(&ctx.w, &si) != 0) { out->sd_ok = false; }" in cap,
+        ),
+        (
+            "IDB write result is checked",
+            "if (m1_pcapng_write_idb(&ctx.w, &ii) != 0) { out->sd_ok = false; }" in cap,
+        ),
+        (
+            "ISB write result is checked",
+            "if (m1_pcapng_write_isb(&ctx.w, ctx.iface_id, 0, &stx) != 0) { out->sd_ok = false; }"
+            in cap,
+        ),
+        (
+            "final flush result is checked",
+            "if (cap_pcap_flush(&ctx) != 0) { out->sd_ok = false; }" in cap,
+        ),
+        (
+            "final f_sync result is checked",
+            "if (f_sync(&cf) != FR_OK) { out->sd_ok = false; }" in cap,
+        ),
+        (
+            "final f_close result is checked",
+            "if (f_close(&cf) != FR_OK) { out->sd_ok = false; }" in cap,
+        ),
+        ("no .part workflow was introduced", ".part" not in cap),
     ]
     passed = 0
     for msg, ok in checks:
@@ -800,7 +1464,70 @@ def capture_open_write_checks_source_text():
             passed += 1
         else:
             print(f"  FAIL: {msg}")
-    print(f"capture open/write-check source verification: {passed}/{len(checks)} checks passed")
+    print(
+        f"capture open/write-check source verification: {passed}/{len(checks)} checks passed"
+    )
+    assert passed == len(checks)
+
+
+def cred_zeroization_source_checks():
+    """Host-testable zeroization assertions, part 2: what cannot be
+    observed at runtime (stack buffers inside the codec) is pinned
+    against the real source text -- the exact bodies extracted and
+    compiled by the suites above -- plus format/wiring invariants."""
+    wifi = source("m1_csrc/m1_wifi.c")
+    header = source("m1_csrc/m1_wifi.h")
+    seal = function(wifi, "wifi_cred_seal")
+    unseal = function(wifi, "wifi_cred_unseal")
+    setfn = function(wifi, "wifi_cred_set_psk")
+    checks = [
+        ("seal zeroizes the derived key", "m1_secure_zero(key, sizeof(key));" in seal),
+        (
+            "seal zeroizes the iv||ct workspace",
+            "m1_secure_zero(ivct, sizeof(ivct));" in seal,
+        ),
+        ("seal zeroizes the tag copy", "m1_secure_zero(mac, sizeof(mac));" in seal),
+        (
+            "unseal zeroizes the derived key",
+            "m1_secure_zero(key, sizeof(key));" in unseal,
+        ),
+        (
+            "unseal zeroizes the decrypted frame",
+            "m1_secure_zero(ivct, sizeof(ivct));" in unseal,
+        ),
+        (
+            "unseal zeroizes its output on failure",
+            "m1_secure_zero(psk_out, outsz);" in unseal,
+        ),
+        (
+            "set_psk absorbs the caller's plaintext",
+            "m1_secure_zero(psk, plen);" in setfn,
+        ),
+        (
+            "writer header keeps FMT_VER and names the credential column",
+            'timestamp,credential\\r\\n"' in wifi
+            and "#define WIFI_SAVED_FMT_VER          1" in wifi,
+        ),
+        (
+            "no plaintext PSK column exists",
+            "version,ssid,bssid,channel,rssi,security,psk" not in wifi,
+        ),
+        (
+            "public API declared in m1_wifi.h",
+            "uint8_t wifi_cred_set_psk(const char *bssid_upper, char *psk);" in header
+            and "bool wifi_cred_get_psk(uint16_t idx, char *psk_out, size_t outsz);"
+            in header,
+        ),
+    ]
+    passed = 0
+    for msg, ok in checks:
+        if ok:
+            passed += 1
+        else:
+            print(f"  FAIL: {msg}")
+    print(
+        f"credential zeroization/format source verification: {passed}/{len(checks)} checks passed"
+    )
     assert passed == len(checks)
 
 
@@ -808,6 +1535,21 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:
         eapol_tests(tmp)
         saved_networks_tests(tmp)
+        saved_networks_cred_tests(tmp)
         cap_pick_path_tests(tmp)
     capture_open_write_checks_source_text()
-    print("All Wi-Fi/MonstaShark persistence hardening host tests PASS (ASan/UBSan).")
+    cred_zeroization_source_checks()
+    if all(SANITIZER_MODES):
+        print(
+            "All Wi-Fi/MonstaShark persistence hardening host tests PASS (ASan/UBSan)."
+        )
+    elif any(SANITIZER_MODES):
+        print(
+            "All Wi-Fi/MonstaShark persistence hardening host tests PASS "
+            "(mixed sanitizer availability -- see per-build note)."
+        )
+    else:
+        print(
+            "All Wi-Fi/MonstaShark persistence hardening host tests PASS "
+            "(plain build: this toolchain ships no ASan/UBSan runtime)."
+        )

@@ -11,6 +11,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: Wi-Fi credential encryption at rest on the saved-networks store
+  (issue #42 part 2, PR-9 of the Merge 3 series) — `saved_networks.csv`
+  rows gain an OPTIONAL 8th `credential` column carrying
+  `base64(iv‖ct):base64(cmac)`: AES-256-CBC over a fixed 64-byte
+  zero-padded PSK frame (no padding scheme, exact-PSK-length never
+  leaks into the ciphertext size, both WPA forms 8..63-char passphrase
+  and 64-hex PMK fit), per-record IV from the hardware RNG (a refusing
+  RNG refuses the save — no fallback), AES-CMAC over iv‖ct under the
+  PR-8 UID-derived key, constant-time tag compare, and strict base64
+  helpers (no dynamic allocation, host-testable). `FMT_VER` stays 1:
+  legacy 7-column rows (and rows with an empty 8th) remain valid and
+  unencrypted-by-absence — no migration shim, no second store
+  (`m1_wifi_cred.c` is not imported). Tampered/truncated/wrong-CMAC/
+  foreign-UID fields mark that network's credential unusable (skipped
+  by the future join flow) while the row stays a valid recon target
+  and the store still boots clean; plaintext PSK and key buffers are
+  zeroized with `m1_secure_zero()` on every path, and
+  `wifi_cred_set_psk()` absorbs (zeroizes) the caller's buffer. The
+  join-flow API (`wifi_cred_set_psk`/`wifi_cred_get_psk`, decrypt at
+  join time with re-verification) ships in `m1_wifi.h` for PR-11 — no
+  menu/UI yet, by design. Honest threat model in the new
+  `docs/security/wifi-credential-threat-model.md` (protected:
+  removed-SD-card casual access only; exclusions: physical attacker
+  with SWD/firmware knowledge, plaintext SPI link to the ESP32, secure
+  element, 802.1X; CMAC is integrity-not-confidentiality; UID-key
+  limits), linked from `docs/security.md`. Host suite
+  `m1_csrc/test/m1_wifi_persistence_hardening_test.py` extended with a
+  compiled 114-check encrypted-credential battery (real codec + real
+  `m1_crypto.c`, injectable device-UID and RNG seams: round-trip,
+  7/8-column compatibility, ciphertext tamper, wrong CMAC, truncation,
+  foreign-UID recovery, oversized/garbage fields, store-not-bricked,
+  zeroization contracts) plus 10 static source checks, and wired into
+  `scripts/run_host_tests.sh`. The credential column is written
+  CSV-quoted (like every other free-text column), so hostile or
+  foreign-device field text round-trips verbatim and every rewritten
+  row keeps exactly 8 columns.
 - Fork: crypto + hardware RNG foundation (issue #42 part 1, PR-8 of the
   Merge 3 series) — new pure-core module `m1_csrc/m1_crypto.c/.h`
   (software AES-256 block/CBC per FIPS-197/NIST SP 800-38A with
@@ -38,8 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SP 800-38A AES-256 ECB/CBC vectors, all four RFC 4493 CMAC examples,
   ten NIST CAVP `CMACGenAES256.rsp` vectors, plus an injectable
   RNG-failure seam proving the refusal semantics and a zeroization
-  dead-store test run at `-O0`/`-O2`. No WiFi integration yet — the
-  encrypted `saved_networks.csv` field lands in the PR-9 follow-up.
+  dead-store test run at `-O0`/`-O2`. The store integration is the
+  PR-9 entry above (this unit shipped the primitive layer only).
 - Fork: Sub-GHz Radio Settings (issue #3) — the Sub-GHz menu gains a
   *Radio Settings* leaf with a modal screen (the established 128×64
   settings idiom) for modulation (Auto/OOK/2-FSK/2-GFSK/4-FSK/4-GFSK),

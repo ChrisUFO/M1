@@ -14,6 +14,8 @@
 #ifndef M1_WIFI_H_
 #define M1_WIFI_H_
 
+#include <stddef.h>
+
 #include "m1_system.h"
 #include "ctrl_api.h"
 
@@ -33,6 +35,32 @@ void wifi_scan_networks(void);
 void wifi_saved_browser(void);
 void wifi_config(void);
 uint8_t wifi_ap_sta_scan_list(ctrl_cmd_t *app_req, uint8_t target);
+
+/* Encrypted PSK credentials on the saved-networks CSV (issue #42 part 2).
+ * Field: base64(iv||ct)":"base64(cmac); AES-256-CBC over a fixed 64-byte
+ * framed plaintext, AES-CMAC over iv||ct, key derived from the device UID
+ * (m1_crypto.h), IV from the hardware RNG (refusal, never a fallback).
+ * See docs/security/wifi-credential-threat-model.md for the honest scope.
+ *
+ * wifi_cred_set_psk: seal, store, and persist the PSK for the saved
+ * network with the given canonical uppercase BSSID. psk is ABSORBED
+ * (zeroized on every return once sealing is attempted). NULL/"" clears
+ * the stored credential. Returns 0 ok, 1 no such network, 2 save failed
+ * (state rolled back), 3 seal refused (PSK length outside 1..64, RNG,
+ * or KDF; nothing changed). WPA passphrase-length policy (8..63) is the
+ * join flow's, not the store's: both WPA forms — 8..63-char passphrases
+ * and the 64-hex-char PMK — are storable.
+ *
+ * wifi_cred_get_psk: decrypt at join time (re-verifies; never trusts the
+ * load-time state alone). psk_out needs room for 65 bytes (the 64-char
+ * hex-PMK form plus NUL). On any failure — absent credential, structural
+ * damage, truncation, wrong CMAC, or a field sealed under a different
+ * device's UID — the entry is marked unusable, skipped by the join flow,
+ * and psk_out is returned zeroized. On success the CALLER must
+ * m1_secure_zero() psk_out after use (the PR-11 join-flow contract).
+ * Returns true iff psk_out holds the decrypted PSK. */
+uint8_t wifi_cred_set_psk(const char *bssid_upper, char *psk);
+bool wifi_cred_get_psk(uint16_t idx, char *psk_out, size_t outsz);
 
 /* Shared Wi-Fi presentation used by the standard Wi-Fi tools and
  * MonstaShark. These functions draw only; they do not scan, select a radio
