@@ -65,10 +65,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and — transiently, when the console echoes the typed command — the
     reply buffer; each is zeroized with `m1_secure_zero()` on every
     exit path (the ESP-side handler wipes its `AT+CWJAP` command
-    before free and, after the exchange, scrubs the driver's TX-path
-    copies that carried it — the SPI TX stream-buffer storage, under
-    the driver's single-flight semaphore, and the DMA staging region
-    wiped by the control task right after the transmit). Reply
+    before free on every path that built it; the DMA staging region is
+    wiped after every actual transmit; the SPI TX stream-buffer
+    storage — where the command's `xStreamBufferSend` copy landed — is
+    scrubbed best-effort after the exchange, only when the driver's
+    single-flight semaphore is free and the ring is genuinely empty,
+    so a timeout against a wedged slave that never pulled the write
+    can leave the plaintext in the ring until later traffic
+    overwrites it). Reply
     classification matches `JOINED`/`JOIN_FAIL`
     only at a line start, so a marker substring inside an echoed SSID
     can never forge or mask a result. Credentials are sealed through

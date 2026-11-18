@@ -737,13 +737,26 @@ def static_checks():
         CHECK("m1_secure_zero(psk" in body, f"{fn} zeroizes its psk buffer")
     editor = function(join_section, "wifi_psk_entry")
     CHECK("m1_secure_zero(psk" in editor, "editor zeroizes on cancel")
-    # 3b. The editor's save branch validates with the REAL join grammar
-    #     (wifi_join_psk_valid -- the same rule the builder enforces),
-    #     so a 64-char non-hex entry is refused in-editor, not after the
-    #     gate round trip.
+    # 3b. The editor's save branch must CONSUME the real join grammar's
+    #     verdict (wifi_join_psk_valid -- the same rule the builder
+    #     enforces), not merely mention it: pin the exact conditional
+    #     shape, the accept path (return 1) directly under it, and the
+    #     distinct 64-non-hex notice. A refactor that computes the
+    #     predicate and ignores the result, or drops the distinct
+    #     notice, fails these.
+    editor_save = editor.split("WIFI_PSK_ROTOR_END_IDX) /* '>' : save */")[1][:700]
     CHECK(
-        "wifi_join_psk_valid(psk)" in editor,
-        "editor save branch does not run the real join grammar",
+        "if (wifi_join_psk_valid(psk))" in editor_save,
+        "editor save branch does not branch on the real grammar verdict",
+    )
+    save_cond = editor_save.split("if (wifi_join_psk_valid(psk))")[1][:400]
+    CHECK(
+        "return 1;" in save_cond.split("}")[0],
+        "editor accept path must return directly under the validator",
+    )
+    CHECK(
+        '"64=hex"' in editor_save,
+        "editor 64-non-hex refusal notice missing",
     )
 
     # 4. The PSK is never logged and never embedded in an error string:
@@ -814,14 +827,26 @@ def static_checks():
     # 8b. The SPI TX stream-buffer copy: the command (plaintext PSK)
     #     rode into spi_master_tx_ring_buf via xStreamBufferSend and
     #     FreeRTOS does not zero storage on read -- a bounded scrub
-    #     helper must ride the driver's single-flight semaphore, go
-    #     ONLY through the stream-buffer API (no blind memset of
-    #     driver internals), never notify the slave, and be invoked
-    #     from the join handler after the exchange.
+    #     helper must ride the driver's single-flight semaphore, gate
+    #     on genuine EMPTINESS (occupancy, not free space -- a pending
+    #     command must never be drained into the helper's buffers),
+    #     go ONLY through the stream-buffer API (no blind memset of
+    #     driver internals), never notify the slave, zeroize its own
+    #     drain target, and be invoked from the join handler after the
+    #     exchange.
     scrub = function(esp_app, "esp_scrub_spi_tx_ring_buf")
     CHECK(
         "xSemaphoreTake(esp_ctrl_req_sem" in scrub,
         "tx-ring scrub does not ride the single-flight semaphore",
+    )
+    CHECK(
+        "xStreamBufferIsEmpty(spi_master_tx_ring_buf)" in scrub,
+        "tx-ring scrub lacks the occupancy (IsEmpty) precondition",
+    )
+    CHECK(
+        scrub.index("xStreamBufferIsEmpty(spi_master_tx_ring_buf)")
+        < scrub.index("while ( done"),
+        "occupancy precondition must precede the fill loop",
     )
     CHECK(
         "xStreamBufferSend(" in scrub and "xStreamBufferReceive(" in scrub,
@@ -831,6 +856,10 @@ def static_checks():
     CHECK(
         "notify_slave_to_recv" not in scrub,
         "tx-ring scrub must never trigger a transmission",
+    )
+    CHECK(
+        "wipe[wi] = 0;" in scrub,
+        "tx-ring scrub does not zeroize its drain target",
     )
     CHECK(
         "esp_scrub_spi_tx_ring_buf();" in handler,

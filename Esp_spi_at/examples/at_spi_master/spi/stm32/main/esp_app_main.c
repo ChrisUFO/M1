@@ -431,29 +431,43 @@ static uint8_t *spi_AT_app_get_response(int *read_len, uint32_t *uid, int timeou
 } // static uint8_t *spi_AT_app_get_response(int *read_len, uint32_t *uid, int timeout_sec)
 
 
-/* Scrub the SPI TX stream buffer's STORAGE after a secret-bearing
- * command (PR-11 review: the plaintext PSK of AT+CWJAP rides join_cmd
- * into spi_master_tx_ring_buf through xStreamBufferSend, and FreeRTOS
- * stream buffers do not zero storage on read -- without this scrub
- * those bytes persist in static RAM until a later, longer command
- * happens to overwrite them).
+/* Conditionally scrub the SPI TX stream buffer's STORAGE after a
+ * secret-bearing command (PR-11 review: the plaintext PSK of AT+CWJAP
+ * rides join_cmd into spi_master_tx_ring_buf through
+ * xStreamBufferSend, and FreeRTOS stream buffers do not zero storage
+ * on read -- without this scrub those bytes persist in static RAM
+ * until a later, longer command happens to overwrite them).
  *
- * SINGLE-FLIGHT SAFETY (verified against this driver): the ONLY writer
- * of spi_master_tx_ring_buf is spi_AT_app_send_command(), serialized
- * on esp_ctrl_req_sem -- holding that semaphore here means no sender
- * is mid-write and none can start. The SPI control task never writes
- * the buffer; it only drains it, and it drains a request's bytes
- * before that request's response can arrive, so by the time the
- * caller (post-response) reaches this scrub the ring holds no pending
- * bytes. The scrub goes EXCLUSIVELY through the stream-buffer API
- * (fill with zeroes in chunks, drain each chunk straight back out):
- * it covers every storage position regardless of the head/tail wrap
- * state (this FreeRTOS does not reset the indices on empty, so an
- * exact-count push could land past the bytes that carried the
- * command), it never calls notify_slave_to_recv() so nothing is ever
- * transmitted, and it leaves the ring empty exactly as it found it.
- * If the semaphore cannot be taken (another request is genuinely in
- * flight) the scrub is skipped rather than racing it. */
+ * CONDITIONAL BY DESIGN -- the scrub runs only when BOTH hold:
+ *  1. The driver's single-flight semaphore (esp_ctrl_req_sem) is free
+ *     within its 100 ms bound. The ONLY ring writer is
+ *     spi_AT_app_send_command(), serialized on that semaphore, so
+ *     holding it means no sender is mid-write and none can start.
+ *     If it cannot be taken, the scrub is SKIPPED (never race another
+ *     request).
+ *  2. The ring is genuinely EMPTY (xStreamBufferIsEmpty). Occupancy,
+ *     not free space, is the precondition: after a response TIMEOUT
+ *     the semaphore is already released while the command bytes may
+ *     still sit undrained in the ring (the slave never pulled the
+ *     write). Draining a non-empty ring would pop the OLDEST bytes --
+ *     the plaintext command -- into this function's buffers and
+ *     silently replace queued TX bytes with zeros. A non-empty ring
+ *     is left untouched and the scrub is SKIPPED (documented residual:
+ *     those bytes persist in the ring storage until later traffic
+ *     overwrites them).
+ * The SPI control task never writes the buffer; it only drains it.
+ * The scrub goes EXCLUSIVELY through the stream-buffer API (fill with
+ * zeroes in chunks, drain each chunk straight back out); it never
+ * calls notify_slave_to_recv(), so nothing is ever transmitted, and a
+ * completed scrub leaves the ring empty exactly as it found it.
+ * Coverage precision: with xLength = usable+1, the fill overwrites
+ * every storage slot EXCEPT the one immediately behind the write head
+ * -- which can only hold the previously drained command's final line
+ * terminator ('\n'; every CONCAT_CMD_PARAM command ends CRLF) or a
+ * zero from an earlier scrub, never credential material. The drain
+ * target is zeroized before return so it can never become a retention
+ * site, and the short-send/short-receive breaks remain as defensive
+ * second gates. */
 static void esp_scrub_spi_tx_ring_buf(void)
 {
 	uint8_t zeros[128] = {0};
@@ -464,7 +478,13 @@ static void esp_scrub_spi_tx_ring_buf(void)
 		return;
 
 	if ( xSemaphoreTake(esp_ctrl_req_sem, pdMS_TO_TICKS(100)) != pdPASS )
-		return; /* another request in flight: never race it */
+		return; /* condition 1 failed: another request in flight */
+
+	if ( !xStreamBufferIsEmpty(spi_master_tx_ring_buf) )
+	{
+		xSemaphoreGive(esp_ctrl_req_sem);
+		return; /* condition 2 failed: pending bytes, leave them to the driver */
+	}
 
 	while ( done < (size_t)STREAM_BUFFER_SIZE )
 	{
@@ -472,10 +492,20 @@ static void esp_scrub_spi_tx_ring_buf(void)
 		if ( chunk > sizeof(zeros) )
 			chunk = sizeof(zeros);
 		if ( xStreamBufferSend(spi_master_tx_ring_buf, zeros, chunk, 0) != chunk )
-			break; /* ring not empty as expected: leave it alone */
+			break; /* defensive second gate: space vanished -> abort */
 		if ( xStreamBufferReceive(spi_master_tx_ring_buf, (void*)scratch, chunk, 0) != chunk )
-			break;
+			break; /* defensive second gate: drain mismatch -> abort */
 		done += chunk;
+	}
+
+	/* The drain target only ever held the zeros just pushed, but wipe it
+	 * anyway (volatile stores) so no future edit can turn scratch into
+	 * a plaintext retention site. */
+	{
+		volatile uint8_t *wipe = scratch;
+		size_t wi;
+		for ( wi=0; wi<sizeof(scratch); wi++ )
+			wipe[wi] = 0;
 	}
 
 	xSemaphoreGive(esp_ctrl_req_sem);
@@ -736,12 +766,23 @@ uint8_t wifi_ap_scan_list(ctrl_cmd_t *app_req)
  *   CTRL_ERR_NO_AP_FOUND         AT +CWJAP:<3> (AP not found)
  *   CTRL_ERR_NOT_CONNECTED       +CWJAP:<1|4|other> or FAIL
  *   CTRL_ERR_REQUEST_TIMEOUT     no marker before the timeout
- * The plaintext PSK rides the join command into three transient copies,
- * each scrubbed: the join_cmd buffer (volatile-store wipe before free),
- * the SPI TX stream-buffer storage (esp_scrub_spi_tx_ring_buf() after
- * the exchange, under the driver's single-flight semaphore), and the
- * DMA staging region in the control task (wiped right after the
- * transmit). */
+ * The plaintext PSK rides the join command into three transient copies.
+ * Per exit path of this handler (re-verified with the conditional TX
+ * scrub): the join_cmd buffer is wiped (volatile stores) on EVERY path
+ * that built it -- send refusal, AT failure, success, and timeout
+ * alike; the DMA staging region in the control task is wiped right
+ * after EVERY actual transmit (the slave answering proves the transmit
+ * happened); the SPI TX stream-buffer storage is scrubbed
+ * CONDITIONALLY (esp_scrub_spi_tx_ring_buf(): only when the driver's
+ * single-flight semaphore is free within its bound AND the ring is
+ * genuinely empty -- both hold on the normal success/AT-failure paths
+ * and on a timeout after the command was drained). Documented
+ * residual: on a response timeout against a wedged slave that never
+ * pulled the write -- or when another request holds the semaphore --
+ * the scrub is skipped and the plaintext can remain in the ring
+ * storage until later traffic overwrites it. Grammar-refusal,
+ * mode-set-failure, and malloc-failure exits build no command at all,
+ * so no copy ever exists on them. */
 uint8_t wifi_connect_ap(ctrl_cmd_t *app_req)
 {
 	char *rx_buf = NULL;
