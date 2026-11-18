@@ -460,9 +460,20 @@ static uint8_t *spi_AT_app_get_response(int *read_len, uint32_t *uid, int timeou
  * zeroes in chunks, drain each chunk straight back out); it never
  * calls notify_slave_to_recv(), so nothing is ever transmitted, and a
  * completed scrub leaves the ring empty exactly as it found it.
- * Coverage: an uninterrupted fill overwrites every storage slot; a
- * short-send or short-receive break aborts the scrub and leaves the
- * remainder unwritten (the defensive second gates above). The drain
+ * Coverage (derived from the in-tree FreeRTOS
+ * Middlewares/.../stream_buffer.c): xStreamBufferCreate(N) allocates
+ * N+1 storage bytes (xBufferSizeBytes++ before
+ * prvInitialiseNewStreamBuffer; xLength = N+1) while
+ * xStreamBufferSpacesAvailable reports N when empty -- the fill sends
+ * exactly STREAM_BUFFER_SIZE = N bytes, so it overwrites every slot
+ * of the N+1-slot storage EXCEPT one: the slot immediately behind the
+ * initial write head. That residual slot holds the most recently
+ * written pre-scrub byte -- the previous command's final '\n' (every
+ * command written into this ring ends CRLF, via CONCAT_CMD_PARAM /
+ * the join format string) or a zero from an earlier scrub -- never
+ * credential material. A short-send/short-receive break aborts the
+ * scrub and leaves the remainder unwritten (the defensive second
+ * gates above). The drain
  * target is zeroized before return so it can never become a retention
  * site. */
 static void esp_scrub_spi_tx_ring_buf(void)

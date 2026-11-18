@@ -876,9 +876,14 @@ def static_checks():
     )
     # 8d. The caller's request struct (u.wifi_ap_config.ssid/.pwd) is the
     #     FOURTH plaintext holder: a wipe helper must cover both fields
-    #     with volatile stores, and the handler must call it on every
-    #     exit site that received them -- the three grammar-refusal
-    #     returns, the malloc-failure return, and the common tail.
+    #     at their FULL declared array widths with volatile stores, and
+    #     ENFORCEMENT RULE: every `return` statement in the handler body
+    #     must be preceded, one-for-one in program order, by an
+    #     esp_wipe_ap_config_credentials(app_req) call -- the handler has
+    #     no goto, so program order equals path coverage, and counting
+    #     return sites against wipe sites (comments stripped: the doc
+    #     block mentions the word 'return') makes an injected sixth
+    #     UNWIPED return break this suite.
     cred_wipe = function(esp_app, "esp_wipe_ap_config_credentials")
     CHECK(
         "u.wifi_ap_config.pwd" in cred_wipe and "u.wifi_ap_config.ssid" in cred_wipe,
@@ -888,11 +893,35 @@ def static_checks():
         "volatile" in cred_wipe,
         "request-struct wipe must use volatile stores",
     )
-    n_wipe_sites = handler.count("esp_wipe_ap_config_credentials(app_req);")
     CHECK(
-        n_wipe_sites == 5,
-        f"handler wipes the request struct at {n_wipe_sites} sites (need 5: "
-        "3 grammar refusals + malloc failure + common tail)",
+        "sizeof(app_req->u.wifi_ap_config.pwd)" in cred_wipe
+        and "sizeof(app_req->u.wifi_ap_config.ssid)" in cred_wipe,
+        "request-struct wipe must sweep the FULL declared field widths "
+        "(sizeof on the arrays, not their elements)",
+    )
+    handler_code = re.sub(r"//[^\n]*|/\*[\s\S]*?\*/", "", handler)
+    ret_sites = [m.start() for m in re.finditer(r"\breturn\b", handler_code)]
+    wipe_sites = [
+        m.start()
+        for m in re.finditer(
+            r"esp_wipe_ap_config_credentials\(app_req\);", handler_code
+        )
+    ]
+    CHECK(
+        len(ret_sites) == len(wipe_sites),
+        f"exit-path wipe rule violated: {len(ret_sites)} return sites vs "
+        f"{len(wipe_sites)} wipe sites -- every return needs its own "
+        "preceding esp_wipe_ap_config_credentials call",
+    )
+    CHECK(
+        all(w < r for w, r in zip(wipe_sites, ret_sites)),
+        "exit-path wipe rule violated: each wipe must precede its return "
+        "in program order (no goto -> order == path)",
+    )
+    CHECK(
+        len(ret_sites) >= 5,
+        f"expected at least the 5 known exits (3 grammar refusals, malloc "
+        f"failure, common tail), found {len(ret_sites)}",
     )
     CHECK(
         "ESP32C6_AT_REQ_CONNECT_AP" in esp_list,
