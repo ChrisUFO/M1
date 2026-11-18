@@ -11,6 +11,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: IR favorites and recent lists in the SD-card IR browser, plus the
+  explicit "cycle all in category" submenu action (issue #43 part 3 —
+  this completes #43 together with the earlier IR units). The browser
+  dashboard gains *Favorites* and *Recent* rows backed by two plain text
+  stores under `0:/System` (`ir_favorites.txt` / `ir_recent.txt`, the
+  legacy fork format: one full device path per line, newest first, LRU
+  caps 20/10, whole-file bounded rewrites, `0:/System` ensured lazily on
+  first write). Loading is tolerant — a missing, unreadable, blank,
+  corrupt, over-long or mis-shaped line is skipped (stored lines must be
+  `0:/IR/….ir` device paths, so a rewrite torn by card-full or card
+  removal is dropped at load and self-heals on the next rewrite) and an
+  unreadable store renders an empty list, never an error screen — and
+  stored rows open the same
+  device → button flow as every other list (a vanished path surfaces the
+  normal "Read failed" notice). Holding OK in the button view for about a
+  second toggles a device in the favorites store (legacy `* ` title
+  marker + short notice; the long-press mark fires exactly once per hold
+  and never while a frame is in flight — a long-press landing mid-frame
+  skips the toggle but still swallows that hold's repeats — and the OK
+  auto-repeat clicks that follow the toggle are suppressed until the key
+  is released, so
+  favoriting cannot machine-gun the selected button; the short-press
+  transmit and LEFT/RIGHT paging are untouched); every completed frame
+  records the device in the recent store (a send aborted with BACK is
+  not recorded). Store loads/rewrites are filesystem-only and run between frames
+  in the browser session — the transmit path itself performs no store or
+  filesystem writes, so favorites/recent handling can never overlap IRMP
+  TX/learn. The upstream cycle-through-every-device session
+  (`infrared_universal_all_remotes`) is exposed and demoted from the
+  default per-press behavior to four explicit Infrared → Universal
+  Remotes → *Cycle all TVs/Audio/Projectors/ACs* submenu actions with
+  the upstream pause/resume and progress UI preserved (it acquires the
+  single-owner IRMP guard itself); the four universal remote screens now
+  transmit exactly one frame per OK press (the next device's code each
+  press, END_OF_FILE wraps around), matching the browser's
+  one-frame-per-button default. Static workspaces only (+3.2 KB BSS for
+  the shared store workspace); no dynamic allocation in screen loops.
+  New host suite `m1_csrc/test/m1_ir_favorites_test.py` (70 checks):
+  compiled pure-core store model (trim, tolerant-load rule, LRU
+  insert/dedup/eviction/removal, basename labels, favorite title
+  marker) plus static seams for the store wiring, corruption tolerance,
+  the serialization rules and the cycle-all dispatch; browser suite
+  updated for the new session signature. Format, caps and behavior are
+  documented in `docs/ir-provisioning.md` and `docs/architecture.md`.
 - Fork: IR file browser on the SD card (issue #43 part 2) — the Infrared
   menu gains *IR File Browser* (the four upstream category entries stay):
   a dashboard over the side-loaded Flipper IRDB tree under `0:/IR`

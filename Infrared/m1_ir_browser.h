@@ -29,6 +29,18 @@
 * on demand. There is no whole-file parser here and no per-file command
 * cap; the legacy fork's ir_proto_map is not ported (strict-skip through
 * the single upstream map applies instead).
+*
+* Favorites/recent stores (PR-6): two plain text files under 0:/System
+* (ir_favorites.txt / ir_recent.txt, one device path per line, LRU caps
+* M1_IR_BROWSER_FAVORITES_MAX / M1_IR_BROWSER_RECENT_MAX). They are pure
+* filesystem data: loads and rewrites happen only in this UI task between
+* transmits -- never inside the transmit path itself, and never while a
+* frame is on air (recent is recorded where tx_active clears, after the
+* frame completes) -- so they can never overlap IRMP TX/learn (the
+* browser holds the session guard while it runs, and no other path
+* writes these files). Loads are tolerant: a
+* missing, corrupt or over-long line is skipped; an unreadable file
+* renders an empty list.
 * ===========================================================================
 */
 
@@ -60,6 +72,14 @@
 * M1_IR_FILE_RAW_TICK_US). Longer raw signals surface a notice instead of
 * overflowing. */
 #define M1_IR_BROWSER_RAW_TICKS_MAX	4096
+
+/* Favorites / recent LRU caps (issue #43 part 3 / PR-6, legacy values).
+ * Both stores are plain text files under 0:/System -- one full device
+ * path per line, newest first -- rewritten whole on every change (a
+ * bounded rewrite: never more lines than the cap). See
+ * docs/ir-provisioning.md for the format and tolerance rules. */
+#define M1_IR_BROWSER_FAVORITES_MAX	20
+#define M1_IR_BROWSER_RECENT_MAX		10
 
 /* Menu entry point (Infrared > IR File Browser). */
 void m1_ir_browser_run(void);

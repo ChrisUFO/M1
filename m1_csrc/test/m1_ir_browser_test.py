@@ -162,6 +162,7 @@ def pure_core_tests():
     )
     rows = define_of(browser_h, "M1_IR_BROWSER_ROWS")
     name_len = define_of(browser_h, "M1_IR_BROWSER_NAME_LEN_MAX")
+    path_len = define_of(browser_h, "M1_IR_BROWSER_PATH_LEN_MAX")
     proto_len = define_of(ir_file_h, "M1_IR_FILE_PROTO_LEN_MAX")
 
     harness = (
@@ -172,6 +173,7 @@ def pure_core_tests():
         "#include <assert.h>\n"
         f"#define M1_IR_BROWSER_ROWS {rows}\n"
         f"#define M1_IR_BROWSER_NAME_LEN_MAX {name_len}\n"
+        f"#define M1_IR_BROWSER_PATH_LEN_MAX {path_len}\n"
         f"#define M1_IR_FILE_PROTO_LEN_MAX {proto_len}\n"
         "\n"
         + core
@@ -545,8 +547,8 @@ def static_seam_tests():
         (
             "infrared_universal_all_remotes",
             remotes_c,
-            "static void infrared_universal_all_remotes(uint8_t remote_type)\n{",
-            "} // static void infrared_universal_all_remotes(uint8_t remote_type)",
+            "void infrared_universal_all_remotes(uint8_t remote_type, uint8_t cycle_all)\n{",
+            "} // void infrared_universal_all_remotes(uint8_t remote_type, uint8_t cycle_all)",
             "ir_remote_file_header_check(",
         ),
         (
@@ -668,6 +670,42 @@ def static_seam_tests():
         and "if ( irb_skip_acc.skipped == 0u )" in btn_scr,
         "zero-usable-button files surface the aggregated skip notice "
         "(gated 'No usable' fallback), not a suppressed explanation",
+    )
+
+    # --- OK auto-repeat after the favorites toggle is suppressed: the
+    # toggle's long press re-emits BUTTON_EVENT_CLICK every
+    # BUTTON_REPEATED_PRESS for the rest of the hold (m1_system state
+    # machine), so without a guard the natural "hold OK through the
+    # toggle notice" machine-guns the selected button
+    i_lclick = btn_scr.find("BUTTON_EVENT_LCLICK")
+    i_arm = btn_scr.find("ok_repeat_guard = 1;")
+    CHECK(
+        -1 not in (i_lclick, i_arm) and i_lclick < i_arm,
+        "the favorites toggle arms the OK auto-repeat guard",
+    )
+    # the arm must precede the in-flight refusal inside the LCLICK branch:
+    # an LCLICK landing while a frame is still on air skips the toggle, but
+    # that hold's repeats are still swallowed -- otherwise each one
+    # transmits after the frame completes (the machine-gun hole)
+    i_refuse = btn_scr.find("if ( tx_active )", i_lclick)
+    CHECK(
+        -1 not in (i_arm, i_refuse) and i_lclick < i_arm < i_refuse,
+        "the repeat guard is armed before the in-flight refusal (a toggle "
+        "attempt during a frame still swallows that hold's repeats)",
+    )
+    i_chk = btn_scr.find("if ( ok_repeat_guard )")
+    i_hold = btn_scr.find("== BUTTON_IS_LPRESSED")
+    i_lift = btn_scr.find("ok_repeat_guard = 0", i_hold)
+    i_send = btn_scr.find("irb_draw_sending(")
+    CHECK(
+        -1 not in (i_chk, i_hold, i_lift, i_send) and i_chk < i_hold < i_lift,
+        "OK CLICKs are swallowed while the toggle's hold persists "
+        "(polled through the buttons_ctl status)",
+    )
+    CHECK(
+        i_chk < i_send and "!= BUTTON_IS_PRESSED" in btn_scr,
+        "suppression runs before the transmit starts, and the first "
+        "CLICK of a NEW press (fresh debounce cycle) lifts it",
     )
 
     # --- documented scan caps (docs/ir-provisioning.md table)

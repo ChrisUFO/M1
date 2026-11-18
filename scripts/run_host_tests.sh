@@ -6,8 +6,9 @@
 # (PR-2), the backlight-startup/saver suite (PR-2), the feedback manager
 # suite incl. the LED-notification gate (PR-2), the RTC date/time suite
 # (PR-3), the streaming .ir loader suite (PR-4), the IRMP golden-decode
-# suite incl. the transmit-path vectors (PR-4) and the IR browser suite
-# (PR-5). The remaining pre-existing host tests under m1_csrc/test/ and
+# suite incl. the transmit-path vectors (PR-4), the IR browser suite
+# (PR-5) and the IR favorites/recent + cycle-all suite (PR-6). The
+# remaining pre-existing host tests under m1_csrc/test/ and
 # m1_csrc/tests/ are NOT run by this script yet; later units append their
 # own host tests to the list below by design, so a green run means exactly
 # the listed tests passed -- nothing more.
@@ -50,6 +51,7 @@ m1_csrc/test/m1_rtc_test.py
 m1_csrc/test/m1_ir_file_test.py
 m1_csrc/test/m1_ir_golden_decode_test.py
 m1_csrc/test/m1_ir_browser_test.py
+m1_csrc/test/m1_ir_favorites_test.py
 m1_csrc/tests/test_backlight_startup.py
 "
 

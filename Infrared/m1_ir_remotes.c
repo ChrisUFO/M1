@@ -45,6 +45,14 @@
 * block, increment the skipped counter and raise a visible notice -- never a
 * garbage transmit): NEC42ext, Samsung48/Samsung64, Cassette and any other
 * Flipper name with no encoder in the vendored IRMP build.
+*
+* PR-6 (issue #43 part 3): the session entry is exposed as
+* infrared_universal_all_remotes(remote_type, cycle_all). The four
+* category entries run it with cycle_all == 0 -- ONE frame per OK press,
+* the default per-press behavior everywhere in this firmware -- while
+* the explicit "Cycle all ..." submenu actions run it with cycle_all == 1,
+* preserving the upstream cycle-through-every-device session with its
+* pause/resume and progress UI.
 * ===========================================================================
 */
 
@@ -537,7 +545,11 @@ void infrared_universal_tv_remotes(void);
 void infrared_universal_audio_remotes(void);
 void infrared_universal_projector_remotes(void);
 void infrared_universal_ac_remotes(void);
-static void infrared_universal_all_remotes(uint8_t remote_type);
+void infrared_universal_cycle_all_tv(void);
+void infrared_universal_cycle_all_audio(void);
+void infrared_universal_cycle_all_projector(void);
+void infrared_universal_cycle_all_ac(void);
+void infrared_universal_all_remotes(uint8_t remote_type, uint8_t cycle_all);
 static void ir_button_icons_update(uint8_t remote_type);
 static void ir_ac_button_text_update(uint8_t pos_x, uint8_t pos_y);
 static void ir_button_icon_redraw(S_M1_IR_Remote_Buttons_t *pbutton, uint8_t inverted);
@@ -578,12 +590,21 @@ uint8_t ir_remote_file_load(void)
 
 /*============================================================================*/
 /**
-  * @brief
-  * @param
-  * @retval
+  * @brief  One universal-remote session over a firmware-owned category
+  * 		database (0:/infrared/db). Exposed for the explicit "cycle all
+  * 		in category" submenu actions (issue #43: upstream behavior
+  * 		preserved, never the default per-press behavior).
+  * @param  remote_type: category (IR_REMOTETYPE_*)
+  * @param  cycle_all: 0 = the default remote UI: every OK press plays
+  * 		exactly ONE frame of the next device's code (press again to
+  * 		advance, END_OF_FILE wraps back to the first device);
+  * 		1 = the upstream cycle: after the first OK the session plays
+  * 		through every device automatically with pause/resume (OK) and
+  * 		stop (BACK), progress shown as device_count/total.
+  * @retval None (screen session; takes the single-owner IRMP guard).
   */
 /*============================================================================*/
-static void infrared_universal_all_remotes(uint8_t remote_type)
+void infrared_universal_all_remotes(uint8_t remote_type, uint8_t cycle_all)
 {
 	S_M1_Buttons_Status this_button_status;
 	S_M1_Main_Q_t q_item;
@@ -777,7 +798,24 @@ static void infrared_universal_all_remotes(uint8_t remote_type)
 								ir_play_status_update(1, 1, 0); // Init
 								ir_play_status_update(0, 1, 0); // Make 100% progress
 								sys_error = 0; // Reset
-								ir_remote_state = IR_REMOTES_STATE_COMPLETE;
+								/* cycle mode ends in COMPLETE (upstream); the default
+								* single-frame mode returns to STANDBY so the next OK
+								* restarts from the first device without leaving the
+								* screen */
+								ir_remote_state = ( cycle_all ) ? IR_REMOTES_STATE_COMPLETE : IR_REMOTES_STATE_STANDBY;
+								if ( !cycle_all )
+								{
+									/* wrap to the first device: the same reset the
+									* next_transmission_req EOF handling below performs
+									* (header_checked is the only rewind trigger -- the
+									* next OK re-opens the file and starts from device
+									* one) plus the grid redraw over the progress
+									* overlay */
+									header_checked = 0; // Reset
+									ir_remote_file_deinit();
+									ir_button_icons_update(remote_type);
+									ir_button_icon_redraw(&ir_buttons_info[remote_type].button_post[this_button_row*this_remote_col_n + this_button_col], true); // Highlight the button
+								}
 								m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF); // Turn off
 							} // if ( sys_error==IR_ERROR_CODE_END_OF_FILE )
 							else
@@ -843,7 +881,23 @@ static void infrared_universal_all_remotes(uint8_t remote_type)
 						break;
 				} // switch ( ir_remote_state )
 
-				next_transmission_req = 1; // Request
+				if ( cycle_all )
+				{
+					next_transmission_req = 1; // Request
+				}
+				else
+				{
+					/* Default per-press behavior (issue #43): the pressed
+					 * function's ONE frame is done -- back to STANDBY with
+					 * the grid redrawn. The database file stays open, so
+					 * the next OK plays the next device's code; END_OF_FILE
+					 * (below) wraps it back to the first device. */
+					ir_remote_state = IR_REMOTES_STATE_STANDBY;
+					m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF); // Turn off
+					ir_play_status_update(0, device_count, 0);
+					ir_button_icons_update(remote_type);
+					ir_button_icon_redraw(&ir_buttons_info[remote_type].button_post[this_button_row*this_remote_col_n + this_button_col], true); // Highlight the button
+				} // if ( cycle_all )
 			} // else if ( q_item.q_evt_type==Q_EVENT_IRRED_TX )
 			else
 			{
@@ -891,20 +945,20 @@ static void infrared_universal_all_remotes(uint8_t remote_type)
 	} // while (1 ) // Main loop of this task
 
 	m1_ir_subsys_release(); // single-owner IRMP rule
-} // static void infrared_universal_all_remotes(uint8_t remote_type)
+} // void infrared_universal_all_remotes(uint8_t remote_type, uint8_t cycle_all)
 
 
 
 /*============================================================================*/
 /**
-  * @brief
+  * @brief  Default TV remote session: ONE frame per OK press.
   * @param
   * @retval
   */
 /*============================================================================*/
 void infrared_universal_tv_remotes(void)
 {
-	infrared_universal_all_remotes(IR_REMOTETYPE_TV);
+	infrared_universal_all_remotes(IR_REMOTETYPE_TV, 0); // default: single frame per press
 } // void infrared_universal_tv_remotes(void)
 
 
@@ -917,7 +971,7 @@ void infrared_universal_tv_remotes(void)
 /*============================================================================*/
 void infrared_universal_audio_remotes(void)
 {
-	infrared_universal_all_remotes(IR_REMOTETYPE_AUDIO);
+	infrared_universal_all_remotes(IR_REMOTETYPE_AUDIO, 0); // default: single frame per press
 } // void infrared_universal_audio_remotes(void)
 
 
@@ -931,7 +985,7 @@ void infrared_universal_audio_remotes(void)
 /*============================================================================*/
 void infrared_universal_projector_remotes(void)
 {
-	infrared_universal_all_remotes(IR_REMOTETYPE_PROJECTOR);
+	infrared_universal_all_remotes(IR_REMOTETYPE_PROJECTOR, 0); // default: single frame per press
 } // void infrared_universal_projector_remotes(void)
 
 
@@ -945,8 +999,67 @@ void infrared_universal_projector_remotes(void)
 /*============================================================================*/
 void infrared_universal_ac_remotes(void)
 {
-	infrared_universal_all_remotes(IR_REMOTETYPE_AC);
+	infrared_universal_all_remotes(IR_REMOTETYPE_AC, 0); // default: single frame per press
 } // void infrared_universal_ac_remotes(void)
+
+
+/*============================================================================*/
+/**
+  * @brief  Explicit "cycle all in category" submenu actions (issue #43
+  * 		part 3 / PR-6): the upstream cycle-through-every-device session
+  * 		with pause/resume and progress UI -- never the default
+  * 		per-press behavior (that is the single-frame remote above and
+  * 		the SD-card browser's one-frame-per-OK).
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+void infrared_universal_cycle_all_tv(void)
+{
+	infrared_universal_all_remotes(IR_REMOTETYPE_TV, 1); // explicit cycle-all action
+} // void infrared_universal_cycle_all_tv(void)
+
+
+/*============================================================================*/
+/**
+  * @brief  Cycle-all session for the audio category (see
+  * 		infrared_universal_cycle_all_tv).
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+void infrared_universal_cycle_all_audio(void)
+{
+	infrared_universal_all_remotes(IR_REMOTETYPE_AUDIO, 1); // explicit cycle-all action
+} // void infrared_universal_cycle_all_audio(void)
+
+
+/*============================================================================*/
+/**
+  * @brief  Cycle-all session for the projector category (see
+  * 		infrared_universal_cycle_all_tv).
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+void infrared_universal_cycle_all_projector(void)
+{
+	infrared_universal_all_remotes(IR_REMOTETYPE_PROJECTOR, 1); // explicit cycle-all action
+} // void infrared_universal_cycle_all_projector(void)
+
+
+/*============================================================================*/
+/**
+  * @brief  Cycle-all session for the AC category (see
+  * 		infrared_universal_cycle_all_tv).
+  * @param
+  * @retval
+  */
+/*============================================================================*/
+void infrared_universal_cycle_all_ac(void)
+{
+	infrared_universal_all_remotes(IR_REMOTETYPE_AC, 1); // explicit cycle-all action
+} // void infrared_universal_cycle_all_ac(void)
 
 
 
