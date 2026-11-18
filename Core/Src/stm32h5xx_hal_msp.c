@@ -504,6 +504,70 @@ void HAL_SPI_MspDeInit(SPI_HandleTypeDef* hspi)
 /* USER CODE BEGIN 1 */
 
 /**
+* @brief RNG MSP Initialization
+* This function configures the hardware resources used by the RNG
+* peripheral added for issue #42 (PR-8 crypto/HW RNG foundation).
+*
+* The RNG kernel clock is explicitly selected as HSI48, the oscillator
+* ST requires for the H5 RNG (RM0481: the RNG analog block is specified
+* for a 48 MHz source; HSI48 is already started in SystemClock_Config
+* for USB). CED stays enabled in the handle init (m1_csrc/m1_rng.c) --
+* HSI48 CRS trimming is only active while USB is up.
+* @param hrng: RNG handle pointer
+* @retval None
+*/
+void HAL_RNG_MspInit(RNG_HandleTypeDef* hrng)
+{
+  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
+  if(hrng->Instance==RNG)
+  {
+  /* USER CODE BEGIN RNG_MspInit 0 */
+
+  /* USER CODE END RNG_MspInit 0 */
+    /** Initializes the peripherals clock
+    */
+    PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_RNG;
+    PeriphClkInitStruct.RngClockSelection = RCC_RNGCLKSOURCE_HSI48;
+    if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    /* Peripheral clock enable */
+    __HAL_RCC_RNG_CLK_ENABLE();
+  /* USER CODE BEGIN RNG_MspInit 1 */
+
+  /* USER CODE END RNG_MspInit 1 */
+  }
+
+}
+
+/**
+* @brief RNG MSP De-Initialization
+* This function freeze the hardware resources used by the RNG.
+* @param hrng: RNG handle pointer
+* @retval None
+*/
+void HAL_RNG_MspDeInit(RNG_HandleTypeDef* hrng)
+{
+  if(hrng->Instance==RNG)
+  {
+  /* USER CODE BEGIN RNG_MspDeInit 0 */
+
+  /* USER CODE END RNG_MspDeInit 0 */
+    /* Peripheral clock disable */
+    __HAL_RCC_RNG_CLK_DISABLE();
+
+    /* RNG interrupt DeInit (polling driver: no interrupt is enabled by
+     * m1_rng.c, nothing to mask here) */
+  /* USER CODE BEGIN RNG_MspDeInit 1 */
+
+  /* USER CODE END RNG_MspDeInit 1 */
+  }
+
+}
+
+/**
 * @brief TIM_Base MSP Initialization
 * This function configures the hardware resources used in this example
 * @param htim_base: TIM_Base handle pointer
