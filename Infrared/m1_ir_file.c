@@ -40,6 +40,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include "stm32h5xx_hal.h"
+#include "main.h"
 #include "m1_ir_file.h"
 #include "m1_file_browser.h"
 #include "ff.h"
@@ -893,7 +895,7 @@ static int32_t m1_ir_sd_read(void *io_ctx, char *dst, int32_t len);
 
 typedef struct
 {
-	FIL *fil;
+	FIL fil;
 	uint8_t err;
 } S_M1_IR_SdIo_t;
 
@@ -909,7 +911,7 @@ static int32_t m1_ir_sd_read(void *io_ctx, char *dst, int32_t len)
 	S_M1_IR_SdIo_t *sd = (S_M1_IR_SdIo_t *)io_ctx;
 	UINT got = 0;
 
-	if ( f_read(sd->fil, dst, (UINT)len, &got) != FR_OK )
+	if ( f_read(&sd->fil, dst, (UINT)len, &got) != FR_OK )
 	{
 		sd->err = 1;
 		return 0; /* the reader stops on 0; the shell converts to ERR_IO */
@@ -972,7 +974,7 @@ int32_t m1_ir_file_signal_load(const char *path, const S_M1_IR_File_Entry_t *ent
 	} // if ( fret != FR_OK )
 	sd.err = 0;
 
-	if ( f_lseek(sd.fil, (FSIZE_t)entry->file_offset) != FR_OK )
+	if ( f_lseek(&sd.fil, (FSIZE_t)entry->file_offset) != FR_OK )
 	{
 		m1_fb_close_file(&sd.fil);
 		return -(int32_t)M1_IR_FILE_ERR_IO;
