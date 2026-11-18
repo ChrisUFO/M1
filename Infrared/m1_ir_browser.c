@@ -29,6 +29,15 @@
 * and even counts (the loader edge cases tracked in issue #74) surface
 * as an error notice instead.
 *
+* PR-6 adds the legacy favorites/recent stores on top of the same UX:
+* two text files under 0:/System (one device path per line, LRU caps in
+* m1_ir_browser.h), dashboard rows that list them, a favorites toggle on
+* a long OK press in the button view (title marker "* "), and a recent
+* entry per successful transmit. Store loads and rewrites are plain
+* filesystem work done between transmits in this UI task -- the transmit
+* path itself (irb_transmit) contains no file writes, so favorites/
+* recent handling can never overlap IRMP TX or learn.
+*
 * See m1_ir_browser.h for the ownership rule and the 0:/IR SD convention;
 * docs/ir-provisioning.md documents the side-load steps.
 */
@@ -49,6 +58,7 @@
 #include "irsnd.h"
 #include "ff.h"
 #include "m1_file_browser.h"
+#include "m1_sdcard_provision.h"
 #include "m1_display.h"
 #include "m1_system.h"
 #include "m1_tasks.h"
@@ -64,11 +74,17 @@
 
 #define M1_IRB_SD_ROOT				"0:/IR"
 
+/* Favorites/recent stores (PR-6, legacy fork format): one full device
+ * path per line under the canonical System folder. */
+#define M1_IRB_FAV_FILE				M1_SD_DIR_SYSTEM "/ir_favorites.txt"
+#define M1_IRB_RECENT_FILE			M1_SD_DIR_SYSTEM "/ir_recent.txt"
+
 #define M1_IRB_ROW_H				9 /* pixel, 6 rows below the 10-px title bar */
 #define M1_IRB_TITLE_H				10 /* pixel */
 #define M1_IRB_COL_MAX				20 /* visible chars per row (5x8 font) */
 
 #define M1_IRB_NOTICE_MS_DEFAULT	1500
+#define M1_IRB_NOTICE_MS_SHORT		800
 
 /* ===================== M1_IR_BROWSER_PURE_CORE_BEGIN ===================== */
 /*
@@ -433,6 +449,169 @@ static uint8_t m1_irb_raw_tx_ok(uint16_t raw_count)
 {
 	return (uint8_t)((raw_count >= 3u) && ((raw_count & 0x01u) != 0u));
 } // static uint8_t m1_irb_raw_tx_ok(uint16_t raw_count)
+
+/*============================================================================*/
+/**
+  * @brief  Favorites/recent store line handling (PR-6). Trim one store
+  *         line in place: leading blanks skipped, trailing CR/LF/tab/
+  *         space removed; returns the trimmed pointer.
+  */
+/*============================================================================*/
+static char *m1_irb_list_trim(char *s)
+{
+	char *end;
+
+	if ( s == NULL )
+		return NULL;
+	while ( (*s == ' ') || (*s == '\t') || (*s == '\r') || (*s == '\n') )
+		s++;
+	if ( *s == '\0' )
+		return s;
+	end = s;
+	while ( end[1] != '\0' )
+		end++;
+	while ( (end >= s) && ((*end == ' ') || (*end == '\t') || (*end == '\r') || (*end == '\n')) )
+		*end-- = '\0';
+	return s;
+} // static char *m1_irb_list_trim(char *s)
+
+/*============================================================================*/
+/**
+  * @brief  Tolerant-load rule for one trimmed store line: keep it only
+  *         when non-empty and strictly shorter than a bounded workspace
+  *         row (NUL included). Blank/corrupt and over-long lines are
+  *         skipped, never stored truncated.
+  */
+/*============================================================================*/
+static uint8_t m1_irb_list_line_ok(const char *p)
+{
+	size_t len = 0;
+
+	if ( (p == NULL) || (p[0] == '\0') )
+		return 0;
+	while ( p[len] != '\0' )
+		len++;
+	return (uint8_t)(len < (size_t)M1_IR_BROWSER_PATH_LEN_MAX);
+} // static uint8_t m1_irb_list_line_ok(const char *p)
+
+/*============================================================================*/
+/**
+  * @brief  Linear membership test on the bounded store workspace.
+  */
+/*============================================================================*/
+static uint8_t m1_irb_list_contains(const char (*paths)[M1_IR_BROWSER_PATH_LEN_MAX],
+		uint16_t count, const char *path)
+{
+	uint16_t i;
+
+	if ( (paths == NULL) || (path == NULL) )
+		return 0;
+	for ( i = 0; i < count; i++ )
+	{
+		if ( strcmp(paths[i], path) == 0 )
+			return 1;
+	}
+	return 0;
+} // static uint8_t m1_irb_list_contains(...)
+
+/*============================================================================*/
+/**
+  * @brief  Remove one record (full-path match); the rows below close the
+  *         gap. @retval 1 when a row was removed.
+  */
+/*============================================================================*/
+static uint8_t m1_irb_list_remove(char (*paths)[M1_IR_BROWSER_PATH_LEN_MAX],
+		uint16_t *count, const char *path)
+{
+	uint16_t i, j;
+
+	if ( (paths == NULL) || (count == NULL) || (path == NULL) )
+		return 0;
+	for ( i = 0; i < *count; i++ )
+	{
+		if ( strcmp(paths[i], path) == 0 )
+		{
+			for ( j = (uint16_t)(i + 1u); j < *count; j++ )
+				m1_irb_join_path(paths[j - 1u], M1_IR_BROWSER_PATH_LEN_MAX, "", paths[j]);
+			(*count)--;
+			return 1;
+		}
+	}
+	return 0;
+} // static uint8_t m1_irb_list_remove(...)
+
+/*============================================================================*/
+/**
+  * @brief  LRU insert at the front of the bounded store: an equal row is
+  *         removed first (dedup), the rows shift down, the least recent
+  *         row beyond the cap is dropped. *count never exceeds cap.
+  */
+/*============================================================================*/
+static void m1_irb_list_add_front(char (*paths)[M1_IR_BROWSER_PATH_LEN_MAX],
+		uint16_t *count, uint16_t cap, const char *path)
+{
+	uint16_t i;
+
+	if ( (paths == NULL) || (count == NULL) || (path == NULL) || (cap == 0u) )
+		return;
+	(void)m1_irb_list_remove(paths, count, path);
+	if ( *count >= cap )
+		*count = (uint16_t)(cap - 1u); /* dropped row = the LRU tail */
+	for ( i = *count; i > 0u; i-- )
+		m1_irb_join_path(paths[i], M1_IR_BROWSER_PATH_LEN_MAX, "", paths[i - 1u]);
+	m1_irb_join_path(paths[0], M1_IR_BROWSER_PATH_LEN_MAX, "", path);
+	(*count)++;
+} // static void m1_irb_list_add_front(...)
+
+/*============================================================================*/
+/**
+  * @brief  Legacy list-row label of a stored device path: the basename
+  *         (text after the last '/'), trailing ".ir" stripped, truncated
+  *         to the row buffer (fork ir_list_from_file intent).
+  */
+/*============================================================================*/
+static void m1_irb_basename_label(char *dst, uint8_t dstsz, const char *path)
+{
+	const char *base = path;
+	const char *p;
+
+	if ( (dst == NULL) || (dstsz == 0u) )
+		return;
+	if ( path != NULL )
+	{
+		for ( p = path; *p != '\0'; p++ )
+		{
+			if ( *p == '/' )
+				base = p + 1u;
+		}
+	}
+	m1_irb_row_label(dst, dstsz, base);
+} // static void m1_irb_basename_label(...)
+
+/*============================================================================*/
+/**
+  * @brief  Button-view title of one device: the legacy "* " marker when
+  *         the device is a favorite, then the device label, truncated.
+  */
+/*============================================================================*/
+static void m1_irb_dev_title(char *dst, uint8_t dstsz, const char *title, uint8_t fav)
+{
+	uint8_t n = 0;
+
+	if ( (dst == NULL) || (dstsz == 0u) )
+		return;
+	if ( (fav != 0u) && (dstsz > 2u) )
+	{
+		dst[n++] = '*';
+		dst[n++] = ' ';
+	}
+	if ( title != NULL )
+	{
+		while ( (n < (uint8_t)(dstsz - 1u)) && (*title != '\0') )
+			dst[n++] = *title++;
+	}
+	dst[n] = '\0';
+} // static void m1_irb_dev_title(...)
 /* ====================== M1_IR_BROWSER_PURE_CORE_END ====================== */
 
 /**************************** V A R I A B L E S ******************************/
@@ -453,7 +632,13 @@ static uint16_t irb_dev_count;
 static S_M1_IRB_SkipAcc_t irb_skip_acc;
 static S_M1_IR_File_Stats_t irb_file_stats;
 
-static const char *irb_dash_rows[2] = {"Browse files", "Search"};
+/* Favorites/recent workspace (PR-6): one shared bounded buffer serves
+ * both stores (the recent cap is below the favorites cap) and their
+ * screens; loads rewrite it whole. UI task only, no run-time allocation. */
+static char irb_list_paths[M1_IR_BROWSER_FAVORITES_MAX][M1_IR_BROWSER_PATH_LEN_MAX];
+static char irb_list_names[M1_IR_BROWSER_FAVORITES_MAX][M1_IR_BROWSER_NAME_LEN_MAX];
+
+static const char *irb_dash_rows[4] = {"Favorites", "Recent", "Browse files", "Search"};
 
 /* Per-depth scan state: the recursive walk never puts a DIR/FILINFO on the
  * task stack, depth is capped by M1_IR_BROWSER_DEPTH_MAX. */
@@ -473,6 +658,7 @@ static const char *irb_row_cat(uint16_t idx);
 static const char *irb_row_dev(uint16_t idx);
 static const char *irb_row_entry(uint16_t idx);
 static const char *irb_row_dash(uint16_t idx);
+static const char *irb_row_stored(uint16_t idx);
 static S_M1_IRB_Scan_Status_t irb_scan_categories(uint8_t *truncated);
 static S_M1_IRB_Scan_Status_t irb_scan_rec(const char *dir_path, const char *rel,
 		uint8_t depth, uint8_t *truncated, uint8_t *io_error);
@@ -483,9 +669,15 @@ static S_M1_IRB_Scan_Status_t irb_scan_search(const char *lower_query, uint8_t *
 static void irb_notice_hook(const char *protocol_name, uint32_t file_offset);
 static int32_t irb_index_device(const char *path);
 static uint8_t irb_transmit(const char *path, uint16_t entry_idx);
+static uint16_t irb_store_load(const char *file, uint16_t cap);
+static void irb_store_save(const char *file, uint16_t count);
+static void irb_recent_add(const char *path);
+static uint8_t irb_fav_is(const char *path);
+static uint8_t irb_fav_toggle(const char *path);
 static void irb_screen_dashboard(void);
 static void irb_screen_categories(void);
 static void irb_screen_devices(const char *cat);
+static void irb_screen_stored_list(const char *title, const char *file, uint16_t cap);
 static uint8_t irb_screen_buttons(const char *path, const char *title);
 static void irb_screen_search(void);
 
@@ -646,8 +838,13 @@ static const char *irb_row_entry(uint16_t idx)
 
 static const char *irb_row_dash(uint16_t idx)
 {
-	return (idx < 2u) ? irb_dash_rows[idx] : "";
+	return (idx < 4u) ? irb_dash_rows[idx] : "";
 } // static const char *irb_row_dash(uint16_t idx)
+
+static const char *irb_row_stored(uint16_t idx)
+{
+	return (idx < M1_IR_BROWSER_FAVORITES_MAX) ? irb_list_names[idx] : "";
+} // static const char *irb_row_stored(uint16_t idx)
 
 /*============================================================================*/
 /**
@@ -901,6 +1098,148 @@ static S_M1_IRB_Scan_Status_t irb_scan_search(const char *lower_query, uint8_t *
 
 /*============================================================================*/
 /**
+  * @brief  Tolerant load of one favorites/recent store into the shared
+  *         bounded workspace (paths + derived row labels). A missing or
+  *         unreadable file, blank/corrupt lines, over-long lines and
+  *         everything past the cap are skipped: the caller renders an
+  *         empty list, never an error path (issue #43 part 3).
+  * @retval stored record count (0 .. cap).
+  */
+/*============================================================================*/
+static uint16_t irb_store_load(const char *file, uint16_t cap)
+{
+	char line[M1_IR_BROWSER_PATH_LEN_MAX + 4];
+	char *p;
+	uint16_t count = 0;
+	FIL f;
+
+	if ( cap > M1_IR_BROWSER_FAVORITES_MAX )
+		cap = M1_IR_BROWSER_FAVORITES_MAX; /* the workspace bound */
+
+	if ( f_open(&f, file, FA_READ) != FR_OK )
+		return 0; /* missing or unreadable: empty list, no error screen */
+
+	while ( count < cap )
+	{
+		if ( f_gets(line, (int)sizeof(line), &f) == NULL )
+			break; /* end of file (or read error: keep what loaded) */
+		if ( (strchr(line, '\n') == NULL) && !f_eof(&f) )
+		{
+			/* over-long line: drain the rest of the record and skip it
+			 * (a truncated path could never be re-opened) */
+			do
+			{
+				if ( f_gets(line, (int)sizeof(line), &f) == NULL )
+					break;
+			} while ( strchr(line, '\n') == NULL );
+			continue;
+		}
+		p = m1_irb_list_trim(line);
+		if ( !m1_irb_list_line_ok(p) )
+			continue; /* blank, corrupt or over-long: skipped */
+		m1_irb_join_path(irb_list_paths[count], M1_IR_BROWSER_PATH_LEN_MAX, "", p);
+		m1_irb_basename_label(irb_list_names[count], M1_IR_BROWSER_NAME_LEN_MAX,
+				irb_list_paths[count]);
+		count++;
+	}
+	f_close(&f);
+	return count;
+} // static uint16_t irb_store_load(...)
+
+/*============================================================================*/
+/**
+  * @brief  Bounded whole-file rewrite of one store: at most `count` rows,
+  *         one full device path per line (legacy fork format). 0:/System
+  *         is ensured lazily here (the settings store's folder policy).
+  *         A failed write is silent-safe: the lists keep working for the
+  *         rest of the session and the next toggle/transmit rewrites the
+  *         file. Filesystem-only -- called between transmits, never from
+  *         inside the transmit path.
+  */
+/*============================================================================*/
+static void irb_store_save(const char *file, uint16_t count)
+{
+	FIL f;
+	uint16_t i;
+
+	(void)f_mkdir(M1_SD_DIR_SYSTEM); /* lazy ensure: may already exist or
+										* fail on a read-only card */
+	if ( count > M1_IR_BROWSER_FAVORITES_MAX )
+		count = M1_IR_BROWSER_FAVORITES_MAX;
+	if ( f_open(&f, file, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK )
+	{
+		M1_LOG_E(M1_LOGDB_TAG, "store write failed: %s\r\n", file);
+		return;
+	}
+	for ( i = 0; i < count; i++ )
+		(void)f_printf(&f, "%s\n", irb_list_paths[i]);
+	f_close(&f);
+} // static void irb_store_save(...)
+
+/*============================================================================*/
+/**
+  * @brief  Record a transmit in the recent store (LRU: newest at the
+  *         front, dedup, cap M1_IR_BROWSER_RECENT_MAX).
+  */
+/*============================================================================*/
+static void irb_recent_add(const char *path)
+{
+	uint16_t n;
+
+	if ( (path == NULL) || (path[0] == '\0') )
+		return;
+	n = irb_store_load(M1_IRB_RECENT_FILE, M1_IR_BROWSER_RECENT_MAX);
+	m1_irb_list_add_front(irb_list_paths, &n, M1_IR_BROWSER_RECENT_MAX, path);
+	irb_store_save(M1_IRB_RECENT_FILE, n);
+} // static void irb_recent_add(const char *path)
+
+/*============================================================================*/
+/**
+  * @brief  Is this device path in the favorites store?
+  */
+/*============================================================================*/
+static uint8_t irb_fav_is(const char *path)
+{
+	uint16_t n;
+
+	if ( (path == NULL) || (path[0] == '\0') )
+		return 0;
+	n = irb_store_load(M1_IRB_FAV_FILE, M1_IR_BROWSER_FAVORITES_MAX);
+	return m1_irb_list_contains(irb_list_paths, n, path);
+} // static uint8_t irb_fav_is(const char *path)
+
+/*============================================================================*/
+/**
+  * @brief  Toggle one device in the favorites store (bounded rewrite)
+  *         with the legacy short feedback notice.
+  * @retval 1 when the device is a favorite now, 0 when it was removed.
+  */
+/*============================================================================*/
+static uint8_t irb_fav_toggle(const char *path)
+{
+	uint16_t n;
+	uint8_t fav;
+
+	if ( (path == NULL) || (path[0] == '\0') )
+		return 0;
+	n = irb_store_load(M1_IRB_FAV_FILE, M1_IR_BROWSER_FAVORITES_MAX);
+	if ( m1_irb_list_contains(irb_list_paths, n, path) )
+	{
+		(void)m1_irb_list_remove(irb_list_paths, &n, path);
+		fav = 0;
+	}
+	else
+	{
+		m1_irb_list_add_front(irb_list_paths, &n, M1_IR_BROWSER_FAVORITES_MAX, path);
+		fav = 1;
+	}
+	irb_store_save(M1_IRB_FAV_FILE, n);
+	irb_notice("Favorite", (fav != 0u) ? "added" : "removed", M1_IRB_NOTICE_MS_SHORT);
+	return fav;
+} // static uint8_t irb_fav_toggle(const char *path)
+
+/*============================================================================*/
+/**
   * @brief  PR-4 strict-skip notice hook: aggregate into irb_skip_acc.
   */
 /*============================================================================*/
@@ -1003,9 +1342,9 @@ static uint8_t irb_transmit(const char *path, uint16_t entry_idx)
 
 /*============================================================================*/
 /**
-  * @brief  Dashboard: the browser's top screen (legacy intent; the
-  *         favorites/recent rows land together with their persistence in
-  *         PR-6 and are deliberately not stubbed here).
+  * @brief  Dashboard: the browser's top screen (legacy intent). The
+  *         favorites/recent rows (PR-6) open the persisted stores below;
+  *         "Browse files"/"Search" are the PR-5 flows.
   */
 /*============================================================================*/
 static void irb_screen_dashboard(void)
@@ -1015,7 +1354,7 @@ static void irb_screen_dashboard(void)
 	S_M1_IRB_Win_t w = {0, 0};
 	BaseType_t ret;
 
-	irb_draw_list("IR Database", 2u, &w, irb_row_dash, 0u);
+	irb_draw_list("IR Database", 4u, &w, irb_row_dash, 0u);
 
 	while ( 1 )
 	{
@@ -1035,21 +1374,27 @@ static void irb_screen_dashboard(void)
 		}
 		else if ( bs.event[BUTTON_UP_KP_ID] == BUTTON_EVENT_CLICK )
 		{
-			m1_irb_win_move(&w, 2u, -1);
-			irb_draw_list("IR Database", 2u, &w, irb_row_dash, 0u);
+			m1_irb_win_move(&w, 4u, -1);
+			irb_draw_list("IR Database", 4u, &w, irb_row_dash, 0u);
 		}
 		else if ( bs.event[BUTTON_DOWN_KP_ID] == BUTTON_EVENT_CLICK )
 		{
-			m1_irb_win_move(&w, 2u, 1);
-			irb_draw_list("IR Database", 2u, &w, irb_row_dash, 0u);
+			m1_irb_win_move(&w, 4u, 1);
+			irb_draw_list("IR Database", 4u, &w, irb_row_dash, 0u);
 		}
 		else if ( bs.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK )
 		{
 			if ( w.sel == 0u )
+				irb_screen_stored_list("Favorites", M1_IRB_FAV_FILE,
+						M1_IR_BROWSER_FAVORITES_MAX);
+			else if ( w.sel == 1u )
+				irb_screen_stored_list("Recent", M1_IRB_RECENT_FILE,
+						M1_IR_BROWSER_RECENT_MAX);
+			else if ( w.sel == 2u )
 				irb_screen_categories();
 			else
 				irb_screen_search();
-			irb_draw_list("IR Database", 2u, &w, irb_row_dash, 0u);
+			irb_draw_list("IR Database", 4u, &w, irb_row_dash, 0u);
 		}
 	}
 } // static void irb_screen_dashboard(void)
@@ -1204,9 +1549,102 @@ static void irb_screen_devices(const char *cat)
 
 /*============================================================================*/
 /**
+  * @brief  Favorites/recent list screen (dashboard rows 0/1): the stored
+  *         device paths with legacy basename labels, 6-row pagination,
+  *         OK opens the same device/button flow as every other list.
+  *         The store is reloaded after returning from the button view: a
+  *         transmit (recent) or a favorite toggle may have changed it,
+  *         and the shared workspace is reused by those operations.
+  */
+/*============================================================================*/
+static void irb_screen_stored_list(const char *title, const char *file, uint16_t cap)
+{
+	S_M1_Buttons_Status bs;
+	S_M1_Main_Q_t q_item;
+	S_M1_IRB_Win_t w = {0, 0};
+	BaseType_t ret;
+	uint16_t count;
+
+	irb_draw_hourglass();
+	count = irb_store_load(file, cap);
+
+	if ( count == 0u )
+	{
+		irb_notice(title, "list is empty", M1_IRB_NOTICE_MS_DEFAULT);
+		return;
+	}
+
+	irb_draw_list(title, count, &w, irb_row_stored, 0u);
+
+	while ( 1 )
+	{
+		ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
+		if ( ret != pdTRUE )
+			continue;
+		if ( q_item.q_evt_type != Q_EVENT_KEYPAD )
+			continue;
+		ret = xQueueReceive(button_events_q_hdl, &bs, 0);
+		if ( ret != pdTRUE )
+			continue;
+
+		if ( bs.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK )
+		{
+			xQueueReset(main_q_hdl);
+			return;
+		}
+		else if ( bs.event[BUTTON_UP_KP_ID] == BUTTON_EVENT_CLICK )
+		{
+			m1_irb_win_move(&w, count, -1);
+			irb_draw_list(title, count, &w, irb_row_stored, 0u);
+		}
+		else if ( bs.event[BUTTON_DOWN_KP_ID] == BUTTON_EVENT_CLICK )
+		{
+			m1_irb_win_move(&w, count, 1);
+			irb_draw_list(title, count, &w, irb_row_stored, 0u);
+		}
+		else if ( bs.event[BUTTON_LEFT_KP_ID] == BUTTON_EVENT_CLICK )
+		{
+			m1_irb_win_move(&w, count, -M1_IR_BROWSER_ROWS);
+			irb_draw_list(title, count, &w, irb_row_stored, 0u);
+		}
+		else if ( bs.event[BUTTON_RIGHT_KP_ID] == BUTTON_EVENT_CLICK )
+		{
+			m1_irb_win_move(&w, count, M1_IR_BROWSER_ROWS);
+			irb_draw_list(title, count, &w, irb_row_stored, 0u);
+		}
+		else if ( bs.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK )
+		{
+			char sel_path[M1_IR_BROWSER_PATH_LEN_MAX];
+			char sel_label[M1_IR_BROWSER_NAME_LEN_MAX];
+
+			/* copy out of the shared workspace: the button view's
+			 * favorites/recent operations reuse it */
+			m1_irb_join_path(sel_path, (uint8_t)sizeof(sel_path), "",
+					irb_list_paths[w.sel]);
+			m1_irb_join_path(sel_label, (uint8_t)sizeof(sel_label), "",
+					irb_list_names[w.sel]);
+			(void)irb_screen_buttons(sel_path, sel_label);
+			count = irb_store_load(file, cap); /* toggle/transmit changed it */
+			if ( (count == 0u) || (w.sel >= count) )
+			{
+				w.sel = 0;
+				w.top = 0;
+			}
+			if ( count == 0u )
+				return; /* nothing left: back to the dashboard */
+			irb_draw_list(title, count, &w, irb_row_stored, 0u);
+		}
+	}
+} // static void irb_screen_stored_list(...)
+
+/*============================================================================*/
+/**
   * @brief  Button list screen of one device: the PR-4 index entries with
   *         6-row pagination; OK transmits the selected button through the
-  *         upstream play path; BACK returns to the device list.
+  *         upstream play path (a successful transmit is recorded in the
+  *         recent store); OK held down toggles the device in the
+  *         favorites store (legacy "* " title marker); BACK returns to
+  *         the calling list.
   * @retval always 1 (BACK), kept explicit for the legacy call shape.
   */
 /*============================================================================*/
@@ -1218,10 +1656,19 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 	BaseType_t ret;
 	int32_t indexed;
 	uint16_t count;
-	uint8_t truncated, tx_err, tx_active = 0;
+	uint8_t truncated, tx_err, fav, tx_active = 0;
+	char dev_path[M1_IR_BROWSER_PATH_LEN_MAX];
+	char dev_title[M1_IR_BROWSER_NAME_LEN_MAX + 2u]; /* "* " + label */
+
+	/* The caller's buffers may alias the shared list workspaces (the
+	 * favorites/recent rows point into them, and this screen's store
+	 * operations reuse those workspaces) -- work on local copies. */
+	m1_irb_join_path(dev_path, (uint8_t)sizeof(dev_path), "", (path != NULL) ? path : "");
+	fav = irb_fav_is(dev_path);
+	m1_irb_dev_title(dev_title, (uint8_t)sizeof(dev_title), title, fav);
 
 	irb_draw_hourglass();
-	indexed = irb_index_device(path);
+	indexed = irb_index_device(dev_path);
 
 	if ( indexed < 0 )
 	{
@@ -1232,16 +1679,16 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 				irb_notice("Read failed", "Check SD card", M1_IRB_NOTICE_MS_DEFAULT);
 				break;
 			case M1_IR_FILE_ERR_HEADER:
-				irb_notice("Not .ir file", path, M1_IRB_NOTICE_MS_DEFAULT);
+				irb_notice("Not .ir file", dev_path, M1_IRB_NOTICE_MS_DEFAULT);
 				break;
 			default:
-				irb_notice("File error", path, M1_IRB_NOTICE_MS_DEFAULT);
+				irb_notice("File error", dev_path, M1_IRB_NOTICE_MS_DEFAULT);
 				break;
 		}
 		return 1;
 	}
 	count = (uint16_t)indexed;
-	M1_LOG_I(M1_LOGDB_TAG, "%s: %u buttons, %u skipped\r\n", path,
+	M1_LOG_I(M1_LOGDB_TAG, "%s: %u buttons, %u skipped\r\n", dev_path,
 			(unsigned int)count, (unsigned int)irb_file_stats.skipped_unknown_protocol);
 
 	/* one aggregated strict-skip notice per file, never one per block.
@@ -1267,7 +1714,7 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 	truncated = (irb_file_stats.index_full > 0u) ? 1u : 0u;
 
 	infrared_encode_sys_init();
-	irb_draw_list(title, count, &w, irb_row_entry, truncated);
+	irb_draw_list(dev_title, count, &w, irb_row_entry, truncated);
 
 	while ( 1 )
 	{
@@ -1281,7 +1728,7 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 			{
 				m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
 				tx_active = 0;
-				irb_draw_list(title, count, &w, irb_row_entry, truncated);
+				irb_draw_list(dev_title, count, &w, irb_row_entry, truncated);
 			}
 			continue;
 		}
@@ -1306,22 +1753,34 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 		else if ( bs.event[BUTTON_UP_KP_ID] == BUTTON_EVENT_CLICK )
 		{
 			m1_irb_win_move(&w, count, -1);
-			irb_draw_list(title, count, &w, irb_row_entry, truncated);
+			irb_draw_list(dev_title, count, &w, irb_row_entry, truncated);
 		}
 		else if ( bs.event[BUTTON_DOWN_KP_ID] == BUTTON_EVENT_CLICK )
 		{
 			m1_irb_win_move(&w, count, 1);
-			irb_draw_list(title, count, &w, irb_row_entry, truncated);
+			irb_draw_list(dev_title, count, &w, irb_row_entry, truncated);
 		}
 		else if ( bs.event[BUTTON_LEFT_KP_ID] == BUTTON_EVENT_CLICK )
 		{
 			m1_irb_win_move(&w, count, -M1_IR_BROWSER_ROWS);
-			irb_draw_list(title, count, &w, irb_row_entry, truncated);
+			irb_draw_list(dev_title, count, &w, irb_row_entry, truncated);
 		}
 		else if ( bs.event[BUTTON_RIGHT_KP_ID] == BUTTON_EVENT_CLICK )
 		{
 			m1_irb_win_move(&w, count, M1_IR_BROWSER_ROWS);
-			irb_draw_list(title, count, &w, irb_row_entry, truncated);
+			irb_draw_list(dev_title, count, &w, irb_row_entry, truncated);
+		}
+		else if ( bs.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_LCLICK )
+		{
+			if ( tx_active )
+				continue; /* no store writes while a frame runs */
+
+			/* OK held down: toggle this device in the favorites store
+			 * (legacy fork action, now on the long press so LEFT/RIGHT
+			 * keep their page-step duty) and refresh the title marker */
+			fav = irb_fav_toggle(dev_path);
+			m1_irb_dev_title(dev_title, (uint8_t)sizeof(dev_title), title, fav);
+			irb_draw_list(dev_title, count, &w, irb_row_entry, truncated);
 		}
 		else if ( bs.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK )
 		{
@@ -1331,7 +1790,7 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 			irb_draw_sending(irb_entries[w.sel].name);
 			m1_buzzer_notification();
 			m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_M, LED_FASTBLINK_ONTIME_M);
-			tx_err = irb_transmit(path, w.sel);
+			tx_err = irb_transmit(dev_path, w.sel);
 			if ( tx_err )
 			{
 				m1_led_fast_blink(LED_BLINK_ON_RGB, LED_FASTBLINK_PWM_OFF, LED_FASTBLINK_ONTIME_OFF);
@@ -1358,11 +1817,15 @@ static uint8_t irb_screen_buttons(const char *path, const char *title)
 						irb_notice("Send failed", "Unsupported signal", M1_IRB_NOTICE_MS_DEFAULT);
 						break;
 				}
-				irb_draw_list(title, count, &w, irb_row_entry, truncated);
+				irb_draw_list(dev_title, count, &w, irb_row_entry, truncated);
 			}
 			else
 			{
 				tx_active = 1;
+				irb_recent_add(dev_path); /* recent updated on transmit;
+											* filesystem-only, between
+											* frames -- never inside the
+											* transmit path */
 			}
 		}
 	}
