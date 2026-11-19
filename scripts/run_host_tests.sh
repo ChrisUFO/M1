@@ -13,9 +13,11 @@
 # failure seam (PR-8), the Wi-Fi persistence hardening suite incl.
 # the encrypted-credential battery (PR-9), the Wi-Fi join suite incl.
 # the join grammar/command/classifier battery, the reconnect pick,
-# and the ESP pairing/version gate (PR-11), and the ESP feature-gate
+# and the ESP pairing/version gate (PR-11), the ESP feature-gate
 # suite incl. the four live-handshake states and the stale-cache
-# battery (PR-10). The remaining pre-existing
+# battery (PR-10), and the BLE advertisement editor suite incl.
+# the preset-provenance table, the command/interval battery, and
+# the advertise gate pairing (PR-12). The remaining pre-existing
 # host tests under m1_csrc/test/ and m1_csrc/tests/ are NOT run by this
 # script yet; later units append their own host tests to the list below
 # by design, so a green run means exactly the listed tests passed --
@@ -65,6 +67,7 @@ m1_csrc/test/m1_crypto_test.py
 m1_csrc/test/m1_wifi_persistence_hardening_test.py
 m1_csrc/test/m1_wifi_join_test.py
 m1_csrc/test/m1_esp_feature_gate_test.py
+m1_csrc/test/m1_bt_adv_test.py
 m1_csrc/tests/test_backlight_startup.py
 "
 
