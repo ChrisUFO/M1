@@ -52,7 +52,7 @@ names — a Linux-build fix, not a content change.
 
 ## Summary
 
-basis-end: `6d592fb90c421c3e32b66565606b28faeac57725`
+basis-end: `bea36b2273f46abffeb7a884c422d73cec60ce4b`
 
 | Content rows (table below) | **202** |
 | — cited to a merge-ledger disposition | 73 |
@@ -70,7 +70,7 @@ basis-end: `6d592fb90c421c3e32b66565606b28faeac57725`
 | `.vscode/launch.json` | M +3 | — (changed by merge-era work (not a legacy-fork delta)) | debug config tracks the derived artifact stem (#47) |
 | `.vscode/tasks.json` | M +5 | — (changed by merge-era work (not a legacy-fork delta)) | build task config tracks the derived artifact stem (#48) |
 | `Battery/golden_image_0420.h` | rename | — (changed by merge-era work (not a legacy-fork delta)) | case-only rename (from Golden_Image_0420.h) so Linux builds resolve the include (issue #46, PR #56) (#56) |
-| `CHANGELOG.md` | M +905 | intentionally-dropped (LEDGER.md) | see ledger row; later PRs: #95, #93, #88, #86, #85, #82, #81, #78, #75, #72, #71, #68, #66, #65, #64, #62, #61, #59, #56, #57, #55, #54, #53, #51, #48, #47, #34, #33, #29, #28, #19, #18, #17, #15 |
+| `CHANGELOG.md` | M +918 | intentionally-dropped (LEDGER.md) | see ledger row; later PRs: #97, #95, #93, #88, #86, #85, #82, #81, #78, #75, #72, #71, #68, #66, #65, #64, #62, #61, #59, #56, #57, #55, #54, #53, #51, #48, #47, #34, #33, #29, #28, #19, #18, #17, #15 |
 | `CMakeLists.txt` | M +66 | retained-by-upstream (LEDGER.md) | see ledger row; later PRs: #59, #48, #47, #34, #29, #19, #17, #15 |
 | `Core/Inc/stm32h5xx_hal_conf.h` | M +1 | — (changed by merge-era work (not a legacy-fork delta)) | HAL config enables the RNG module for the crypto foundation (PR-8) (#82) |
 | `Core/Src/FreeRTOS_CLI.c` | M +13 | carried-by-patch -> #44 (LEDGER.md) | see ledger row; later PRs: #65, #53, #48, #19 |
@@ -125,7 +125,7 @@ basis-end: `6d592fb90c421c3e32b66565606b28faeac57725`
 | `docs/releases/irdb-attribution.md` | A +166 | — (new file added by merge-era work) | CC0-1.0 text and attribution for the IR starter database (this release) (#95) |
 | `docs/security.md` | M +46 | — (changed by merge-era work (not a legacy-fork delta)) | security architecture incl. RNG/crypto notes (PR-8/PR-9) (#85, #82, #48) |
 | `docs/security/wifi-credential-threat-model.md` | A +152 | — (new file added by merge-era work) | WiFi credential threat model (issue #42, PR-9) (#88, #85) |
-| `documentation/0.9.0.0-ufo-verification.md` | A +249 | — (new file added by merge-era work) | release verification record: milestone state, version surfaces, build + parity evidence (this release) (#95) |
+| `documentation/0.9.0.0-ufo-verification.md` | A +252 | — (new file added by merge-era work) | release verification record: milestone state, version surfaces, build + parity evidence (this release) (#95) |
 | `documentation/mbt.md` | M +43 | — (changed by merge-era work (not a legacy-fork delta)) | build-tool walkthrough tracking the derived stem (issues #40/#41; stem sweep merge 1) (#61, #59, #48) |
 | `documentation/merge1-baseline-evidence.md` | A +273 | — (new file added by merge-era work) | merge-1 virgin-baseline evidence at the upstream pin (issue #37) (#48) |
 | `documentation/stability_phase5_validation.md` | A +132 | carried-by-patch -> #52 (LEDGER.md) | see ledger row; later PRs: #55, #48, #34 |
@@ -210,7 +210,7 @@ basis-end: `6d592fb90c421c3e32b66565606b28faeac57725`
 | `m1_csrc/privateprofilestring.c` | M +2 | carried-by-patch -> #39 (LEDGER.md) | see ledger row; later PRs: #53, #48, #19 |
 | `m1_csrc/res_string.c` | rename | — (changed by merge-era work (not a legacy-fork delta)) | case-only rename (from Res_String.c; ledger row `m1_csrc/Res_String.c`, carried-by-patch) for case-sensitive filesystems (issue #46, PR #56) (#56) |
 | `m1_csrc/res_string.h` | rename | — (changed by merge-era work (not a legacy-fork delta)) | case-only rename (from Res_String.h; ledger row `m1_csrc/Res_String.h`, carried-by-patch) for case-sensitive filesystems (issue #46, PR #56) (#56) |
-| `m1_csrc/test/m1_bt_adv_test.py` | A +1483 | — (new file added by merge-era work) | wired host test suite for its unit (see PR refs) (#93) |
+| `m1_csrc/test/m1_bt_adv_test.py` | A +1562 | — (new file added by merge-era work) | wired host test suite for its unit (see PR refs) (#97, #93) |
 | `m1_csrc/test/m1_crypto_test.py` | A +876 | — (new file added by merge-era work) | wired host test suite for its unit (see PR refs) (#82) |
 | `m1_csrc/test/m1_esp_feature_gate_test.py` | A +541 | — (new file added by merge-era work) | wired host test suite for its unit (see PR refs) (#93, #88, #86) |
 | `m1_csrc/test/m1_ir_browser_test.py` | A +821 | — (new file added by merge-era work) | wired host test suite for its unit (see PR refs) (#78, #75) |
