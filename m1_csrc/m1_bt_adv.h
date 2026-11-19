@@ -53,7 +53,8 @@
  *    never sent half-formed.
  * 6. NO SENDING HERE. This module never touches the console. The
  *    gated transport (live feature gate BEFORE any write) lives in
- *    m1_bt.c's bt_adv_exec() and is pinned by the host suite's
+ *    m1_bt.c's bt_adv_exec_start() (and bt_adv_exec_stop()) and is
+ *    pinned by the host suite's
  *    static seam.
  *
  * M1 Project

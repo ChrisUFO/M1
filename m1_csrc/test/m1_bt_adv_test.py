@@ -87,11 +87,19 @@ Layers:
    - reload mapping: a stored interval outside the table (the PR-1
      default 0) maps to the documented 1000 ms entry, and a
      hand-edited preset id clamps into the valid range;
-   - stale-click discipline on the RUN row (iter-1 review): the button
-     queue reset runs on BOTH the start and the stop path (after the
-     multi-second console exchanges), before the editor loop's single
-     bt_wait_button reader -- a click queued during a stop can never
-     restart advertising;
+   - stale-click discipline (iter-1 Fix-now + iter-2 Fix-now): the
+     button queue reset runs after EVERY multi-second console
+     exchange -- both RUN paths (start, stop) AND the BACK exit (stop
+     + discovery resume), before the editor loop's single
+     bt_wait_button reader -- so a queued click can never restart
+     advertising or skew the menu task's 1:1 notification/status
+     pairing;
+   - OK dispatch row mapping (iter-2 Blocker): every BT_ADV_ROW_* id
+     has an explicit case in the OK switch, default: is inert
+     (comments + break only, no transport call), the INTERVAL OK
+     action is a visible persisted edit matching its "Edit"
+     action-bar label, and start/stop is reachable only via
+     case BT_ADV_ROW_RUN;
    - the gate-refusal second line is state-aware (bt_adv_gate_hint),
      not a hardcoded constant, at the refusal site;
    - no vendor Esp_spi_at advertise example usage: the BT module never
@@ -124,6 +132,28 @@ def CHECK(cond, msg):
 
 def source(path):
     return (ROOT / path).read_text()
+
+
+def switch_block(text, discriminant):
+    """Extract the full `switch (<discriminant>) { ... }` block from
+    text (brace-matched, string/comment aware -- same token discipline
+    as function())."""
+    start = text.index(f"switch ({discriminant})")
+    open_at = text.index("{", start)
+    depth = 1
+    body = text[open_at + 1 :]
+    for token in re.finditer(
+        r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'])*\'|'
+        r"//[^\n]*|/\*[\s\S]*?\*/|[{}]",
+        body,
+    ):
+        if token.group() == "{":
+            depth += 1
+        elif token.group() == "}":
+            depth -= 1
+        if depth == 0:
+            return text[start : open_at + 1 + token.end()]
+    raise AssertionError(f"switch ({discriminant}) block")
 
 
 def function(text, name):
@@ -812,6 +842,8 @@ def static_checks():
     bt_header = source("m1_csrc/m1_bt.h")
     menu = source("m1_csrc/m1_menu.c")
     gate_c = source("m1_csrc/m1_esp_feature_gate.c")
+    adv_c = source("m1_csrc/m1_bt_adv.c")
+    adv_header = source("m1_csrc/m1_bt_adv.h")
 
     # 1. The adv core is inside the scoped -Werror app-source list.
     cmake = source("cmake/m1_01/CMakeLists.txt")
@@ -989,21 +1021,74 @@ def static_checks():
         "suite not wired into scripts/run_host_tests.sh",
     )
 
-    # 11. Stale-click discipline on the RUN row (iter-1 Fix-now): the
-    #     button-queue reset must run on BOTH the start and the stop
-    #     path -- after either multi-second console exchange and before
-    #     the editor loop's single bt_wait_button reader -- so a click
-    #     queued during a stop can never restart advertising.
+    # 11. OK dispatch row mapping + stale-click discipline (iter-1
+    #     Fix-now; iter-2 Blocker): every BT_ADV_ROW_* id has an
+    #     EXPLICIT case in the OK switch -- INTERVAL can never again
+    #     fall into the RUN transport via default -- default: is inert
+    #     (no side-effecting call), the INTERVAL OK action matches its
+    #     "Edit" action-bar label, start/stop is reachable only via
+    #     case BT_ADV_ROW_RUN, and the button-queue reset runs after
+    #     every multi-second exchange (start, stop, AND the BACK exit)
+    #     before the loop's single reader.
     editor = function(bt, "bluetooth_adv_editor")
-    run_m = re.search(r"default:\s*/\* BT_ADV_ROW_RUN \*/(.*?)break;", editor, re.S)
-    CHECK(run_m is not None, "RUN row branch found in the editor")
+    ok_switch = switch_block(editor, "sel")
+
+    # (a) one explicit case per row id
+    for row in ("NAME", "PRESET", "INTERVAL", "FILE", "RUN"):
+        CHECK(
+            f"case BT_ADV_ROW_{row}:" in ok_switch,
+            f"OK dispatch has an explicit case for BT_ADV_ROW_{row}",
+        )
+
+    # (b) default is inert: comments stripped, nothing but break;
+    #     no row can ever inherit the start/stop transport.
+    default_m = re.search(r"default:(.*?)break;", ok_switch, re.S)
+    CHECK(default_m is not None, "OK switch has a default label")
+    if default_m is not None:
+        default_code = re.sub(r"//[^\n]*|/\*[\s\S]*?\*/", "", default_m.group(1))
+        CHECK(
+            default_code.strip() == "",
+            "default case is inert (comments + break only)",
+        )
+        CHECK(
+            "bt_adv_exec" not in default_m.group(1),
+            "default case never reaches the start/stop transport",
+        )
+
+    # (c) INTERVAL: OK performs a visible, persisted edit -- the exact
+    #     behavior the row's "Edit" action-bar label promises.
+    interval_m = re.search(r"case BT_ADV_ROW_INTERVAL:(.*?)break;", ok_switch, re.S)
+    CHECK(interval_m is not None, "explicit INTERVAL case found")
+    if interval_m is not None:
+        seg = interval_m.group(1)
+        CHECK(
+            "iv_idx" in seg and "M1_BT_ADV_INTERVAL_COUNT" in seg,
+            "INTERVAL OK advances the interval (visible edit)",
+        )
+        CHECK(
+            "settings_set_bt_interval_ms(" in seg and "session_dirty = 1U" in seg,
+            "INTERVAL OK persists the new value",
+        )
+        CHECK(
+            "bt_adv_exec" not in seg,
+            "INTERVAL OK never touches the advertise transport",
+        )
+    gui = function(bt, "bt_adv_gui_update")
+    CHECK(
+        '? "Pick" : "Edit"' in gui,
+        'action-bar fallback label is "Edit" (incl. the INTERVAL row)',
+    )
+
+    # (d) RUN owns start/stop exclusively, with the hoisted reset.
+    run_m = re.search(r"case BT_ADV_ROW_RUN:(.*?)break;", ok_switch, re.S)
+    CHECK(run_m is not None, "explicit RUN case found")
     if run_m is not None:
         run_branch = run_m.group(1)
-        CHECK("bt_adv_exec_stop();" in run_branch, "RUN branch stops when active")
-        CHECK("bt_adv_exec_start(" in run_branch, "RUN branch starts when inactive")
+        CHECK("bt_adv_exec_stop();" in run_branch, "RUN case stops when active")
+        CHECK("bt_adv_exec_start(" in run_branch, "RUN case starts when inactive")
         CHECK(
             run_branch.count("xQueueReset(button_events_q_hdl);") == 1,
-            "RUN branch resets the button queue exactly once (hoisted)",
+            "RUN case resets the button queue exactly once (hoisted)",
         )
         reset_at = run_branch.index("xQueueReset(button_events_q_hdl);")
         CHECK(
@@ -1012,13 +1097,42 @@ def static_checks():
             "RUN reset follows BOTH paths (start and stop), not just start",
         )
     CHECK(
+        ok_switch.count("bt_adv_exec_start(") == 1
+        and ok_switch.count("bt_adv_exec_stop();") == 1,
+        "start/stop appear exactly once in the OK switch (RUN case only)",
+    )
+
+    # (e) BACK exit (iter-2 Fix-now): the stop + discovery-resume
+    #     exchange ends with a button-queue reset BEFORE the atomic
+    #     save (settings_exit_save clears main_q only -- never
+    #     duplicated here), so no stale status can skew the menu
+    #     task's 1:1 notification/status pairing.
+    back_m = re.search(r"if \(btn == BUTTON_BACK_KP_ID\)(.*?)break;", editor, re.S)
+    CHECK(back_m is not None, "BACK branch found in the editor")
+    if back_m is not None:
+        bseg = re.sub(r"//[^\n]*|/\*[\s\S]*?\*/", "", back_m.group(1))
+        CHECK("bt_adv_exec_stop();" in bseg, "BACK stops advertising first")
+        CHECK(
+            bseg.count("xQueueReset(button_events_q_hdl);") == 1,
+            "BACK resets the button queue exactly once",
+        )
+        CHECK(
+            bseg.index("bt_adv_exec_stop();")
+            < bseg.index("xQueueReset(button_events_q_hdl);")
+            < bseg.index("settings_exit_save("),
+            "BACK reset sits after the stop exchange, before the atomic save",
+        )
+
+    # Whole-loop audit: exactly one reader, and a reset on every
+    # branch that runs a sub-screen or a multi-second exchange.
+    CHECK(
         editor.count("bt_wait_button()") == 1,
         "editor has exactly one button reader (the loop-top wait)",
     )
     CHECK(
-        editor.count("xQueueReset(button_events_q_hdl);") == 4,
+        editor.count("xQueueReset(button_events_q_hdl);") == 5,
         "every sub-screen/exchange branch resets the queue "
-        "(NAME, PRESET-custom, FILE, RUN)",
+        "(NAME, PRESET-custom, FILE, RUN, BACK)",
     )
 
     # 12. State-aware gate-refusal hint (iter-1 Advisory): the refusal
@@ -1063,6 +1177,43 @@ def static_checks():
         )
         is not None,
         "preset clamp keeps in-range ids, clamps the rest to PRESET_NAME",
+    )
+
+    # 14. Samsung table self-consistency (iter-2 Advisory): the
+    #     declared size and the explicit initializer count must agree
+    #     -- the 28th byte is written out, never implicit zero-fill
+    #     (the byte image itself is memcmp-pinned by the compiled
+    #     layer).
+    samsung_m = re.search(r"s_adv_samsung\[28\]\s*=\s*\{(.*?)\};", adv_c, re.S)
+    CHECK(samsung_m is not None, "samsung preset table found")
+    if samsung_m is not None:
+        code_only = re.sub(r"//[^\n]*|/\*[\s\S]*?\*/", "", samsung_m.group(1))
+        toks = re.findall(r"0x[0-9A-Fa-f]{2}\b", code_only)
+        CHECK(
+            len(toks) == 28,
+            f"samsung declares 28 bytes and lists {len(toks)} explicit "
+            "initializers (no implicit zero-fill)",
+        )
+
+    # 15. Header contract text matches the shipped API (iter-2
+    #     Advisory): the transport reference names the real functions,
+    #     and preset_name's documented CUSTOM behavior matches the
+    #     code (true + "Custom (SD)"; false only for unknown ids).
+    CHECK(
+        re.search(r"bt_adv_exec\(\)", adv_header) is None,
+        "header names the real transport (no stale bt_adv_exec())",
+    )
+    CHECK(
+        "bt_adv_exec_start()" in adv_header,
+        "header references bt_adv_exec_start()",
+    )
+    CHECK(
+        "including CUSTOM, which has no fixed bytes" not in adv_header,
+        "header no longer claims preset_name returns false for CUSTOM",
+    )
+    CHECK(
+        '"Custom (SD)"' in adv_header,
+        'header documents CUSTOM resolving to "Custom (SD)"',
     )
 
 

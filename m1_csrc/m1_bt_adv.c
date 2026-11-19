@@ -89,13 +89,17 @@ static const uint8_t s_adv_apple[M1_BT_ADV_MAX_PAYLOAD] =
     0x00                                         /* trailing byte     */
 };
 
-/* Samsung Easysetup skeleton, 28 bytes. */
+/* Samsung Easysetup skeleton, 28 bytes -- every initializer explicit
+ * (no implicit zero-fill): 7 header bytes (length 0x1B counting the
+ * 27 that follow) + a 6-byte address placeholder + 15 neutral filler
+ * bytes to the structure length. Pinned byte-for-byte by the suite. */
 static const uint8_t s_adv_samsung[28] =
 {
     0x1B, 0xFF, 0x75, 0x00, 0x42, 0x09, 0x01,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00,          /* 6-byte address placeholder */
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    /* 15 filler bytes to the   */
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,    /* 0x1B structure length    */
+    0x00
 };
 
 /* Microsoft Swift Pair skeleton, 7 bytes (length byte corrected to the

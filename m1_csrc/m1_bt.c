@@ -1985,6 +1985,15 @@ void bluetooth_adv_editor(void)
             /* Leaving the editor ends this session's advertising (no
              * hidden background state), then one atomic save. */
             bt_adv_exec_stop();
+            /* The stop + discovery-resume exchange above can queue a
+             * stale button status: settings_exit_save() clears only
+             * main_q, and the menu task pairs one notification with
+             * one status from this 1-deep queue -- a survivor would
+             * permanently skew that pairing (the next real press is
+             * lost, the stale one replayed as a phantom menu action).
+             * Drop it here, the exit-time companion to the RUN-row
+             * reset. */
+            xQueueReset(button_events_q_hdl);
             settings_exit_save(session_dirty);
             break;
         }
@@ -2056,11 +2065,21 @@ void bluetooth_adv_editor(void)
                         xQueueReset(button_events_q_hdl);
                     }
                     break;
+                case BT_ADV_ROW_INTERVAL:
+                    /* OK advances the interval one step forward --
+                     * the same cycle LEFT/RIGHT performs -- so the row
+                     * labelled "Edit" genuinely edits. Persisted live
+                     * like every other value change; no console
+                     * exchange, so no queue reset is needed here. */
+                    iv_idx = (uint8_t)((iv_idx + 1U) % (uint8_t)M1_BT_ADV_INTERVAL_COUNT);
+                    settings_set_bt_interval_ms(s_bt_adv_intervals[iv_idx]);
+                    session_dirty = 1U;
+                    break;
                 case BT_ADV_ROW_FILE:
                     (void)bt_adv_pick_custom();
                     xQueueReset(button_events_q_hdl);
                     break;
-                default:    /* BT_ADV_ROW_RUN */
+                case BT_ADV_ROW_RUN:
                     if (g_bt_adv_active) { bt_adv_exec_stop(); }
                     else
                     {
@@ -2075,6 +2094,11 @@ void bluetooth_adv_editor(void)
                      * next bt_wait_button, mirroring every sibling
                      * branch's post-sub-screen reset. */
                     xQueueReset(button_events_q_hdl);
+                    break;
+                default:
+                    /* Inert by design: no row may inherit the start/stop
+                     * transport -- every BT_ADV_ROW_* id has an explicit
+                     * case above (host-suite-pinned). */
                     break;
             }
         }
