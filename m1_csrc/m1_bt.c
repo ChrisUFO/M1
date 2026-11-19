@@ -1633,34 +1633,10 @@ static uint8_t g_bt_adv_active = 0U;
  * the store has no filename field by design -- pick again on re-entry). */
 static uint8_t g_bt_adv_custom[M1_BT_ADV_MAX_PAYLOAD];
 
-static const uint16_t s_bt_adv_intervals[M1_BT_ADV_INTERVAL_COUNT] =
-    M1_BT_ADV_INTERVALS_MS;
-
-/* Interval index for a stored value: exact table match, else the
- * documented default entry (the PR-1 store default 0 means "unset"). */
-static uint8_t bt_adv_interval_index(uint16_t ms)
-{
-    uint8_t i;
-
-    for (i = 0U; i < (uint8_t)M1_BT_ADV_INTERVAL_COUNT; i++)
-    {
-        if (s_bt_adv_intervals[i] == ms) { return i; }
-    }
-    for (i = 0U; i < (uint8_t)M1_BT_ADV_INTERVAL_COUNT; i++)
-    {
-        if (s_bt_adv_intervals[i] == (uint16_t)M1_BT_ADV_INTERVAL_DEFAULT_MS) { return i; }
-    }
-    return 0U;
-}
-
-/* Preset id from the store, clamped into the valid range (the u8 field
- * accepts 0..255 from a hand-edited file). */
-static uint8_t bt_adv_preset_clamp(uint8_t preset)
-{
-    return (preset < (uint8_t)M1_BT_ADV_PRESET__COUNT)
-               ? preset
-               : (uint8_t)M1_BT_ADV_PRESET_NAME;
-}
+/* Editor interval table + reload mapping moved into the pure core
+ * (m1_bt_adv.c): m1_bt_adv_interval_ms / m1_bt_adv_interval_index /
+ * m1_bt_adv_preset_clamp carry the typed contracts and the host
+ * suite's executable coverage. */
 
 /* Read + parse one .adv hex-text file into the session custom payload. */
 static uint8_t bt_adv_load_custom_file(const char *dir, const char *filename)
@@ -1917,6 +1893,44 @@ static void bt_adv_row_text(uint8_t row, char *out, uint8_t out_size,
     }
 }
 
+/* Action-bar affordances that match the OK behavior row by row (pure
+ * over their arguments so the host suite compiles them verbatim and
+ * pins the mapping): PRESET opens the picker only on CUSTOM, otherwise
+ * OK cycles the preset; INTERVAL cycles; FILE picks; NAME edits; RUN
+ * toggles advertising. The hint names the keys that actually change
+ * something on the selected row. */
+static const char *bt_adv_ok_label(uint8_t sel, uint8_t preset,
+                                   uint8_t adv_active)
+{
+    if (sel == (uint8_t)BT_ADV_ROW_RUN)
+    {
+        return adv_active ? "Stop" : "Start";
+    }
+    if (sel == (uint8_t)BT_ADV_ROW_PRESET)
+    {
+        return (preset == (uint8_t)M1_BT_ADV_PRESET_CUSTOM) ? "Pick" : "Cycle";
+    }
+    if (sel == (uint8_t)BT_ADV_ROW_INTERVAL)
+    {
+        return "Cycle";
+    }
+    if (sel == (uint8_t)BT_ADV_ROW_FILE)
+    {
+        return "Pick";
+    }
+    return "Edit";   /* BT_ADV_ROW_NAME */
+}
+
+static const char *bt_adv_hint(uint8_t sel)
+{
+    if ((sel == (uint8_t)BT_ADV_ROW_PRESET) ||
+        (sel == (uint8_t)BT_ADV_ROW_INTERVAL))
+    {
+        return "L/R change";
+    }
+    return "OK select";
+}
+
 static void bt_adv_gui_update(uint8_t sel, uint8_t top, const char *name,
                               uint8_t preset, uint16_t interval_ms)
 {
@@ -1946,11 +1960,8 @@ static void bt_adv_gui_update(uint8_t sel, uint8_t top, const char *name,
 
     bt_draw_scrollbar(sel, (uint16_t)BT_ADV_ROW__COUNT, VIS, 15, 51);
 
-    ok_label = (sel == (uint8_t)BT_ADV_ROW_RUN)
-                   ? (g_bt_adv_active ? "Stop" : "Start")
-                   : ((sel == (uint8_t)BT_ADV_ROW_PRESET ||
-                       sel == (uint8_t)BT_ADV_ROW_FILE) ? "Pick" : "Edit");
-    bt_draw_actionbar(ok_label, "L/R change");
+    ok_label = bt_adv_ok_label(sel, preset, g_bt_adv_active);
+    bt_draw_actionbar(ok_label, bt_adv_hint(sel));
     m1_u8g2_nextpage();
 }
 
@@ -1969,10 +1980,10 @@ void bluetooth_adv_editor(void)
     /* Load persisted config, clamped into the editable ranges. */
     strncpy(name, cfg->bt_adv_name, BT_ADV_NAME_EDIT_MAX);
     name[BT_ADV_NAME_EDIT_MAX] = '\0';
-    preset = bt_adv_preset_clamp(cfg->bt_preset);
-    iv_idx = bt_adv_interval_index(cfg->bt_interval_ms);
+    preset = m1_bt_adv_preset_clamp(cfg->bt_preset);
+    iv_idx = m1_bt_adv_interval_index(cfg->bt_interval_ms);
 
-    bt_adv_gui_update(sel, top, name, preset, s_bt_adv_intervals[iv_idx]);
+    bt_adv_gui_update(sel, top, name, preset, m1_bt_adv_interval_ms(iv_idx));
 
     for (;;)
     {
@@ -2021,7 +2032,7 @@ void bluetooth_adv_editor(void)
             {
                 iv_idx = (uint8_t)(((int)iv_idx + dir + (int)M1_BT_ADV_INTERVAL_COUNT)
                                    % (int)M1_BT_ADV_INTERVAL_COUNT);
-                settings_set_bt_interval_ms(s_bt_adv_intervals[iv_idx]);
+                settings_set_bt_interval_ms(m1_bt_adv_interval_ms(iv_idx));
                 session_dirty = 1U;
             }
         }
@@ -2064,6 +2075,17 @@ void bluetooth_adv_editor(void)
                         (void)bt_adv_pick_custom();
                         xQueueReset(button_events_q_hdl);
                     }
+                    else
+                    {
+                        /* OK advances the preset one step forward --
+                         * the same cycle LEFT/RIGHT performs -- so the
+                         * "Cycle" label is honest. Persisted live like
+                         * every other value change; no console
+                         * exchange, so no queue reset is needed. */
+                        preset = (uint8_t)((preset + 1U) % (uint8_t)M1_BT_ADV_PRESET__COUNT);
+                        settings_set_bt_preset(preset);
+                        session_dirty = 1U;
+                    }
                     break;
                 case BT_ADV_ROW_INTERVAL:
                     /* OK advances the interval one step forward --
@@ -2072,7 +2094,7 @@ void bluetooth_adv_editor(void)
                      * like every other value change; no console
                      * exchange, so no queue reset is needed here. */
                     iv_idx = (uint8_t)((iv_idx + 1U) % (uint8_t)M1_BT_ADV_INTERVAL_COUNT);
-                    settings_set_bt_interval_ms(s_bt_adv_intervals[iv_idx]);
+                    settings_set_bt_interval_ms(m1_bt_adv_interval_ms(iv_idx));
                     session_dirty = 1U;
                     break;
                 case BT_ADV_ROW_FILE:
@@ -2084,7 +2106,7 @@ void bluetooth_adv_editor(void)
                     else
                     {
                         (void)bt_adv_exec_start(name, preset,
-                                                s_bt_adv_intervals[iv_idx]);
+                                                m1_bt_adv_interval_ms(iv_idx));
                     }
                     /* Both RUN paths run multi-second console exchanges
                      * (gated start, or stop + discovery resume); any
@@ -2108,7 +2130,7 @@ void bluetooth_adv_editor(void)
         else if (sel > vis_high)          { top = (uint8_t)(sel - 2U); }
         if (top > (uint8_t)(BT_ADV_ROW__COUNT - 3U)) { top = (uint8_t)(BT_ADV_ROW__COUNT - 3U); }
 
-        bt_adv_gui_update(sel, top, name, preset, s_bt_adv_intervals[iv_idx]);
+        bt_adv_gui_update(sel, top, name, preset, m1_bt_adv_interval_ms(iv_idx));
     }
 } // void bluetooth_adv_editor(void)
 

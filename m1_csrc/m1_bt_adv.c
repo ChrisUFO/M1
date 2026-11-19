@@ -165,6 +165,48 @@ uint8_t m1_bt_adv_preset_table_count(void)
     return (uint8_t)(sizeof(s_adv_presets) / sizeof(s_adv_presets[0]));
 }
 
+/* ---- editor interval table + reload mapping ------------------------------- */
+
+/* The fixed interval presets the editor offers (milliseconds); every
+ * entry is an exact multiple of 5 ms, so the 0.625 ms unit conversion
+ * is lossless (m1_bt_adv_ms_to_units). */
+static const uint16_t s_adv_intervals[M1_BT_ADV_INTERVAL_COUNT] =
+    M1_BT_ADV_INTERVALS_MS;
+
+uint16_t m1_bt_adv_interval_ms(uint8_t index)
+{
+    if (index >= (uint8_t)M1_BT_ADV_INTERVAL_COUNT)
+    {
+        index = (uint8_t)(M1_BT_ADV_INTERVAL_COUNT - 1u);
+    }
+    return s_adv_intervals[index];
+}
+
+uint8_t m1_bt_adv_interval_index(uint16_t ms)
+{
+    uint8_t i;
+
+    /* Exact table match first... */
+    for (i = 0U; i < (uint8_t)M1_BT_ADV_INTERVAL_COUNT; i++)
+    {
+        if (s_adv_intervals[i] == ms) { return i; }
+    }
+    /* ...then the documented default slot (the store's fresh-device
+     * value 0 means "unset" and lands here). */
+    for (i = 0U; i < (uint8_t)M1_BT_ADV_INTERVAL_COUNT; i++)
+    {
+        if (s_adv_intervals[i] == (uint16_t)M1_BT_ADV_INTERVAL_DEFAULT_MS) { return i; }
+    }
+    return 0U;   /* total: the table always holds the default */
+}
+
+uint8_t m1_bt_adv_preset_clamp(uint8_t preset)
+{
+    return (preset < (uint8_t)M1_BT_ADV_PRESET__COUNT)
+               ? preset
+               : (uint8_t)M1_BT_ADV_PRESET_NAME;
+}
+
 bool m1_bt_adv_preset_name(uint8_t preset, char *out, uint8_t out_size)
 {
     const m1_bt_adv_preset_row_t *row;

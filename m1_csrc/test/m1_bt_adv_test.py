@@ -84,9 +84,20 @@ Layers:
    - persistence: the editor applies settings_set_bt_adv_name /
      settings_set_bt_preset / settings_set_bt_interval_ms and exits
      through settings_exit_save (one atomic save);
-   - reload mapping: a stored interval outside the table (the PR-1
-     default 0) maps to the documented 1000 ms entry, and a
-     hand-edited preset id clamps into the valid range;
+   - reload mapping (iter-4 Fix-now, structural): the interval table,
+     m1_bt_adv_interval_ms/index, and m1_bt_adv_preset_clamp moved
+     into the PURE core and are behaviorally covered by the compiled
+     harness (every slot, the 1000 ms default VALUE, stored-0 and
+     unlisted reload mapping, clamp boundaries); the HAL-bound TU
+     keeps no private copies and consumes the API;
+   - action-bar honesty (iter-4 Advisory): the row->label and
+     row->hint mappings are compiled from the verbatim helpers
+     (bt_adv_ok_label/bt_adv_hint) -- PRESET shows Pick only on
+     CUSTOM and Cycle otherwise, INTERVAL Cycle, FILE Pick, NAME
+     Edit, RUN Start/Stop; "L/R change" only where LEFT/RIGHT
+     changes something -- and the OK dispatch pins the matching
+     actions (PRESET advances + persists on non-CUSTOM, still opens
+     the picker on CUSTOM);
    - stale-click discipline (iter-1 Fix-now + iter-2 Fix-now): the
      button queue reset runs after EVERY multi-second console
      exchange -- both RUN paths (start, stop) AND the BACK exit (stop
@@ -498,6 +509,69 @@ static void test_classifier(void)
     printf("classifier done (%d fails so far)\n", fails);
 }
 
+static void test_editor_mapping(void)
+{
+    /* Independent expected table: must match M1_BT_ADV_INTERVALS_MS
+     * exactly, or the slot checks fail (mutation-verified). */
+    static const uint16_t table[M1_BT_ADV_INTERVAL_COUNT] =
+        { 100u, 250u, 500u, 1000u, 2000u };
+    uint8_t i;
+
+    /* The documented default VALUE, not just its shape: changing the
+     * macro to any other in-table value must fail here. */
+    CHECKN(M1_BT_ADV_INTERVAL_DEFAULT_MS == 1000u,
+           "documented reload default is 1000 ms");
+    CHECKN(m1_bt_adv_ms_to_units(M1_BT_ADV_INTERVAL_DEFAULT_MS) > 0,
+           "reload default is a representable interval");
+
+    /* Slot lookup: every slot returns the documented table; out-of-range
+     * indices clamp to the last slot. */
+    for (i = 0U; i < (uint8_t)M1_BT_ADV_INTERVAL_COUNT; i++)
+    {
+        CHECKN(m1_bt_adv_interval_ms(i) == table[i],
+               "interval slot holds the documented value");
+    }
+    CHECKN(m1_bt_adv_interval_ms(0U) == 100u, "slot 0 is 100 ms");
+    CHECKN(m1_bt_adv_interval_ms((uint8_t)(M1_BT_ADV_INTERVAL_COUNT - 1u)) == 2000u,
+           "slot COUNT-1 is 2000 ms");
+    CHECKN(m1_bt_adv_interval_ms((uint8_t)M1_BT_ADV_INTERVAL_COUNT) == 2000u,
+           "index == COUNT clamps to the last slot");
+    CHECKN(m1_bt_adv_interval_ms(255u) == 2000u,
+           "index 255 clamps to the last slot");
+
+    /* Reload mapping: a fresh device (stored 0) lands on the 1000 ms
+     * slot; each table value maps to its own slot; anything unlisted
+     * lands on the default slot. */
+    CHECKN(m1_bt_adv_interval_index(0U) == 3U,
+           "stored 0 (fresh device) maps to the 1000 ms slot");
+    for (i = 0U; i < (uint8_t)M1_BT_ADV_INTERVAL_COUNT; i++)
+    {
+        CHECKN(m1_bt_adv_interval_index(table[i]) == i,
+               "each table value maps to its own slot");
+    }
+    CHECKN(m1_bt_adv_interval_index(1777u) == 3U,
+           "unlisted value maps to the default slot");
+    CHECKN(m1_bt_adv_interval_index(M1_BT_ADV_INTERVAL_DEFAULT_MS)
+               == m1_bt_adv_interval_index(0U),
+           "default value and stored 0 agree");
+    CHECKN(m1_bt_adv_interval_index(100u) != m1_bt_adv_interval_index(0U),
+           "in-table non-default values do NOT collapse to the default");
+
+    /* Preset clamp boundaries. */
+    CHECKN(m1_bt_adv_preset_clamp(0U) == 0U, "clamp keeps 0");
+    CHECKN(m1_bt_adv_preset_clamp((uint8_t)(M1_BT_ADV_PRESET__COUNT - 1u))
+               == (uint8_t)(M1_BT_ADV_PRESET__COUNT - 1u),
+           "clamp keeps COUNT-1");
+    CHECKN(m1_bt_adv_preset_clamp((uint8_t)M1_BT_ADV_PRESET__COUNT)
+               == (uint8_t)M1_BT_ADV_PRESET_NAME,
+           "clamp maps COUNT to PRESET_NAME");
+    CHECKN(m1_bt_adv_preset_clamp(255u) == (uint8_t)M1_BT_ADV_PRESET_NAME,
+           "clamp maps 255 to PRESET_NAME");
+    CHECKN(m1_bt_adv_preset_clamp(1u) == 1U,
+           "clamp keeps a mid-range id (operator direction)");
+    printf("editor mapping done (%d fails so far)\n", fails);
+}
+
 int main(void)
 {
     test_presets();
@@ -507,6 +581,7 @@ int main(void)
     test_intervals();
     test_commands();
     test_classifier();
+    test_editor_mapping();
 
     if (fails == 0)
     {
@@ -833,6 +908,138 @@ def compiled_hint_layer(cc):
 
 
 # ---------------------------------------------------------------------------
+# Compiled layer 2c: action-bar label/hint mapping (real helper text)
+# ---------------------------------------------------------------------------
+
+LABEL_HARNESS_HEAD = r"""
+/* Generated by m1_csrc/test/m1_bt_adv_test.py -- do not edit. */
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include "m1_bt_adv.h"
+
+static int fails = 0;
+#define FAILF(...) do { fails++; printf("  FAIL: " __VA_ARGS__); printf("\n"); } while (0)
+#define CHECKN(c, m) do { if (!(c)) FAILF("%s", m); } while (0)
+
+/* bt_adv_row_t and both helpers are extracted VERBATIM from
+ * m1_csrc/m1_bt.c below. */
+
+"""
+
+LABEL_HARNESS_TAIL = r"""
+
+static void check_lbl(const char *name, uint8_t sel, uint8_t preset,
+                      uint8_t active, const char *want)
+{
+    if (strcmp(bt_adv_ok_label(sel, preset, active), want) != 0)
+    {
+        FAILF("%s: label \"%s\" want \"%s\"", name,
+              bt_adv_ok_label(sel, preset, active), want);
+    }
+}
+
+static void check_hint(const char *name, uint8_t sel, const char *want)
+{
+    if (strcmp(bt_adv_hint(sel), want) != 0)
+    {
+        FAILF("%s: hint \"%s\" want \"%s\"", name,
+              bt_adv_hint(sel), want);
+    }
+}
+
+int main(void)
+{
+    /* RUN toggles: label is the action OK will perform. */
+    check_lbl("run inactive", BT_ADV_ROW_RUN, 0, 0, "Start");
+    check_lbl("run active", BT_ADV_ROW_RUN, 0, 1, "Stop");
+
+    /* PRESET: picker only on CUSTOM; otherwise OK cycles. */
+    check_lbl("preset custom", BT_ADV_ROW_PRESET, M1_BT_ADV_PRESET_CUSTOM, 0, "Pick");
+    check_lbl("preset name", BT_ADV_ROW_PRESET, M1_BT_ADV_PRESET_NAME, 0, "Cycle");
+    check_lbl("preset apple", BT_ADV_ROW_PRESET, M1_BT_ADV_PRESET_APPLE, 0, "Cycle");
+    check_lbl("preset samsung", BT_ADV_ROW_PRESET, M1_BT_ADV_PRESET_SAMSUNG, 0, "Cycle");
+    check_lbl("preset swift", BT_ADV_ROW_PRESET, M1_BT_ADV_PRESET_SWIFT, 0, "Cycle");
+
+    /* INTERVAL cycles; FILE picks; NAME edits. */
+    check_lbl("interval", BT_ADV_ROW_INTERVAL, 0, 0, "Cycle");
+    check_lbl("file", BT_ADV_ROW_FILE, 0, 0, "Pick");
+    check_lbl("name", BT_ADV_ROW_NAME, 0, 0, "Edit");
+
+    /* Hints: "L/R change" only where LEFT/RIGHT changes something. */
+    check_hint("preset hint", BT_ADV_ROW_PRESET, "L/R change");
+    check_hint("interval hint", BT_ADV_ROW_INTERVAL, "L/R change");
+    check_hint("name hint", BT_ADV_ROW_NAME, "OK select");
+    check_hint("file hint", BT_ADV_ROW_FILE, "OK select");
+    check_hint("run hint", BT_ADV_ROW_RUN, "OK select");
+
+    /* Budget: both strings must stay short for the 128x64 bar. */
+    CHECKN(strlen(bt_adv_ok_label(BT_ADV_ROW_RUN, 0, 1)) <= 6,
+           "longest toggle label fits the bar budget");
+    CHECKN(strlen(bt_adv_hint(BT_ADV_ROW_PRESET)) <= 10,
+           "hint fits the bar budget");
+
+    if (fails == 0)
+    {
+        printf("BT ADV LABELS OK\n");
+        return 0;
+    }
+    printf("BT ADV LABELS FAILED (%d)\n", fails);
+    return 1;
+}
+"""
+
+
+def compiled_label_layer(cc):
+    bt = source("m1_csrc/m1_bt.c")
+    enum_m = re.search(r"typedef enum\s*\{[^}]*?\}\s*bt_adv_row_t;", bt, re.S)
+    assert enum_m is not None, "bt_adv_row_t enum"
+    label_fn = function(bt, "bt_adv_ok_label")
+    hint_fn = function(bt, "bt_adv_hint")
+
+    with tempfile.TemporaryDirectory() as td:
+        tdir = Path(td)
+        harness = tdir / "bt_adv_label_test.c"
+        harness.write_text(
+            LABEL_HARNESS_HEAD
+            + enum_m.group(0)
+            + "\n"
+            + label_fn
+            + "\n"
+            + hint_fn
+            + "\n"
+            + LABEL_HARNESS_TAIL
+        )
+        exe = tdir / "bt_adv_label_test"
+        cmd = [
+            cc,
+            "-std=c99",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-pedantic",
+            "-I",
+            str(ROOT / "m1_csrc"),
+            str(harness),
+            "-o",
+            str(exe),
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        CHECK(
+            r.returncode == 0, f"label helper compile failed: {r.stderr.strip()[:400]}"
+        )
+        if r.returncode != 0:
+            return
+        r = subprocess.run([str(exe)], capture_output=True, text=True)
+        CHECK(
+            r.returncode == 0 and "BT ADV LABELS OK" in r.stdout,
+            f"label mapping run failed:\n{r.stdout}",
+        )
+
+
+# ---------------------------------------------------------------------------
 # Static layer: wiring seams in the live sources
 # ---------------------------------------------------------------------------
 
@@ -900,6 +1107,7 @@ def static_checks():
         "start refuses on a non-OK reply (polarity: classify != OK)",
     )
 
+
     # 4. The stop verb is only ever sent while advertising is active, and
     #    the editor/menu funnel through bt_adv_exec_stop.
     stop_fn = function(bt, "bt_adv_exec_stop")
@@ -950,6 +1158,7 @@ def static_checks():
         "bt_session_resume_scan();" in stop_fn,
         "stop still resumes background discovery",
     )
+
 
     # 5. The adv verb never appears outside the gated transport /
     #    guarded stop: no other writer of the advertise command.
@@ -1055,8 +1264,32 @@ def static_checks():
             "default case never reaches the start/stop transport",
         )
 
+    # (b2) PRESET (iter-4 Advisory): OK opens the picker ONLY on
+    #      CUSTOM; otherwise it advances the preset one step and
+    #      persists -- matching the "Cycle" label (the compiled label
+    #      layer pins the row->label/hint mapping; this pins the
+    #      row->OK-action mapping).
+    preset_m = re.search(r"case BT_ADV_ROW_PRESET:(.*?)break;", ok_switch, re.S)
+    CHECK(preset_m is not None, "explicit PRESET case found")
+    if preset_m is not None:
+        pseg = re.sub(r"//[^\n]*|/\*[\s\S]*?\*/", "", preset_m.group(1))
+        CHECK(
+            "M1_BT_ADV_PRESET_CUSTOM" in pseg and "bt_adv_pick_custom();" in pseg,
+            "PRESET OK still opens the picker on CUSTOM",
+        )
+        CHECK(
+            "M1_BT_ADV_PRESET__COUNT" in pseg
+            and "settings_set_bt_preset(" in pseg
+            and "session_dirty = 1U" in pseg,
+            "PRESET OK advances one step and persists on non-CUSTOM",
+        )
+        CHECK(
+            "bt_adv_exec" not in pseg,
+            "PRESET OK never touches the advertise transport",
+        )
+
     # (c) INTERVAL: OK performs a visible, persisted edit -- the exact
-    #     behavior the row's "Edit" action-bar label promises.
+    #     behavior the row's "Cycle" action-bar label promises.
     interval_m = re.search(r"case BT_ADV_ROW_INTERVAL:(.*?)break;", ok_switch, re.S)
     CHECK(interval_m is not None, "explicit INTERVAL case found")
     if interval_m is not None:
@@ -1075,8 +1308,12 @@ def static_checks():
         )
     gui = function(bt, "bt_adv_gui_update")
     CHECK(
-        '? "Pick" : "Edit"' in gui,
-        'action-bar fallback label is "Edit" (incl. the INTERVAL row)',
+        "bt_adv_ok_label(sel, preset, g_bt_adv_active)" in gui,
+        "action bar draws the label through the (compiled-pinned) helper",
+    )
+    CHECK(
+        "bt_draw_actionbar(ok_label, bt_adv_hint(sel));" in gui,
+        "action bar draws the hint through the (compiled-pinned) helper",
     )
 
     # (d) RUN owns start/stop exclusively, with the hoisted reset.
@@ -1153,51 +1390,35 @@ def static_checks():
         "primary diagnostic still comes from the gate itself",
     )
 
-    # 13. Stored-value mapping helpers (iter-1 Advisory): on reload the
-    #     editor maps the stored interval onto the table (documented
-    #     contract, m1_bt_adv.h: a stored 0 -- the PR-1 default -- or
-    #     any value not in the table lands on the 1000 ms default
-    #     entry) and clamps a hand-edited preset id into the valid
-    #     range. Both helpers are pure but sit in the HAL-bound TU
-    #     outside the compiled harnesses, so their contracts get
-    #     static pins here.
-    #
-    #     Pin the RETURN, not just the comparison: a looser pattern (the
-    #     original one matched `== ms ... DEFAULT_MS` anywhere and the
-    #     clamp's `? preset :` regardless of operator) stays green when
-    #     the default loop returns via `break` -- mapping a stored 0 to
-    #     the 100 ms entry instead of the documented 1000 ms -- or when
-    #     the clamp operator is inverted to `>`. Mutation-verified.
-    iv_fn = function(bt, "bt_adv_interval_index")
+    # 13. Editor mapping helpers (iter-4 Fix-now, structural): the
+    #     interval table, the reload mapping, and the preset clamp now
+    #     live in the PURE core (m1_bt_adv.c) with typed contracts and
+    #     full EXECUTABLE coverage in the compiled harness
+    #     (test_editor_mapping: table slots, default VALUE, reload
+    #     mapping, clamp boundaries -- mutation-verified). What remains
+    #     static here is the move itself: the HAL-bound TU must not
+    #     keep private copies that could drift from the pure ones, and
+    #     the editor must consume the new API.
     CHECK(
-        re.search(r"==\s*ms\s*\)\s*\{\s*return\s+i\s*;", iv_fn) is not None,
-        "interval mapping: an exact table match returns its own index",
+        re.search(r"^static\s+.*\bbt_adv_interval_index\s*\(", bt, re.M) is None,
+        "no private interval-index copy left in the HAL-bound TU",
     )
     CHECK(
-        re.search(
-            r"==\s*\(uint16_t\)\s*M1_BT_ADV_INTERVAL_DEFAULT_MS\s*\)"
-            r"\s*\{\s*return\s+i\s*;",
-            iv_fn,
-        )
-        is not None,
-        "interval mapping: a stored value outside the table returns the "
-        "documented 1000 ms default entry's index (return, not break)",
+        re.search(r"^static\s+.*\bbt_adv_preset_clamp\s*\(", bt, re.M) is None,
+        "no private preset-clamp copy left in the HAL-bound TU",
     )
     CHECK(
-        re.search(r"return\s+0U\s*;", iv_fn) is not None,
-        "interval mapping: still yields a valid index if the table lacks the default",
+        "s_bt_adv_intervals" not in bt,
+        "no private interval-table copy left in the HAL-bound TU",
     )
-    clamp_fn = function(bt, "bt_adv_preset_clamp")
     CHECK(
-        re.search(
-            r"preset\s*<\s*\(uint8_t\)\s*M1_BT_ADV_PRESET__COUNT\s*\)\s*\?\s*"
-            r"preset\s*:\s*\(uint8_t\)\s*M1_BT_ADV_PRESET_NAME",
-            clamp_fn,
-            re.S,
-        )
-        is not None,
-        "preset clamp keeps in-range ids (< PRESET__COUNT) and clamps "
-        "the rest to PRESET_NAME",
+        "m1_bt_adv_interval_index(cfg->bt_interval_ms)" in bt
+        and "m1_bt_adv_preset_clamp(cfg->bt_preset)" in bt,
+        "editor reload consumes the pure mapping API",
+    )
+    CHECK(
+        bt.count("m1_bt_adv_interval_ms(iv_idx)") == 5,
+        "every interval-table read goes through the pure accessor",
     )
 
     # 14. Samsung table self-consistency (iter-2 Advisory): the
@@ -1243,6 +1464,7 @@ def main():
     compiled_adv_core(cc)
     compiled_gate_layer(cc)
     compiled_hint_layer(cc)
+    compiled_label_layer(cc)
     static_checks()
 
     print(f"\n{PASSED} passed, {FAILED} failed")

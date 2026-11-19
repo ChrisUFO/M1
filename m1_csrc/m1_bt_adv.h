@@ -107,6 +107,25 @@ typedef enum
 #define M1_BT_ADV_INTERVAL_COUNT 5u
 #define M1_BT_ADV_INTERVAL_DEFAULT_MS 1000u
 
+/* ---- editor interval table + reload mapping (pure, host-tested) ----------- */
+
+/* The interval (milliseconds) at table slot `index` (0 ..
+ * M1_BT_ADV_INTERVAL_COUNT-1). An out-of-range index clamps to the
+ * nearest valid slot (the editor's index arithmetic stays in range;
+ * the clamp is a typed contract, not a recovery path). */
+uint16_t m1_bt_adv_interval_ms(uint8_t index);
+
+/* Table slot for a stored interval: an exact match returns its own
+ * slot; anything else -- including 0, the PR-1 store default meaning
+ * "unset" -- maps to the slot holding M1_BT_ADV_INTERVAL_DEFAULT_MS
+ * (1000 ms). Total: returns slot 0 in the impossible configuration
+ * where the table lacks the default. */
+uint8_t m1_bt_adv_interval_index(uint16_t ms);
+
+/* Preset id from the settings store, clamped into the valid range
+ * (the u8 field accepts 0..255 from a hand-edited settings file). */
+uint8_t m1_bt_adv_preset_clamp(uint8_t preset);
+
 /* Reply classification for an advertise command (line-anchored
  * markers, exactly the Wi-Fi join classifier's discipline). */
 typedef enum
