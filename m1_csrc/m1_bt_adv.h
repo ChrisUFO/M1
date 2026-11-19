@@ -117,11 +117,15 @@ typedef enum
 
 /* ---- preset table -------------------------------------------------------- */
 
-/* Number of table presets (excludes CUSTOM, whose bytes come from SD). */
+/* Number of fixed-byte table presets (APPLE/SAMSUNG/SWIFT): excludes
+ * CUSTOM (bytes come from SD) and NAME (bytes derive from the
+ * configured name). */
 uint8_t m1_bt_adv_preset_table_count(void);
 
-/* Copy preset id's display name (static string) into out. Returns false
- * for an unknown id (including CUSTOM, which has no fixed bytes). */
+/* Copy preset id's display name (static string) into out. Returns true
+ * for every editor id -- NAME, the table presets, and CUSTOM (shown as
+ * "Custom (SD)") -- and false only for an unknown id or a NULL/out_size
+ * 0 buffer. */
 bool m1_bt_adv_preset_name(uint8_t preset, char *out, uint8_t out_size);
 
 /* ---- payload construction / validation ----------------------------------- */

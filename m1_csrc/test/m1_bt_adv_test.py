@@ -65,21 +65,28 @@ Layers:
 
 3. Static layer on the real sources:
    - m1_bt_adv.c is in M1_APP_SOURCES (scoped -Werror);
-   - the advertise transport is gated BEFORE any send: inside
-     bt_adv_exec_start the live query precedes bt_cmd_process, and the
-     editor's start path goes only through bt_adv_exec_start;
+   - the advertise transport is gated BEFORE the adv send: inside
+     bt_adv_exec_start the live query precedes bt_cmd_process (the
+     only direct console writer; the sole pre-gate console use is the
+     idempotent bt_session_ensure bring-up), and the editor's start
+     path goes only through bt_adv_exec_start;
    - g_bt_adv_active is set only after the ADV:OK classification (no
-     success without the console's confirmation);
+     success without the console's confirmation), with the comparison
+     polarity pinned (classify != OK refuses; == OK stops);
    - adv stop is only ever sent while advertising is active
      (bt_adv_exec_stop guards on g_bt_adv_active, and menu exit funnels
      through it), and the stop reply is CONSULTED: classification
-     precedes the latch clear and a non-OK/timeout reply surfaces the
+     precedes the latch clear, only an == OK reply counts as stopped,
+     and a non-OK/timeout reply surfaces the
      "Adv stop failed / Check ESP32" message (never a silent success);
    - menu wiring: Bluetooth menu has 5 children ending with the
      Adv Editor leaf; bluetooth_adv_editor is declared in m1_bt.h;
    - persistence: the editor applies settings_set_bt_adv_name /
      settings_set_bt_preset / settings_set_bt_interval_ms and exits
      through settings_exit_save (one atomic save);
+   - reload mapping: a stored interval outside the table (the PR-1
+     default 0) maps to the documented 1000 ms entry, and a
+     hand-edited preset id clamps into the valid range;
    - stale-click discipline on the RUN row (iter-1 review): the button
      queue reset runs on BOTH the start and the stop path (after the
      multi-second console exchanges), before the editor loop's single
@@ -814,8 +821,12 @@ def static_checks():
     )
 
     # 2. THE ordering seam: inside bt_adv_exec_start the live gate runs
-    #    before any console write (bt_cmd_process is the only writer the
-    #    adv path uses), and the gate refusal returns before it.
+    #    before the adv send. The pins are in terms of bt_cmd_process,
+    #    the only console writer this function uses directly (a future
+    #    write routed through a helper would not be counted) -- so the
+    #    claim is scoped to the adv command, and the one deliberate
+    #    pre-gate console interaction is pinned explicitly: the
+    #    idempotent 1.1.0.0-safe session bring-up (bt_session_ensure).
     exec_fn = function(bt, "bt_adv_exec_start")
     CHECK(
         "esp_feature_gate_query(ESP_FEATURE_BLE_ADVERTISE" in exec_fn,
@@ -823,22 +834,38 @@ def static_checks():
     )
     CHECK(
         exec_fn.index("esp_feature_gate_query") < exec_fn.index("bt_cmd_process("),
-        "gate decision precedes any console write in bt_adv_exec_start",
+        "gate decision precedes the adv send (bt_cmd_process)",
     )
     CHECK(
         exec_fn.index("esp_feature_gate_allows") < exec_fn.index("bt_cmd_process("),
-        "allows() check precedes any console write",
+        "allows() check precedes the adv send (bt_cmd_process)",
     )
     CHECK(
         exec_fn.count("bt_cmd_process(") == 1,
-        "bt_adv_exec_start has exactly one console write (the adv send)",
+        "bt_adv_exec_start sends exactly one command (the adv send)",
+    )
+    CHECK(
+        exec_fn.index("bt_session_ensure()") < exec_fn.index("esp_feature_gate_query"),
+        "pre-gate console use is only the idempotent session bring-up",
     )
 
     # 3. Success is latched only after the console confirmed ADV:OK.
+    #    The ordering pin alone survives an inverted comparison, so the
+    #    operator polarity is pinned too (iter-1 Fix-now): the start
+    #    path must REFUSE on non-OK (classify != OK -> error return,
+    #    latch reachable only via OK).
     CHECK(
         exec_fn.index("m1_bt_adv_classify_reply")
         < exec_fn.index("g_bt_adv_active = 1U"),
         "g_bt_adv_active set only after the ADV:OK classification",
+    )
+    CHECK(
+        re.search(
+            r"m1_bt_adv_classify_reply\([^)]*\)\s*!=\s*M1_BT_ADV_REPLY_OK",
+            exec_fn,
+        )
+        is not None,
+        "start refuses on a non-OK reply (polarity: classify != OK)",
     )
 
     # 4. The stop verb is only ever sent while advertising is active, and
@@ -872,6 +899,14 @@ def static_checks():
     CHECK(
         "M1_BT_ADV_REPLY_OK" in stop_fn,
         "only an ADV:OK-classified reply counts as stopped",
+    )
+    CHECK(
+        re.search(
+            r"m1_bt_adv_classify_reply\([^)]*\)\s*==\s*M1_BT_ADV_REPLY_OK",
+            stop_fn,
+        )
+        is not None,
+        "stop confirms via equality (polarity: only OK counts as stopped)",
     )
     CHECK(
         "bt_message_screen(" in stop_fn
@@ -1002,6 +1037,32 @@ def static_checks():
         exec_fn.index("esp_feature_gate_diag(&gate)")
         < exec_fn.index("bt_adv_gate_hint(&gate)"),
         "primary diagnostic still comes from the gate itself",
+    )
+
+    # 13. Stored-value mapping helpers (iter-1 Advisory): on reload the
+    #     editor maps the stored interval onto the table (documented
+    #     contract, m1_bt_adv.h: a stored 0 -- the PR-1 default -- or
+    #     any value not in the table lands on the 1000 ms default
+    #     entry) and clamps a hand-edited preset id into the valid
+    #     range. Both helpers are pure but sit in the HAL-bound TU
+    #     outside the compiled harnesses, so their contracts get
+    #     static pins here.
+    iv_fn = function(bt, "bt_adv_interval_index")
+    CHECK(
+        re.search(r"==\s*ms.*M1_BT_ADV_INTERVAL_DEFAULT_MS", iv_fn, re.S) is not None,
+        "interval mapping: exact table match first, then the "
+        "documented 1000 ms default entry",
+    )
+    clamp_fn = function(bt, "bt_adv_preset_clamp")
+    CHECK(
+        re.search(
+            r"M1_BT_ADV_PRESET__COUNT.*\?\s*preset\s*:\s*"
+            r"\(uint8_t\)\s*M1_BT_ADV_PRESET_NAME",
+            clamp_fn,
+            re.S,
+        )
+        is not None,
+        "preset clamp keeps in-range ids, clamps the rest to PRESET_NAME",
     )
 
 
