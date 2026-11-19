@@ -107,10 +107,13 @@ typedef enum
 } esp_gate_absent_reason_t;
 
 /* Gated ESP32-dependent features. The minimums below say which ESP32
- * firmware first shipped the matching handler; both start at a
- * version no shipped ESP32 image reports, so the gate refuses until
- * the paired firmware lands (PR-11 owns the join-handler minimum,
- * PR-12 the advertise-command minimum -- bump them there, not here).*/
+ * firmware first shipped the matching handler. PR-11 pinned the join
+ * minimum to 1.1.0.0 -- the version the paired console firmware is
+ * required to report (declared in-tree as ESP32C6_FW_VERSION_LINE;
+ * the console firmware itself is external) -- so the gate
+ * accepts only firmware that answers the live handshake with the join
+ * handler aboard; PR-12 owns the advertise-command minimum (still at
+ * the pre-pairing placeholder).*/
 typedef enum
 {
     ESP_FEATURE_WIFI_JOIN     = 0,  /* PR-11: AP join handler on the console firmware */

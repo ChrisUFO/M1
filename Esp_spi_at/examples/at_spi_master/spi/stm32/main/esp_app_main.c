@@ -253,6 +253,19 @@ static void spi_trans_control_task(void* arg)
                 return;
             }
 
+            /* PSK hygiene (PR-11 review): the command bytes just moved
+             * out over SPI -- scrub the region of this staging buffer
+             * that carried them, so a secret-bearing command
+             * (AT+CWJAP="<ssid>","<pwd>") does not persist here between
+             * transactions. Task-local buffer, post-transmit: no other
+             * reader, no concurrency. */
+            {
+                volatile uint8_t *wipe = trans_data;
+                uint32_t wi;
+                for ( wi=0; wi<plan_send_len; wi++ )
+                    wipe[wi] = 0;
+            }
+
             // maybe streambuffer filled some data when SPI transmit, just consider it after send done, because send flag has already in SLAVE queue
             uint32_t tmp_send_len = xStreamBufferBytesAvailable(spi_master_tx_ring_buf);
             if (tmp_send_len > 0) {
@@ -416,6 +429,95 @@ static uint8_t *spi_AT_app_get_response(int *read_len, uint32_t *uid, int timeou
 
 	return NULL;
 } // static uint8_t *spi_AT_app_get_response(int *read_len, uint32_t *uid, int timeout_sec)
+
+
+/* Conditionally scrub the SPI TX stream buffer's STORAGE after a
+ * secret-bearing command (PR-11 review: the plaintext PSK of AT+CWJAP
+ * rides join_cmd into spi_master_tx_ring_buf through
+ * xStreamBufferSend, and FreeRTOS stream buffers do not zero storage
+ * on read -- without this scrub those bytes persist in static RAM
+ * until a later, longer command happens to overwrite them).
+ *
+ * CONDITIONAL BY DESIGN -- the scrub runs only when BOTH hold:
+ *  1. The driver's single-flight semaphore (esp_ctrl_req_sem) is free
+ *     within its 100 ms bound. The ONLY ring writer is
+ *     spi_AT_app_send_command(), serialized on that semaphore, so
+ *     holding it means no sender is mid-write and none can start.
+ *     If it cannot be taken, the scrub is SKIPPED (never race another
+ *     request).
+ *  2. The ring is genuinely EMPTY (xStreamBufferIsEmpty). Occupancy,
+ *     not free space, is the precondition: after a response TIMEOUT
+ *     the semaphore is already released while the command bytes may
+ *     still sit undrained in the ring (the slave never pulled the
+ *     write). Draining a non-empty ring would pop the OLDEST bytes --
+ *     the plaintext command -- into this function's buffers and
+ *     silently replace queued TX bytes with zeros. A non-empty ring
+ *     is left untouched and the scrub is SKIPPED (documented residual:
+ *     those bytes persist in the ring storage until later traffic
+ *     overwrites them).
+ * The SPI control task never writes the buffer; it only drains it.
+ * The scrub goes EXCLUSIVELY through the stream-buffer API (fill with
+ * zeroes in chunks, drain each chunk straight back out); it never
+ * calls notify_slave_to_recv(), so nothing is ever transmitted, and a
+ * completed scrub leaves the ring empty exactly as it found it.
+ * Coverage (derived from the in-tree FreeRTOS
+ * Middlewares/.../stream_buffer.c): xStreamBufferCreate(N) allocates
+ * N+1 storage bytes (xBufferSizeBytes++ before
+ * prvInitialiseNewStreamBuffer; xLength = N+1) while
+ * xStreamBufferSpacesAvailable reports N when empty -- the fill sends
+ * exactly STREAM_BUFFER_SIZE = N bytes, so it overwrites every slot
+ * of the N+1-slot storage EXCEPT one: the slot immediately behind the
+ * initial write head. That residual slot holds the most recently
+ * written pre-scrub byte -- the previous command's final '\n' (every
+ * command written into this ring ends CRLF, via CONCAT_CMD_PARAM /
+ * the join format string) or a zero from an earlier scrub -- never
+ * credential material. A short-send/short-receive break aborts the
+ * scrub and leaves the remainder unwritten (the defensive second
+ * gates above). The drain
+ * target is zeroized before return so it can never become a retention
+ * site. */
+static void esp_scrub_spi_tx_ring_buf(void)
+{
+	uint8_t zeros[128] = {0};
+	uint8_t scratch[128];
+	size_t done = 0;
+
+	if ( (esp_ctrl_req_sem==NULL) || (spi_master_tx_ring_buf==NULL) )
+		return;
+
+	if ( xSemaphoreTake(esp_ctrl_req_sem, pdMS_TO_TICKS(100)) != pdPASS )
+		return; /* condition 1 failed: another request in flight */
+
+	if ( !xStreamBufferIsEmpty(spi_master_tx_ring_buf) )
+	{
+		xSemaphoreGive(esp_ctrl_req_sem);
+		return; /* condition 2 failed: pending bytes, leave them to the driver */
+	}
+
+	while ( done < (size_t)STREAM_BUFFER_SIZE )
+	{
+		size_t chunk = (size_t)STREAM_BUFFER_SIZE - done;
+		if ( chunk > sizeof(zeros) )
+			chunk = sizeof(zeros);
+		if ( xStreamBufferSend(spi_master_tx_ring_buf, zeros, chunk, 0) != chunk )
+			break; /* defensive second gate: space vanished -> abort */
+		if ( xStreamBufferReceive(spi_master_tx_ring_buf, (void*)scratch, chunk, 0) != chunk )
+			break; /* defensive second gate: drain mismatch -> abort */
+		done += chunk;
+	}
+
+	/* The drain target only ever held the zeros just pushed, but wipe it
+	 * anyway (volatile stores) so no future edit can turn scratch into
+	 * a plaintext retention site. */
+	{
+		volatile uint8_t *wipe = scratch;
+		size_t wi;
+		for ( wi=0; wi<sizeof(scratch); wi++ )
+			wipe[wi] = 0;
+	}
+
+	xSemaphoreGive(esp_ctrl_req_sem);
+} // static void esp_scrub_spi_tx_ring_buf(void)
 
 
 static void init_master_hd(spi_device_handle_t* spi)
@@ -650,6 +752,256 @@ uint8_t wifi_ap_scan_list(ctrl_cmd_t *app_req)
 
 	return ret;
 } // uint8_t wifi_ap_scan_list(ctrl_cmd_t *app_req)
+
+
+
+/* Station join handler (PR-11, issue #42): CTRL_REQ_CONNECT_AP.
+ *
+ * Request shape (no in-tree requester exists yet -- this defines it for
+ * the paired firmware): app_req->msg_id == CTRL_REQ_CONNECT_AP,
+ * cmd_timeout_sec == DEFAULT_CTRL_RESP_CONNECT_AP_TIMEOUT (45 s), and
+ * app_req->u.wifi_ap_config.ssid/.pwd carry NUL-terminated SSID/PSK
+ * strings (<=32 / <=64 chars, no '"'/CR/LF -- the same grammar the
+ * STM32 join flow enforces before it ever builds a command).
+ *
+ * Sequence (same shape as wifi_ap_scan_list above): put the radio in
+ * station mode and wait OK, then send AT+CWJAP="<ssid>","<pwd>" and
+ * wait for the association markers. Response codes carried in
+ * resp_event_status as CTRL_RESP_CONNECT_AP:
+ *   SUCCESS                      associated ("WIFI GOT IP"/"OK")
+ *   CTRL_ERR_INVALID_ARGUMENT    ssid/psk failed the grammar checks
+ *   CTRL_ERR_INVALID_PASSWORD    AT +CWJAP:<2> (wrong password)
+ *   CTRL_ERR_NO_AP_FOUND         AT +CWJAP:<3> (AP not found)
+ *   CTRL_ERR_NOT_CONNECTED       +CWJAP:<1|4|other> or FAIL
+ *   CTRL_ERR_REQUEST_TIMEOUT     no marker before the timeout
+ * The plaintext PSK exists in FOUR holders: the caller's request
+ * struct (u.wifi_ap_config.ssid/.pwd -- the source this handler
+ * reads), the join_cmd buffer, the SPI TX stream-buffer storage, and
+ * the DMA staging region in the control task. Per exit path of this
+ * handler (re-verified with the conditional TX scrub): the
+ * request-struct fields are wiped (esp_wipe_ap_config_credentials())
+ * on EVERY path that received them -- the three grammar-refusal early
+ * returns, the malloc-failure return, and the common cleanup tail
+ * (covering mode-set failure, send refusal, and all post-send exits);
+ * the join_cmd buffer is wiped (volatile stores) on EVERY path that
+ * built it -- send refusal, AT failure, success, and timeout
+ * alike; the DMA staging region in the control task is wiped right
+ * after EVERY actual transmit (the slave answering proves the transmit
+ * happened); the SPI TX stream-buffer storage is scrubbed
+ * CONDITIONALLY (esp_scrub_spi_tx_ring_buf(): only when the driver's
+ * single-flight semaphore is free within its bound AND the ring is
+ * genuinely empty -- both hold on the normal success/AT-failure paths
+ * and on a timeout after the command was drained). Documented
+ * residual: on a response timeout against a wedged slave that never
+ * pulled the write -- or when another request holds the semaphore --
+ * the scrub is skipped and the plaintext can remain in the ring
+ * storage until later traffic overwrites it. Grammar-refusal,
+ * mode-set-failure, and malloc-failure exits build no join command
+ * at all, so only the request-struct copy ever exists on them (and
+ * it is wiped). */
+
+/* Wipe the caller's request-struct copy of the credentials -- the
+ * fourth plaintext holder above. Volatile stores over the full field
+ * width, so the plaintext cannot survive the handler on any exit path
+ * that received it. */
+static void esp_wipe_ap_config_credentials(ctrl_cmd_t *app_req)
+{
+	volatile uint8_t *wipe;
+	size_t wi;
+
+	wipe = app_req->u.wifi_ap_config.pwd;
+	for ( wi=0; wi<sizeof(app_req->u.wifi_ap_config.pwd); wi++ )
+		wipe[wi] = 0;
+	wipe = app_req->u.wifi_ap_config.ssid;
+	for ( wi=0; wi<sizeof(app_req->u.wifi_ap_config.ssid); wi++ )
+		wipe[wi] = 0;
+} // static void esp_wipe_ap_config_credentials(ctrl_cmd_t *app_req)
+
+uint8_t wifi_connect_ap(ctrl_cmd_t *app_req)
+{
+	char *rx_buf = NULL;
+	char *resp_buf = NULL;
+	char *join_cmd = NULL;
+	char *fail_buf = NULL;
+	int rx_buf_len = 0;
+	uint32_t rx_uid;
+	uint8_t ret;
+	uint8_t join_status = CTRL_ERR_REQUEST_TIMEOUT;
+	uint32_t tick_t0, tick_pass;
+	size_t i;
+
+	tick_t0 = HAL_GetTick();
+	esp_queue_reset(ctrl_msg_Q);
+
+	/* Grammar checks BEFORE anything is sent: the AT command quotes both
+	 * fields, so a '"' would terminate one early and CR/LF would split
+	 * the line. */
+	{
+		const char *ssid = (const char *)app_req->u.wifi_ap_config.ssid;
+		const char *pwd = (const char *)app_req->u.wifi_ap_config.pwd;
+		size_t ssid_len = strnlen(ssid, SSID_LENGTH);
+		size_t pwd_len = strnlen(pwd, PASSWORD_LENGTH);
+
+		if ( (ssid_len == SSID_LENGTH) || (pwd_len == PASSWORD_LENGTH) )
+		{
+			esp_wipe_ap_config_credentials(app_req); /* the plaintext stays only in the struct */
+			app_req->resp_event_status = CTRL_ERR_INVALID_ARGUMENT;
+			return CTRL_ERR_INCORRECT_ARG;
+		}
+		for ( i=0; i<ssid_len; i++ )
+			if ( (ssid[i]=='"') || (ssid[i]=='\r') || (ssid[i]=='\n') )
+			{
+				esp_wipe_ap_config_credentials(app_req);
+				app_req->resp_event_status = CTRL_ERR_INVALID_ARGUMENT;
+				return CTRL_ERR_INCORRECT_ARG;
+			}
+		for ( i=0; i<pwd_len; i++ )
+			if ( (pwd[i]=='"') || (pwd[i]=='\r') || (pwd[i]=='\n') )
+			{
+				esp_wipe_ap_config_credentials(app_req);
+				app_req->resp_event_status = CTRL_ERR_INVALID_ARGUMENT;
+				return CTRL_ERR_INCORRECT_ARG;
+			}
+	}
+
+	app_req->at_cmd = strdup(CONCAT_CMD_PARAM(ESP32C6_AT_REQ_WIFI_MODE, ESP32C6_WIFI_MODE_STA));
+	app_req->cmd_resp = strdup(ESP32C6_AT_RES_OK);
+	app_req->cmd_len = strlen(app_req->at_cmd);
+	ret = spi_AT_app_send_command(app_req);
+	if ( ret==SUCCESS )
+	{
+		ret = ERROR;
+		while (true)
+		{
+			tick_pass = HAL_GetTick() - tick_t0;
+			tick_pass /= MILLISEC_TO_SEC;
+			if ( tick_pass ) // at least one second has passed?
+			{
+				tick_t0 += MILLISEC_TO_SEC; // Update tick_t0
+				if ( app_req->cmd_timeout_sec > tick_pass )
+				{
+					app_req->cmd_timeout_sec -= tick_pass;
+				}
+				else
+					break; // Timeout
+			} // if ( tick_pass )
+			esp_free_mem(&resp_buf);
+			rx_buf = spi_AT_app_get_response(&rx_buf_len, &rx_uid, app_req->cmd_timeout_sec);
+			resp_buf = rx_buf;
+			rx_buf = m1_resp_string_strip(rx_buf, CR_LF);
+			if ( !rx_buf )
+				continue;
+			if ( rx_uid != current_uid ) // Not the expected response?
+				continue;
+			if ( strcmp(rx_buf, app_req->cmd_resp) ) // Not the expected response?
+				continue;
+			ret = SUCCESS;
+			break;
+		} // while ( true )
+		if ( ret==SUCCESS )
+		{
+			esp_free_mem(&app_req->at_cmd);
+			esp_free_mem(&app_req->cmd_resp);
+			/* AT+CWJAP="<ssid>","<pwd>" -- carries the plaintext PSK */
+			join_cmd = malloc(SSID_LENGTH + PASSWORD_LENGTH + 24);
+			if ( !join_cmd )
+			{
+				esp_free_mem(&resp_buf);
+				esp_wipe_ap_config_credentials(app_req);
+				app_req->resp_event_status = CTRL_ERR_MEMORY_FAILURE;
+				return ERROR;
+			}
+			snprintf(join_cmd, SSID_LENGTH + PASSWORD_LENGTH + 24, "%s\"%s\",\"%s\"" ESP32C6_AT_REQ_CRLF,
+					 ESP32C6_AT_REQ_CONNECT_AP,
+					 (const char *)app_req->u.wifi_ap_config.ssid,
+					 (const char *)app_req->u.wifi_ap_config.pwd);
+			app_req->at_cmd = join_cmd;
+			app_req->cmd_len = strlen(join_cmd);
+			app_req->cmd_resp = NULL;
+			ret = spi_AT_app_send_command(app_req);
+			while ( ret==SUCCESS )
+			{
+				esp_free_mem(&resp_buf);
+				rx_buf = spi_AT_app_get_response(&rx_buf_len, &rx_uid, app_req->cmd_timeout_sec);
+				resp_buf = rx_buf;
+				if ( rx_buf && rx_buf_len)
+				{
+					if ( rx_uid != current_uid ) // Not the expected response?
+						continue;
+					fail_buf = strstr(rx_buf, ESP32C6_AT_RES_CONN_AP_FAIL);
+					if ( fail_buf!=NULL ) // "+CWJAP:<code>": the join was refused
+					{
+						const char *cp = fail_buf + strlen(ESP32C6_AT_RES_CONN_AP_FAIL);
+						int code = 0;
+						while ( (*cp>='0') && (*cp<='9') )
+							code = (code*10) + (*(cp++) - '0');
+						join_status = (code==2) ? CTRL_ERR_INVALID_PASSWORD :
+						              (code==3) ? CTRL_ERR_NO_AP_FOUND :
+						                          CTRL_ERR_NOT_CONNECTED;
+						break;
+					}
+					if ( strstr(rx_buf, ESP32C6_AT_RES_CONN_GOT_IP)!=NULL ||
+						 strstr(rx_buf, ESP32C6_AT_RES_OK)!=NULL )
+					{
+						join_status = SUCCESS; // Complete and exit
+						break;
+					}
+					tick_pass = HAL_GetTick() - tick_t0;
+					tick_pass /= MILLISEC_TO_SEC;
+					if ( tick_pass ) // at least one second has passed?
+					{
+						tick_t0 += MILLISEC_TO_SEC; // Update tick_t0
+						if ( app_req->cmd_timeout_sec > tick_pass )
+						{
+							app_req->cmd_timeout_sec -= tick_pass;
+						}
+						else
+							break; // Timeout
+					} // if ( tick_pass )
+				} // if ( rx_buf && rx_buf_len)
+				else
+					ret = ERROR;
+			} // while ( ret==SUCCESS )
+			/* PSK hygiene: wipe EVERY copy that carried the plaintext --
+			 * the join command buffer itself (volatile stores, so it
+			 * cannot be elided), the SPI TX stream-buffer storage
+			 * (esp_scrub_spi_tx_ring_buf), and the DMA staging region
+			 * (scrubbed by the control task right after the transmit). */
+			if ( join_cmd )
+			{
+				volatile char *wipe = join_cmd;
+				while ( *wipe ) *(wipe++) = 0;
+				esp_scrub_spi_tx_ring_buf();
+			}
+			app_req->at_cmd = NULL; /* join_cmd freed below with the others */
+		} // if ( ret==SUCCESS )
+	} // if ( ret==SUCCESS )
+	/* Common cleanup tail -- every non-early-return exit passes here
+	 * (mode-set failure, join send refusal, and all post-send exits):
+	 * wipe the caller's request-struct copy of the credentials (the
+	 * join_cmd buffer and the TX ring were already handled above). */
+	esp_wipe_ap_config_credentials(app_req);
+	esp_free_mem(&resp_buf);
+	if ( join_cmd )
+		free(join_cmd);
+	esp_free_mem(&app_req->at_cmd);
+	esp_free_mem(&app_req->cmd_resp);
+	if ( join_status==SUCCESS )
+	{
+		ret = SUCCESS;
+		app_req->msg_type = CTRL_RESP;
+		app_req->msg_id = CTRL_RESP_CONNECT_AP;
+		app_req->resp_event_status = SUCCESS;
+	} // if ( join_status==SUCCESS )
+	else
+	{
+		ret = ERROR;
+		app_req->msg_id = CTRL_RESP_CONNECT_AP;
+		app_req->resp_event_status = join_status;
+	} // else
+
+	return ret;
+} // uint8_t wifi_connect_ap(ctrl_cmd_t *app_req)
 
 
 

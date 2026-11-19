@@ -406,6 +406,39 @@ the query result as diagnostics only (`cache_disagrees` makes a stale
 record visible), and the gate never writes it. Task-context only,
 caller owns the ESP32 session, no dynamic allocation.
 
+*Wi-Fi join* (issue #42 completion, PR-11) rides the same UART
+console session: the verb `join "<ssid>" "<psk>"` + CRLF (empty SSID
+= hidden network, empty PSK = open), reply read to the `">> "` prompt
+and classified by **line-anchored** markers — a line beginning
+`JOINED` (any suffix, e.g. an IP, ignored) means associated, a line
+beginning `JOIN_FAIL` means refused, anything else is an honest
+timeout. Markers count only at a line start (buffer start or after
+`\n`): the console echoes the typed command, and a grammar-legal SSID
+may itself contain a marker substring, so a mid-line occurrence —
+notably the echo — never classifies. The grammar is enforced on the
+STM32 before anything is sent (SSID 0..32 / PSK 8..63
+printable-no-quote chars, or the exact 64-hex PMK form), and the
+transport is gated through the live handshake above — the join
+minimum is pinned to `1.1.0.0`, the version the paired console
+firmware is *required* to report (declared in-tree as
+`ESP32C6_FW_VERSION_LINE` in `Esp_spi_at/.../esp_at_list.h`; the
+console firmware itself is external — nothing in this repository
+emits the line), so an
+older or non-answering ESP32 shows the gate diagnostic and no join
+command is built or sent (the flash-gate: until the paired image is
+flashed, the feature refuses cleanly). The in-repo SPI-AT example
+carries the matching handler `wifi_connect_ap()`
+(`CTRL_REQ_CONNECT_AP` → `AT+CWJAP` → `CTRL_RESP_CONNECT_AP` with
+mapped `CTRL_ERR_*` codes, PSK wiped from its command buffer after
+the exchange); `m1_csrc/test/m1_wifi_join_test.py` pins the two
+version constants together so they cannot drift. The plaintext PSK
+lifecycle (editor buffer, decrypted buffer, static command buffer,
+ESP-side command) and the accepted link exposure are documented in
+[security/wifi-credential-threat-model.md](security/wifi-credential-threat-model.md).
+Reconnect policy: exactly one attempt per boot at first Wi-Fi-menu
+entry, first credentialed row in store order, re-verified and
+re-decrypted at join time, 15 s budget.
+
 ## Infrared subsystem
 
 The IR subsystem is deliberately single-owner (issue #43):

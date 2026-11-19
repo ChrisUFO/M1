@@ -40,6 +40,7 @@
 #include "m1_wifi_client_id.h"
 #include "m1_crypto.h"
 #include "m1_rng.h"
+#include "m1_esp_feature_gate.h"
 
 /*************************** D E F I N E S ************************************/
 
@@ -160,6 +161,55 @@
 #define WIFI_SAVED_LINE_MAX         480u
 /* Writer-side row assembly buffer (see WIFI_SAVED_LINE_MAX above). */
 #define WIFI_SAVED_LINE_BUF         448u
+
+/* Wi-Fi join (PR-11, PLAN section 14; issue #42 completion).
+ *
+ * TRANSPORT: the ESP32 UART console every shipped Wi-Fi tool uses --
+ * console verb `join "<ssid>" "<psk>"` + CRLF, reply read back to the
+ * ">> " prompt (esp32_uart_write / esp32_uart_read_until_prompt). This
+ * is the inter-processor contract with the console firmware, same
+ * grammar family as `scan -a` / `beacon "ssid"`; see
+ * docs/architecture.md "ESP32 co-processor interface". Reply markers:
+ * a line beginning "JOINED" = associated (any suffix, e.g. an IP, is
+ * ignored); a line beginning "JOIN_FAIL" = the AP/console refused;
+ * anything else (or a prompt-only/timeout read) = no recognizable
+ * result. Markers are matched ONLY at a line start (buffer start or
+ * immediately after '\n'): the console echoes the typed command, and a
+ * grammar-legal SSID may itself contain a marker substring -- a
+ * mid-line occurrence must never classify (wifi_join_classify_reply).
+ *
+ * GATE (PR-10): no join command is ever built-for-send unless the LIVE
+ * ESP32 firmware answers the ESPFW handshake with at least the
+ * join-handler minimum (esp_feature_gate_query/allows,
+ * ESP_FEATURE_WIFI_JOIN). Old/absent firmware shows the gate's own
+ * diagnostic and refuses with nothing sent.
+ *
+ * PSK LIFECYCLE (docs/security/wifi-credential-threat-model.md): the
+ * plaintext exists only in (a) the masked entry editor's buffer, (b)
+ * the decrypted wifi_cred_get_psk() buffer, (c) the static command
+ * buffer below, and (d) the reply buffer while it may hold the console
+ * echo of the command line -- each zeroized with m1_secure_zero() on
+ * every exit path. The PSK is never logged, never put in an error
+ * string, and never rendered outside the masked editor (whose cursor
+ * cell alone shows the character being edited). */
+#define WIFI_JOIN_CMD_MAX           112u /* 6+32+3+64+1+2+1 = 109 worst case */
+#define WIFI_JOIN_REPLY_MAX         256u
+#define WIFI_JOIN_RESP_JOINED       "JOINED"
+#define WIFI_JOIN_RESP_FAIL         "JOIN_FAIL"
+/* Interactive join budget: the ctrl_api.h paired-firmware default for
+ * CTRL_RESP_CONNECT_AP (45 s), matching the ESP-side handler's window. */
+#define WIFI_JOIN_TIMEOUT_MS        SEC_TO_MILLISEC(DEFAULT_CTRL_RESP_CONNECT_AP_TIMEOUT)
+/* Boot-reconnect budget: deliberately tighter than the interactive
+ * window so a dead AP cannot stall the first Wi-Fi-menu entry. */
+#define WIFI_JOIN_RECONNECT_TIMEOUT_MS 15000u
+/* WPA passphrase policy for the join grammar (the STORE deliberately
+ * accepts 1..64 -- see m1_wifi.h; joining is stricter). Both WPA forms:
+ * 8..63 printable passphrase, or exactly 64 hex chars (PMK). */
+#define WIFI_JOIN_PSK_MIN_CHARS     8u
+/* Command buffer holds the plaintext PSK: STATIC, not stack, so the
+ * post-send m1_secure_zero() targets a fixed address. Single Wi-Fi UI
+ * task context only (every join entry point is menu-dispatched). */
+
 //************************** S T R U C T U R E S *******************************
 
 /***************************** V A R I A B L E S ******************************/
@@ -175,6 +225,18 @@ typedef enum {
     WIFI_SCAN_MODE_AP_LIST = 0,
     WIFI_SCAN_MODE_STA_LIST = 1
 } wifi_scan_mode_t;
+
+/* Wi-Fi join outcome (the join flow itself lives further down, PR-11
+ * PLAN section 14; the type is declared here because the function
+ * prototypes below return it). */
+typedef enum {
+    WIFI_JOIN_RESULT_JOINED  = 0, /* console confirmed the association          */
+    WIFI_JOIN_RESULT_FAIL    = 1, /* console/AP refused (wrong PSK, AP gone)    */
+    WIFI_JOIN_RESULT_TIMEOUT = 2, /* no recognizable marker before the prompt   */
+    WIFI_JOIN_RESULT_GATE    = 3, /* ESP32 firmware gate refused: NOTHING SENT  */
+    WIFI_JOIN_RESULT_SEND    = 4, /* UART write failed                          */
+    WIFI_JOIN_RESULT_BUILD   = 5  /* command refused by the builder (defensive) */
+} wifi_join_result_t;
 
 typedef enum {
     WIFI_SCAN_UI_LIST = 0,
@@ -278,6 +340,21 @@ void wifi_saved_browser(void);
 static int wifi_saved_find(const char *bssid_upper);
 static void wifi_bssid_to_upper(char *dst, const char *src);
 static uint8_t wifi_survey_prepare_esp32(enCdcMode *prev_usbcdc_mode, uint8_t *restore_usbcdc_mode);
+
+/* Wi-Fi join flow (PR-11, PLAN section 14). */
+static bool wifi_join_psk_valid(const char *psk);
+static bool wifi_join_ssid_valid(const char *ssid);
+static int wifi_join_build_cmd(char *dst, size_t dstsz, const char *ssid,
+                               const char *psk, bool have_psk);
+static wifi_join_result_t wifi_join_classify_reply(const char *resp);
+static int wifi_join_reconnect_pick(void);
+static uint8_t wifi_psk_entry(char *psk, size_t cap);
+static wifi_join_result_t wifi_join_exec(const char *label, const char *ssid,
+                                         const char *psk, bool have_psk,
+                                         uint32_t timeout_ms);
+static void wifi_join_from_scan(const wifi_scanlist_t *ap);
+static void wifi_join_from_saved(uint16_t idx);
+static void wifi_saved_browser_draw(uint16_t sel); /* defined with the saved browser below */
 static uint8_t wifi_dc_menu(const char *title, const char *info1, const char *info2,
                             const char *const *opts, uint8_t nopt, uint8_t start_sel);
 
@@ -297,6 +374,11 @@ void menu_wifi_init(void)
 {
     ;
     DEBUG_esp32_reset_pin = HAL_GPIO_ReadPin(ESP32_EN_GPIO_Port, ESP32_EN_Pin);
+
+    /* First Wi-Fi moment after boot: the one-shot reconnect attempt
+     * (PR-11). No-op -- zero delay, no ESP32 power-up -- unless the
+     * store holds a credentialed network. */
+    wifi_join_reconnect_boot();
 } // void menu_wifi_init(void)
 
 
@@ -5771,7 +5853,713 @@ bool wifi_cred_get_psk(uint16_t idx, char *psk_out, size_t outsz)
     return true;
 }
 
+/*============================================================================*/
+/* Wi-Fi join flow (PR-11, PLAN section 14; issue #42 completion).             */
+/*                                                                             */
+/* Pure, host-testable helpers first (grammar, command construction, reply    */
+/* classification, reconnect pick); then the masked PSK editor, the gated    */
+/* transport, and the three entry points (leaf tool, scan action, saved      */
+/* action) plus the once-per-boot reconnect. The wifi_join_result_t enum    */
+/* lives with the other types above (the prototypes return it).              */
+/*============================================================================*/
+
+/* True iff psk is legal for the join grammar: 8..63 printable chars with no
+ * '"' (it would terminate the quoted console field), no CR/LF, or exactly 64
+ * hex chars (the PMK form). psk must be NUL-terminated within
+ * WIFI_PSK_MAX_CHARS+1 bytes; anything longer is refused. */
+static bool wifi_join_psk_valid(const char *psk)
+{
+    size_t len;
+    size_t i;
+
+    if (!psk) { return false; }
+    len = strnlen(psk, WIFI_PSK_MAX_CHARS + 1U);
+    if (len > WIFI_PSK_MAX_CHARS) { return false; }
+
+    if (len == WIFI_PSK_MAX_CHARS) /* the 64-hex PMK form */
+    {
+        for (i = 0U; i < len; i++)
+        {
+            if (!isxdigit((unsigned char)psk[i])) { return false; }
+        }
+        return true;
+    }
+
+    if (len < WIFI_JOIN_PSK_MIN_CHARS) { return false; }
+    for (i = 0U; i < len; i++)
+    {
+        unsigned char c = (unsigned char)psk[i];
+        if ((c < 0x20U) || (c > 0x7EU) || (c == '"')) { return false; }
+    }
+    return true;
+}
+
+/* True iff ssid is legal for the join grammar: 0..32 printable chars, no
+ * '"'/CR/LF (empty = hidden network). */
+static bool wifi_join_ssid_valid(const char *ssid)
+{
+    size_t len;
+    size_t i;
+
+    if (!ssid) { return false; }
+    len = strnlen(ssid, 33U);
+    if (len > 32U) { return false; }
+    for (i = 0U; i < len; i++)
+    {
+        unsigned char c = (unsigned char)ssid[i];
+        if ((c < 0x20U) || (c > 0x7EU) || (c == '"')) { return false; }
+    }
+    return true;
+}
+
+/* Build `join "<ssid>" "<psk>"\r\n` into dst. have_psk false (open network)
+ * emits an empty PSK field. Refuses -- returns -1 with dst left empty (and
+ * zeroized if snprintf had already written) -- unless ssid/psk pass the
+ * grammar checks above or the result would not fit; never truncates.
+ * Returns the command length excluding the NUL. */
+static int wifi_join_build_cmd(char *dst, size_t dstsz, const char *ssid,
+                               const char *psk, bool have_psk)
+{
+    int n;
+
+    if (!dst || (dstsz == 0U)) { return -1; }
+    dst[0] = '\0';
+    if (!wifi_join_ssid_valid(ssid)) { return -1; }
+    if (have_psk)
+    {
+        if (!wifi_join_psk_valid(psk)) { return -1; }
+    }
+    else if ((psk != NULL) && (psk[0] != '\0'))
+    {
+        return -1; /* "no PSK" must mean empty: a non-empty one was dropped */
+    }
+
+    n = snprintf(dst, dstsz, "join \"%s\" \"%s\"\r\n", ssid, have_psk ? psk : "");
+    if ((n < 0) || ((size_t)n >= dstsz))
+    {
+        m1_secure_zero(dst, dstsz); /* partial plaintext must not survive */
+        return -1;
+    }
+    return n;
+}
+
+/* True iff resp carries the marker at a LINE START: at the buffer start
+ * or immediately after a '\n'. The console echoes the typed command, and
+ * a fully grammar-legal SSID may itself contain a marker substring (an
+ * AP named "XJOINEDX" or "JOIN_FAIL_TEST") -- a mid-line occurrence is
+ * echo, never a reply line, so it must not classify. */
+static bool wifi_join_reply_has_line(const char *resp, const char *marker)
+{
+    const char *p = strstr(resp, marker);
+
+    while (p != NULL)
+    {
+        if ((p == resp) || (p[-1] == '\n')) { return true; }
+        p = strstr(p + 1, marker);
+    }
+    return false;
+}
+
+/* Map a console reply to a join outcome. Markers count ONLY at a line
+ * start (buffer start or immediately after '\n' -- see
+ * wifi_join_reply_has_line); anything mid-line, notably the echoed
+ * command text, is ignored. Among anchored markers FAIL is checked
+ * first, so a reply carrying both can never read as success. */
+static wifi_join_result_t wifi_join_classify_reply(const char *resp)
+{
+    if (!resp) { return WIFI_JOIN_RESULT_TIMEOUT; }
+    if (wifi_join_reply_has_line(resp, WIFI_JOIN_RESP_FAIL)) { return WIFI_JOIN_RESULT_FAIL; }
+    if (wifi_join_reply_has_line(resp, WIFI_JOIN_RESP_JOINED)) { return WIFI_JOIN_RESULT_JOINED; }
+    return WIFI_JOIN_RESULT_TIMEOUT;
+}
+
+/* Reconnect candidate: the FIRST credentialed row in store order. The store
+ * is a reconnaissance target list, not a join-priority list -- no new
+ * "last joined" persistent marker is introduced (PLAN: no second store, no
+ * schema change). The credential itself is re-verified at join time by
+ * wifi_cred_get_psk(); this only picks the index (or -1). */
+static int wifi_join_reconnect_pick(void)
+{
+    uint16_t i;
+
+    for (i = 0U; i < g_saved_count; i++)
+    {
+        if (g_saved[i].cred_state == (uint8_t)WIFI_CRED_OK) { return (int)i; }
+    }
+    return -1;
+}
+
+/*--- Masked PSK editor -------------------------------------------------------*/
+
+/* Why not m1_vkb_get_filename() (PLAN section 14 names it): that keyboard is
+ * filename-oriented -- a 20-char cap (M1_VIRTUAL_KB_FILENAME_MAX), a
+ * lowercase+digits+'_''.' charset (uppercase/symbol PSKs would be physically
+ * untypable), and a plaintext field render. WPA needs 8..63 printable chars
+ * or a 64-hex PMK. This is the smallest password-style editor on the
+ * existing key/char UI instead: a character rotor over the full
+ * printable-ASCII-minus-quote alphabet (94 chars -- everything the join
+ * grammar accepts), a MASKED field (every entered char renders '*', only
+ * the cursor cell shows the live character being set), in-editor
+ * min-length validation, and BACK-cancel that zeroizes the buffer.
+ *
+ * The rotor cycle is   [END] [DEL] a b c ... z 0-9 A-Z <symbols/space>
+ * (END one step above DEL, so at the end position -- where the rotor
+ * rests on DEL -- one DOWN starts typing at 'a' and one UP reaches END):
+ *   UP / DOWN  cycle the cell under the cursor
+ *   OK         on a character: set it and advance (append at the end);
+ *              on DEL ('<'): delete the cell under the cursor;
+ *              on END ('>'): save (validates the 8..64 length in-editor)
+ *   LEFT/RIGHT move the cursor within the text
+ *   BACK       cancel (buffer zeroized) */
+static const char WIFI_PSK_ROTOR[94 + 1] =
+    "abcdefghijklmnopqrstuvwxyz"
+    "0123456789"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "!@#$%^&*()-_=+[]{};:',<.>/?\\|`~ ";
+#define WIFI_PSK_ROTOR_END_IDX  0   /* '>' save  pseudo-cell                    */
+#define WIFI_PSK_ROTOR_DEL_IDX  1   /* '<' delete pseudo-cell                   */
+#define WIFI_PSK_ROTOR_MAX_IDX  95  /* last real character's rotor index        */
+
+static void wifi_psk_entry_render(uint8_t len, uint8_t pos,
+                                  int rotor, const char *msg)
+{
+    char line[28];
+    uint8_t i;
+    const uint8_t win = 20U; /* visible cells, same windowing idea as vkbs */
+    uint8_t win_start = (pos >= win) ? (uint8_t)(pos - win + 1U) : 0U;
+
+    m1_u8g2_firstpage();
+    u8g2_SetFont(&m1_u8g2, M1_DISP_SUB_MENU_FONT_N);
+    u8g2_DrawStr(&m1_u8g2, 2, 11, "Enter PSK");
+    snprintf(line, sizeof(line), "%u/64", (unsigned int)len);
+    u8g2_DrawStr(&m1_u8g2, 100, 11, line);
+    u8g2_DrawFrame(&m1_u8g2, 0, 16, M1_LCD_DISPLAY_WIDTH, 14);
+
+    for (i = 0U; (i < win) && ((uint16_t)win_start + i < (uint16_t)(len + 1U)); i++)
+    {
+        uint8_t idx = (uint8_t)(win_start + i);
+        char cell[2] = {0, 0};
+        uint8_t x = (uint8_t)(3U + i * 6U);
+
+        if (idx < len) { cell[0] = '*'; }         /* masked                 */
+        else           { cell[0] = ' '; }         /* the end position       */
+        if (idx == pos)                            /* cursor cell: the live  */
+        {                                          /* character in clear     */
+            cell[0] = (rotor == WIFI_PSK_ROTOR_END_IDX) ? '>' :
+                      (rotor == WIFI_PSK_ROTOR_DEL_IDX) ? '<' :
+                      WIFI_PSK_ROTOR[rotor - 2];
+            u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+            u8g2_DrawBox(&m1_u8g2, (u8g2_uint_t)(x - 1U), 17U, 8U, 12U);
+            u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
+            u8g2_DrawStr(&m1_u8g2, x, 27, cell);
+            u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+        }
+        else
+        {
+            u8g2_DrawStr(&m1_u8g2, x, 27, cell);
+        }
+    }
+
+    u8g2_DrawStr(&m1_u8g2, 2, 42, "UD char  OK pick");
+    u8g2_DrawStr(&m1_u8g2, 2, 52, "OK on > saves");
+    u8g2_DrawStr(&m1_u8g2, 2, 62, "BACK cancels");
+    if (msg && msg[0]) { u8g2_DrawStr(&m1_u8g2, 78, 62, msg); }
+    m1_u8g2_nextpage();
+    u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
+}
+
+/* Rotor index of the char at a text cell (deterministic for every char the
+ * editor can produce: the rotor alphabet is exactly the join-legal charset,
+ * so a cell can never hold a char the rotor cannot point back at). */
+static int wifi_psk_rotor_of(char c)
+{
+    const char *p = strchr(WIFI_PSK_ROTOR, c);
+    return (p != NULL) ? (int)(p - WIFI_PSK_ROTOR) + 2 : WIFI_PSK_ROTOR_DEL_IDX;
+}
+
+/* Returns 1 with the plaintext PSK in psk (caller zeroizes after use), 0 on
+ * cancel (psk zeroized here). cap must be >= WIFI_PSK_MAX_CHARS+1. */
+static uint8_t wifi_psk_entry(char *psk, size_t cap)
+{
+    S_M1_Buttons_Status btn;
+    S_M1_Main_Q_t q;
+    uint8_t len = 0;
+    uint8_t pos = 0;
+    int rotor = WIFI_PSK_ROTOR_DEL_IDX;
+    const char *msg = NULL;
+
+    if (!psk || (cap < (WIFI_PSK_MAX_CHARS + 1U))) { return 0; }
+    psk[0] = '\0';
+
+    for (;;)
+    {
+        wifi_psk_entry_render(len, pos, rotor, msg);
+        msg = NULL;
+
+        if (xQueueReceive(main_q_hdl, &q, portMAX_DELAY) != pdTRUE) { continue; }
+        if (q.q_evt_type != Q_EVENT_KEYPAD) { continue; }
+        (void)xQueueReceive(button_events_q_hdl, &btn, 0);
+
+        if (btn.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK)
+        {
+            m1_secure_zero(psk, cap);
+            xQueueReset(main_q_hdl);
+            return 0;
+        }
+        else if (btn.event[BUTTON_UP_KP_ID] == BUTTON_EVENT_CLICK)
+        {
+            rotor = (rotor == WIFI_PSK_ROTOR_END_IDX) ? WIFI_PSK_ROTOR_MAX_IDX : rotor - 1;
+        }
+        else if (btn.event[BUTTON_DOWN_KP_ID] == BUTTON_EVENT_CLICK)
+        {
+            rotor = (rotor >= WIFI_PSK_ROTOR_MAX_IDX) ? WIFI_PSK_ROTOR_END_IDX : rotor + 1;
+        }
+        else if (btn.event[BUTTON_LEFT_KP_ID] == BUTTON_EVENT_CLICK)
+        {
+            if (pos > 0U)
+            {
+                pos--;
+                rotor = wifi_psk_rotor_of(psk[pos]);
+            }
+        }
+        else if (btn.event[BUTTON_RIGHT_KP_ID] == BUTTON_EVENT_CLICK)
+        {
+            if (pos < len)
+            {
+                pos++;
+                rotor = (pos == len) ? WIFI_PSK_ROTOR_DEL_IDX : wifi_psk_rotor_of(psk[pos]);
+            }
+        }
+        else if (btn.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK)
+        {
+            if (rotor == WIFI_PSK_ROTOR_END_IDX) /* '>' : save */
+            {
+                /* The REAL join grammar -- the same rule the command
+                 * builder enforces -- so every editor-producible PSK is
+                 * join-legal and the editor can never hand the flow a
+                 * secret the transport would refuse (notably: a 64-char
+                 * entry must be all-hex, the PMK form). The only other
+                 * reachable failure is a short length. */
+                if (wifi_join_psk_valid(psk))
+                {
+                    xQueueReset(main_q_hdl);
+                    return 1;
+                }
+                msg = (len < WIFI_JOIN_PSK_MIN_CHARS) ? "8-64" : "64=hex";
+            }
+            else if (rotor == WIFI_PSK_ROTOR_DEL_IDX) /* '<' : delete */
+            {
+                if (pos < len)
+                {
+                    uint8_t k;
+                    for (k = pos; (k + 1U) < len; k++) { psk[k] = psk[k + 1U]; }
+                    len--;
+                    psk[len] = '\0';
+                    if (pos >= len)
+                    {
+                        pos = len;
+                        rotor = WIFI_PSK_ROTOR_DEL_IDX;
+                    }
+                    else
+                    {
+                        rotor = wifi_psk_rotor_of(psk[pos]);
+                    }
+                }
+            }
+            else if (pos < len) /* overwrite the cell, advance */
+            {
+                psk[pos] = WIFI_PSK_ROTOR[rotor - 2];
+                pos++;
+                rotor = (pos < len) ? wifi_psk_rotor_of(psk[pos]) : WIFI_PSK_ROTOR_DEL_IDX;
+            }
+            else if (len < WIFI_PSK_MAX_CHARS) /* append at the end position */
+            {
+                psk[len] = WIFI_PSK_ROTOR[rotor - 2];
+                len++;
+                psk[len] = '\0';
+                pos = len;
+                rotor = WIFI_PSK_ROTOR_DEL_IDX;
+            }
+            else
+            {
+                msg = "full"; /* 64-char buffer: advance to '>' to save */
+            }
+        }
+    }
+}
+
+/*--- Gated transport ---------------------------------------------------------*/
+
+/* The join command carries the plaintext PSK: static, not stack, so the
+ * post-exchange m1_secure_zero() below targets a fixed address the optimizer
+ * cannot recycle in between. Wi-Fi UI task context only. */
+static char g_wifi_join_cmd[WIFI_JOIN_CMD_MAX];
+
+/* Build + send the join command over the console session the CALLER owns,
+ * then classify the reply. psk is NOT absorbed (the caller keeps its buffer
+ * per the wifi_cred_get_psk() contract and zeroizes it); the command buffer
+ * copy IS zeroized here on every path once the exchange is done, and so is
+ * the reply buffer after classification -- the console echoes the typed
+ * command line, so resp can transiently hold the plaintext PSK. The gate
+ * runs first: on ABSENT/OLDER the gate's own diagnostic is shown and
+ * NOTHING is sent. */
+static wifi_join_result_t wifi_join_exec(const char *label, const char *ssid,
+                                         const char *psk, bool have_psk,
+                                         uint32_t timeout_ms)
+{
+    esp_feature_gate_result_t gate;
+    char resp[WIFI_JOIN_REPLY_MAX];
+    int cmd_len;
+    wifi_join_result_t res;
+
+    (void)esp_feature_gate_query(ESP_FEATURE_WIFI_JOIN, &gate);
+    if (!esp_feature_gate_allows(gate.state))
+    {
+        wifi_deauth_show_status_message("Join blocked",
+                                        esp_feature_gate_diag(&gate), 1800U);
+        return WIFI_JOIN_RESULT_GATE;
+    }
+
+    cmd_len = wifi_join_build_cmd(g_wifi_join_cmd, sizeof(g_wifi_join_cmd),
+                                  ssid, psk, have_psk);
+    if (cmd_len < 0) { return WIFI_JOIN_RESULT_BUILD; }
+
+    wifi_ui_draw_scanning(label);
+
+    m1_ringbuffer_reset(&esp32_rb_hdl);
+    memset(resp, 0, sizeof(resp));
+    if (esp32_uart_write((const uint8_t *)g_wifi_join_cmd, (uint16_t)cmd_len, 100U) == 0U)
+    {
+        m1_secure_zero(g_wifi_join_cmd, sizeof(g_wifi_join_cmd));
+        m1_secure_zero(resp, sizeof(resp));
+        return WIFI_JOIN_RESULT_SEND;
+    }
+
+    (void)esp32_uart_read_until_prompt(resp, (uint16_t)sizeof(resp),
+                                       timeout_ms, ">> ");
+    res = wifi_join_classify_reply(resp);
+
+    /* PSK hygiene: wipe BOTH plaintext holders once the exchange is over --
+     * the command buffer, and the reply buffer, which can hold the console
+     * echo of the command line (and with it the PSK). */
+    m1_secure_zero(g_wifi_join_cmd, sizeof(g_wifi_join_cmd));
+    m1_secure_zero(resp, sizeof(resp));
+    return res;
+}
+
+static const char *wifi_join_result_line2(wifi_join_result_t r)
+{
+    switch (r)
+    {
+        case WIFI_JOIN_RESULT_FAIL:    return "AP refused join";
+        case WIFI_JOIN_RESULT_TIMEOUT: return "No reply from AP";
+        case WIFI_JOIN_RESULT_SEND:    return "ESP32 send fail";
+        case WIFI_JOIN_RESULT_BUILD:   return "PSK invalid";
+        default:                       return NULL;
+    }
+}
+
+/*--- Entry points ------------------------------------------------------------*/
+
+/* Join a network from a live scan result: pick the PSK source (open network /
+ * stored credential / masked editor), join, and persist the credential only
+ * after a SUCCESSFUL join (a typo'd PSK is never sealed). The ESP32 session
+ * is the caller's (already prepared). */
+static void wifi_join_from_scan(const wifi_scanlist_t *ap)
+{
+    static const char *const opt_src[3] = { "Use saved PSK", "Enter PSK", "Back" };
+    char up[18];
+    char ssid_line[28];
+    char psk[WIFI_PSK_MAX_CHARS + 1U];
+    bool have_psk = false;
+    bool entered = false;
+    int idx;
+    wifi_join_result_t r;
+
+    if (!ap) { return; }
+    wifi_bssid_to_upper(up, (const char *)ap->bssid);
+    snprintf(ssid_line, sizeof(ssid_line), "%.22s",
+             (ap->ssid[0] != '\0') ? (const char *)ap->ssid : "Hidden Network");
+
+    if (ap->encryption_mode == WIFI_AUTH_OPEN)
+    {
+        have_psk = false; /* same "unknown = open" convention as the card UI */
+    }
+    else
+    {
+        idx = wifi_saved_find(up);
+        if ((idx >= 0) && (g_saved[idx].cred_state == (uint8_t)WIFI_CRED_OK))
+        {
+            uint8_t a = wifi_dc_menu(ssid_line, "Secured network", NULL, opt_src, 3, 0);
+            if ((a == 0xFFU) || (a == 2U)) { return; }
+            if (a == 0U)
+            {
+                if (!wifi_cred_get_psk((uint16_t)idx, psk, sizeof(psk)))
+                {
+                    wifi_deauth_show_status_message("Saved PSK unusable", "Tampered or foreign", 1200U);
+                    return;
+                }
+                have_psk = true;
+            }
+        }
+        if (!have_psk)
+        {
+            if (!wifi_psk_entry(psk, sizeof(psk))) { return; }
+            have_psk = true;
+            entered = true;
+        }
+    }
+
+    r = wifi_join_exec("Joining Network...", (const char *)ap->ssid,
+                       have_psk ? psk : NULL, have_psk, WIFI_JOIN_TIMEOUT_MS);
+
+    if (r == WIFI_JOIN_RESULT_JOINED)
+    {
+        if (entered)
+        {
+            /* Row first (it may be a new network), then seal the PSK --
+             * wifi_cred_set_psk() ABSORBS psk on every return path. */
+            uint8_t sr = wifi_saved_add_or_update(ap);
+            uint8_t cr = ((sr == 0U) || (sr == 1U)) ? wifi_cred_set_psk(up, psk) : 3U;
+            const char *m2 = ((sr == 2U) || (cr == 2U)) ? "Save failed" :
+                             (cr == 3U) ? "PSK not saved" : NULL;
+            wifi_deauth_show_status_message("Joined", m2, 900U);
+        }
+        else
+        {
+            wifi_deauth_show_status_message("Joined", NULL, 900U);
+        }
+    }
+    else if (r != WIFI_JOIN_RESULT_GATE) /* the gate path showed its own diag */
+    {
+        wifi_deauth_show_status_message("Join failed", wifi_join_result_line2(r), 1200U);
+    }
+
+    /* Caller-side hygiene for the decrypted/entered plaintext. */
+    m1_secure_zero(psk, sizeof(psk));
+}
+
+/* Join a saved-network row by index. Uses the stored credential (re-verified
+ * and re-decrypted by wifi_cred_get_psk -- never the load-time state alone);
+ * asks for a PSK when the row has none, and seals a freshly entered one only
+ * after a successful join. The ESP32 session is the caller's. */
+static void wifi_join_from_saved(uint16_t idx)
+{
+    char psk[WIFI_PSK_MAX_CHARS + 1U];
+    bool have_psk = false;
+    bool entered = false;
+    wifi_join_result_t r;
+
+    if (idx >= g_saved_count) { return; }
+
+    if (g_saved[idx].psk_enc[0] != '\0')
+    {
+        if (!wifi_cred_get_psk(idx, psk, sizeof(psk)))
+        {
+            wifi_deauth_show_status_message("Saved PSK unusable", "Tampered or foreign", 1200U);
+            return;
+        }
+        have_psk = true;
+    }
+    else if (strcmp(g_saved[idx].security, wifi_auth_mode_to_str(WIFI_AUTH_OPEN)) != 0)
+    {
+        if (!wifi_psk_entry(psk, sizeof(psk))) { return; }
+        have_psk = true;
+        entered = true;
+    }
+
+    r = wifi_join_exec("Joining Network...", g_saved[idx].ssid,
+                       have_psk ? psk : NULL, have_psk, WIFI_JOIN_TIMEOUT_MS);
+
+    if (r == WIFI_JOIN_RESULT_JOINED)
+    {
+        if (entered)
+        {
+            uint8_t cr = wifi_cred_set_psk(g_saved[idx].bssid, psk); /* absorbs */
+            wifi_deauth_show_status_message("Joined",
+                                            (cr == 0U) ? NULL :
+                                            (cr == 2U) ? "Save failed" : "PSK not saved",
+                                            900U);
+        }
+        else
+        {
+            wifi_deauth_show_status_message("Joined", NULL, 900U);
+        }
+    }
+    else if (r != WIFI_JOIN_RESULT_GATE)
+    {
+        wifi_deauth_show_status_message("Join failed", wifi_join_result_line2(r), 1200U);
+    }
+
+    m1_secure_zero(psk, sizeof(psk));
+}
+
+/* Wi-Fi -> Join Network leaf: pick the network from a live scan or from the
+ * saved store, then join it. Owns its ESP32 session (prepare/deinit). */
+void wifi_join_network(void)
+{
+    static const char *const opt_src[3] = { "Scan", "Saved Networks", "Back" };
+    ctrl_cmd_t ap_req = CTRL_CMD_DEFAULT_REQ();
+    enCdcMode prev_usbcdc_mode;
+    uint8_t restore_usbcdc_mode = 0;
+    uint8_t ready;
+    uint8_t exit_flag = 0;
+
+    u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
+
+    ready = wifi_survey_prepare_esp32(&prev_usbcdc_mode, &restore_usbcdc_mode);
+    if (!ready)
+    {
+        wifi_deauth_show_status_message("ESP32 not ready", "Try bridge reset", 1500U);
+        exit_flag = 1;
+    }
+    else
+    {
+        (void)wifi_saved_load(); /* saved picker + credential lookup */
+    }
+
+    while (!exit_flag)
+    {
+        uint8_t a = wifi_dc_menu("Join Network", NULL, NULL, opt_src, 3, 0);
+
+        if (a == 0U) /* Scan -> pick from the live (cached-when-fresh) list */
+        {
+            uint16_t count;
+
+            wifi_ui_draw_scanning("Scanning Networks...");
+            wifi_scan_free_lists(&ap_req, NULL);
+            ap_req.cmd_timeout_sec = M1_WIFI_AP_SCANNING_TIME;
+            ap_req.msg_id = CTRL_RESP_GET_AP_SCAN_LIST;
+            if (wifi_ap_scan_list_cached(&ap_req, false) != SUCCESS)
+            {
+                wifi_deauth_show_status_message("Network scan failed", NULL, 1000U);
+                continue;
+            }
+            count = (uint16_t)ap_req.u.wifi_ap_scan.count;
+            if (count == 0U)
+            {
+                wifi_deauth_show_status_message("No networks found", NULL, 1000U);
+                continue;
+            }
+            {
+                uint16_t sel = 0;
+                if (wifi_dc_pick_network(ap_req.u.wifi_ap_scan.out_list, count, &sel) == 0U)
+                {
+                    wifi_join_from_scan(&ap_req.u.wifi_ap_scan.out_list[sel]);
+                }
+            }
+        }
+        else if (a == 1U) /* Saved Networks -> LEFT/RIGHT picker over the store */
+        {
+            if (g_saved_count == 0U)
+            {
+                wifi_deauth_show_status_message("No saved networks", NULL, 1000U);
+            }
+            else
+            {
+                uint16_t sel = 0;
+                uint8_t pick_done = 0;
+
+                while (!pick_done)
+                {
+                    S_M1_Buttons_Status btn;
+                    S_M1_Main_Q_t q;
+
+                    wifi_saved_browser_draw(sel); /* the shared saved-network card */
+
+                    if (xQueueReceive(main_q_hdl, &q, portMAX_DELAY) != pdTRUE) { continue; }
+                    if (q.q_evt_type != Q_EVENT_KEYPAD) { continue; }
+                    (void)xQueueReceive(button_events_q_hdl, &btn, 0);
+
+                    if (btn.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK)      { pick_done = 1; }
+                    else if (btn.event[BUTTON_LEFT_KP_ID] == BUTTON_EVENT_CLICK) /* prev, wrap */
+                    {
+                        sel = (sel == 0U) ? (uint16_t)(g_saved_count - 1U) : (uint16_t)(sel - 1U);
+                    }
+                    else if (btn.event[BUTTON_RIGHT_KP_ID] == BUTTON_EVENT_CLICK) /* next, wrap */
+                    {
+                        sel = (uint16_t)(((sel + 1U) >= g_saved_count) ? 0U : (sel + 1U));
+                    }
+                    else if (btn.event[BUTTON_OK_KP_ID] == BUTTON_EVENT_CLICK)
+                    {
+                        wifi_join_from_saved(sel);
+                        pick_done = 1;
+                    }
+                }
+            }
+        }
+        else /* Back / 0xFF */
+        {
+            exit_flag = 1;
+        }
+    }
+
+    wifi_scan_free_lists(&ap_req, NULL);
+    xQueueReset(main_q_hdl);
+    m1_esp32_deinit();
+    wifi_scan_restore_usbcdc_mode_if_needed(prev_usbcdc_mode, restore_usbcdc_mode);
+}
+
+/* Boot-time reconnect: exactly ONE attempt per boot, made the first time the
+ * Wi-Fi menu is entered (the ESP32 is deliberately NOT powered during raw
+ * boot -- see m1_sys_init.c -- so this is the earliest point that matches the
+ * session-ownership model of every Wi-Fi tool). Silent when there is nothing
+ * credentialed to rejoin (zero cost for the common case); bounded by
+ * WIFI_JOIN_RECONNECT_TIMEOUT_MS; a clear failure state is shown otherwise.
+ * Does not run in ISR context, writes no backup-domain register, and leaves
+ * the ESP32 powered down afterwards exactly like the other Wi-Fi tools. */
+void wifi_join_reconnect_boot(void)
+{
+    static uint8_t s_reconnect_done = 0U;
+    enCdcMode prev_usbcdc_mode;
+    uint8_t restore_usbcdc_mode = 0;
+    char psk[WIFI_PSK_MAX_CHARS + 1U];
+    int pick;
+    wifi_join_result_t r;
+
+    if (s_reconnect_done) { return; }
+    s_reconnect_done = 1U; /* exactly one attempt per boot, whatever happens */
+
+    if (wifi_saved_load() != 0U) { return; }        /* SD unavailable: silent  */
+    pick = wifi_join_reconnect_pick();
+    if (pick < 0) { return; }                       /* nothing credentialed    */
+
+    if (!wifi_survey_prepare_esp32(&prev_usbcdc_mode, &restore_usbcdc_mode))
+    {
+        wifi_scan_restore_usbcdc_mode_if_needed(prev_usbcdc_mode, restore_usbcdc_mode);
+        return; /* the tools surface "ESP32 not ready" when actually used */
+    }
+
+    /* Re-verify + decrypt at join time (never the load-time state alone). */
+    if (!wifi_cred_get_psk((uint16_t)pick, psk, sizeof(psk)))
+    {
+        wifi_deauth_show_status_message("Reconnect failed", "Saved PSK unusable", 1200U);
+    }
+    else
+    {
+        r = wifi_join_exec("Reconnecting...", g_saved[pick].ssid, psk, true,
+                           WIFI_JOIN_RECONNECT_TIMEOUT_MS);
+        m1_secure_zero(psk, sizeof(psk)); /* the PR-11 caller-side contract */
+
+        if (r == WIFI_JOIN_RESULT_JOINED)
+        {
+            wifi_deauth_show_status_message("Reconnected", NULL, 800U);
+        }
+        else if ((r != WIFI_JOIN_RESULT_GATE) && (r != WIFI_JOIN_RESULT_SEND))
+        {
+            /* GATE already showed its own diagnostic; a dead console is the
+             * tools' own first message -- no double notice. */
+            wifi_deauth_show_status_message("Reconnect failed", NULL, 1200U);
+        }
+    }
+
+    xQueueReset(main_q_hdl);
+    m1_esp32_deinit();
+    wifi_scan_restore_usbcdc_mode_if_needed(prev_usbcdc_mode, restore_usbcdc_mode);
+}
+
 /*========================= Scan Networks (browse + save) ====================*/
+
 
 /* One network per screen: heading + SSID/BSSID/RSSI + saved indicator + hints. */
 /* Full network details view (from the network action menu); returns on BACK. */
@@ -5867,7 +6655,7 @@ void wifi_scan_networks(void)
     uint8_t rescan = 1;
     uint8_t force_scan = 0; /* set by the manual-refresh control (wifi_browse() returning 2) */
     static const char *const opt_rescan[2]  = { "Rescan", "Back" };
-    static const char *const opt_actions[5] = { "Scan for Devices", "Save Network", "Network Details", "Saved Networks", "Back" };
+    static const char *const opt_actions[6] = { "Scan for Devices", "Save Network", "Join Network", "Network Details", "Saved Networks", "Back" };
 
     u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
 
@@ -5958,15 +6746,19 @@ void wifi_scan_networks(void)
                                       (r == 2U) ? "Saved list full" : "Save failed";
                     wifi_deauth_show_status_message(msg, NULL, 800U);
                 }
-                else if (a == 2U) /* Network Details -> back returns here */
+                else if (a == 2U) /* Join Network -> back returns here */
+                {
+                    wifi_join_from_scan(net);
+                }
+                else if (a == 3U) /* Network Details -> back returns here */
                 {
                     wifi_network_details(net);
                 }
-                else if (a == 3U) /* Saved Networks browser -> back returns here */
+                else if (a == 4U) /* Saved Networks browser -> back returns here */
                 {
                     wifi_saved_browser();
                 }
-                else /* a == 4 (Back) or 0xFF: return to the network result */
+                else /* a == 5 (Back) or 0xFF: return to the network result */
                 {
                     in_actions = 0;
                 }
@@ -6016,7 +6808,7 @@ void wifi_saved_browser(void)
     uint8_t exit_flag = 0;
     uint8_t st;
     static const char *const opt_ok[1]     = { "Back" };
-    static const char *const opt_actions[2] = { "Delete", "Back" };
+    static const char *const opt_actions[3] = { "Join", "Delete", "Back" };
     static const char *const opt_delcfm[2] = { "Delete", "Cancel" };
 
     st = wifi_saved_load();
@@ -6060,9 +6852,15 @@ void wifi_saved_browser(void)
                      (g_saved[sel].ssid[0] == '\0') ? "Hidden Network" : g_saved[sel].ssid);
             snprintf(bssid_line, sizeof(bssid_line), "%s", g_saved[sel].bssid);
             /* The per-entry browse screen already shows full details (SSID/BSSID/
-             * Ch/RSSI/Security), so the actions menu just offers Delete/Back. */
-            a = wifi_dc_menu("Saved", ssid_line, bssid_line, opt_actions, 2, 0);
-            if (a == 0U) /* Delete -> explicit confirm */
+             * Ch/RSSI/Security), so the actions menu offers Join/Delete/Back.
+             * Join re-verifies + re-decrypts the stored credential at join
+             * time and asks for a PSK when the row has none. */
+            a = wifi_dc_menu("Saved", ssid_line, bssid_line, opt_actions, 3, 0);
+            if (a == 0U) /* Join */
+            {
+                wifi_join_from_saved(sel);
+            }
+            else if (a == 1U) /* Delete -> explicit confirm */
             {
                 uint8_t c = wifi_dc_menu("Delete entry?", ssid_line, bssid_line, opt_delcfm, 2, 1);
                 if (c == 0U) /* explicit Delete */
@@ -6073,7 +6871,7 @@ void wifi_saved_browser(void)
                     else if (sel >= g_saved_count) { sel = (uint16_t)(g_saved_count - 1U); }
                 }
             }
-            /* a == 1 (Back) or 0xFF: return to list */
+            /* a == 2 (Back) or 0xFF: return to list */
         }
         /* UP/DOWN: no action on this paged result screen */
     }

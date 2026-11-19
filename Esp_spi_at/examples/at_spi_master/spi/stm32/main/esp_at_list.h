@@ -43,4 +43,31 @@
 
 #define ESP32C6_AT_RESET				"AT+RST"
 
+/* Station join (PR-11, issue #42): AT+CWJAP=<ssid>,<pwd>.
+ * Responses: "WIFI CONNECTED" / "WIFI GOT IP" / "OK" on success, or
+ * "+CWJAP:<error_code>" (1 timeout, 2 wrong password, 3 AP not found,
+ * 4 connection failed) followed by "FAIL". The wifi_connect_ap()
+ * handler maps those onto the CTRL_ERR_* resp_event_status codes the
+ * CTRL_RESP_CONNECT_AP reply carries (see ctrl_api.h). */
+#define ESP32C6_AT_REQ_CONNECT_AP		"AT+CWJAP="
+#define ESP32C6_AT_RES_CONN_AP_FAIL		"+CWJAP:"
+#define ESP32C6_AT_RES_CONN_GOT_IP		"WIFI GOT IP"
+#define ESP32C6_AT_RES_FAIL				"FAIL"
+
+/* Paired-firmware version (PR-11). This is the version the paired
+ * console firmware is REQUIRED to report for the read-only console
+ * `version` verb -- the shared ESPFW handshake contract the STM32's
+ * live feature gate parses (m1_csrc/m1_esp_feature_gate.h). It is
+ * DECLARED here (the console firmware itself is maintained outside
+ * this repository; nothing in-tree emits the line).
+ * ESP_FEATURE_WIFI_JOIN's minimum is {major,minor,patch,rc} BELOW, so
+ * an image that does not answer (older/foreign firmware) is refused
+ * and the join handler is only reached on a version-paired image.
+ * m1_csrc/test/m1_wifi_join_test.py pins these constants together. */
+#define ESP32C6_FW_VERSION_MAJOR		1
+#define ESP32C6_FW_VERSION_MINOR		1
+#define ESP32C6_FW_VERSION_PATCH		0
+#define ESP32C6_FW_VERSION_RC		0
+#define ESP32C6_FW_VERSION_LINE		"ESPFW 1.1.0.0"
+
 #endif /* ESP32C6_AT_LIST_H_ */
