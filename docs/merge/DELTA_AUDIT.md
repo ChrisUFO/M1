@@ -4,7 +4,8 @@
 
 The issue #45 final gate requires that `git diff upstream/main..main` show
 **exactly the justified carry layer — nothing unexplained**. This document is
-that audit, cut at the v0.9.0.0-UFO release commit, and it is machine-checked:
+that audit, its table cut at the basis recorded below (provenance for the
+cut, not the release head), and it is machine-checked:
 `python tools/check_delta_audit.py` recomputes the diff at `HEAD` and
 fails on any unexplained or stale row (exit 0 = zero unexplained rows).
 
@@ -14,9 +15,10 @@ fails on any unexplained or stale row (exit 0 = zero unexplained rows).
   `2af1f8a339dbe629f36a0551de4293b161179b71` (upstream 0.8.1.0). The gate
   asserts `git merge-base upstream/main <basis-end>` equals this pin, so the
   audit can never silently widen to include upstream's own later movement.
-- Fork side: the release commit recorded below. It must be an ancestor of
-  `HEAD`; coverage is always evaluated at `HEAD`, so a commit made after the
-  cut cannot add a differing file that escapes the audit.
+- Fork side: the basis recorded below — provenance for when the table was
+  cut, not the release head. It must be an ancestor of `HEAD`; coverage is
+  always evaluated at `HEAD`, so a commit made after the cut cannot add a
+  differing file that escapes the audit.
 - Enumeration: `git diff --name-only upstream/main HEAD` — every file whose
   blob differs.
 
