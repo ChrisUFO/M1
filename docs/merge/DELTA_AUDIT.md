@@ -40,25 +40,25 @@ names — a Linux-build fix, not a content change.
 
 ## Summary
 
-basis-end: `074ff394ae771a17fcb568d47b12e23ebd4a560c`
+basis-end: `c8e5c597d44d3044b8c14521cf02a84baf3d16f3`
 
-| Content rows (table below) | **194** |
+| Content rows (table below) | **202** |
 | — cited to a merge-ledger disposition | 73 |
-| — explained as a merge-era change (gloss + PR refs) | 121 |
+| — explained as a merge-era change (gloss + PR refs) | 129 |
 | EOL-only rows (appendix below) | **448** |
-| Total differing files | **642** |
+| Total differing files | **650** |
 
 <!-- check_delta_audit: content-table begin -->
 | File | Change | Ledger disposition | Merge-era explanation (PRs) |
 |---|---|---|---|
 | `.gitattributes` | A +37 | — (new file added by merge-era work) | LF-in-repo policy re-landed on the adopted base; drives the EOL-only class below (#48, #47) |
-| `.github/CONTRIBUTING.md` | M +10 | — (changed by merge-era work (not a legacy-fork delta)) | fork contribution guide: ledger-coordination guidance (merge 1) plus the future-sync instruction added by this release (#51, #48) |
+| `.github/CONTRIBUTING.md` | M +41 | — (changed by merge-era work (not a legacy-fork delta)) | fork contribution guide: ledger-coordination guidance (merge 1) plus the future-sync instruction added by this release (#51, #48) |
 | `.github/workflows/host-tests.yml` | A +32 | — (new file added by merge-era work) | CI entry point running the wired host-test aggregator (PR-1) (#68, #66) |
 | `.project` | M +1 | — (changed by merge-era work (not a legacy-fork delta)) | Eclipse project name tracks the derived artifact stem M1_v0.9.0.0-UFO (#48) |
 | `.vscode/launch.json` | M +3 | — (changed by merge-era work (not a legacy-fork delta)) | debug config tracks the derived artifact stem (#47) |
 | `.vscode/tasks.json` | M +5 | — (changed by merge-era work (not a legacy-fork delta)) | build task config tracks the derived artifact stem (#48) |
 | `Battery/golden_image_0420.h` | rename | — (changed by merge-era work (not a legacy-fork delta)) | case-only rename (from Golden_Image_0420.h) so Linux builds resolve the include (issue #46, PR #56) (#56) |
-| `CHANGELOG.md` | M +882 | intentionally-dropped (LEDGER.md) | see ledger row; later PRs: #93, #88, #86, #85, #82, #81, #78, #75, #72, #71, #68, #66, #65, #64, #62, #61, #59, #56, #57, #55, #54, #53, #51, #48, #47, #34, #33, #29, #28, #19, #18, #17, #15 |
+| `CHANGELOG.md` | M +905 | intentionally-dropped (LEDGER.md) | see ledger row; later PRs: #93, #88, #86, #85, #82, #81, #78, #75, #72, #71, #68, #66, #65, #64, #62, #61, #59, #56, #57, #55, #54, #53, #51, #48, #47, #34, #33, #29, #28, #19, #18, #17, #15 |
 | `CMakeLists.txt` | M +66 | retained-by-upstream (LEDGER.md) | see ledger row; later PRs: #59, #48, #47, #34, #29, #19, #17, #15 |
 | `Core/Inc/stm32h5xx_hal_conf.h` | M +1 | — (changed by merge-era work (not a legacy-fork delta)) | HAL config enables the RNG module for the crypto foundation (PR-8) (#82) |
 | `Core/Src/FreeRTOS_CLI.c` | M +13 | carried-by-patch -> #44 (LEDGER.md) | see ledger row; later PRs: #65, #53, #48, #19 |
@@ -87,7 +87,7 @@ basis-end: `074ff394ae771a17fcb568d47b12e23ebd4a560c`
 | `NFC/NFC_drv/common/test/nfc_t2t_unlock_test.c` | M +6 | — (changed by merge-era work (not a legacy-fork delta)) | upstream NFC source-matching host test, retargeted to the LF-normalized tree (merge 1) (#48) |
 | `NFC/NFC_drv/legacy/nfc_listener.c` | M +1 | carried-by-patch -> #46 (LEDGER.md) | see ledger row; later PRs: #56, #48, #34 |
 | `NFC/NFC_drv/legacy/nfc_poller.c` | M +1 | carried-by-patch -> #46 (LEDGER.md) | see ledger row; later PRs: #56, #48, #34 |
-| `README.md` | M +24 | carried-by-patch -> #41 (LEDGER.md) | see ledger row; later PRs: #61, #51, #48, #47, #34, #29, #18, #17, #15 |
+| `README.md` | M +29 | carried-by-patch -> #41 (LEDGER.md) | see ledger row; later PRs: #61, #51, #48, #47, #34, #29, #18, #17, #15 |
 | `Sub_Ghz/m1_sub_ghz_api.c` | M +370 | carried-by-patch -> #52 (LEDGER.md) | see ledger row; later PRs: #81, #54, #48, #28, #19 |
 | `Sub_Ghz/m1_sub_ghz_api.h` | M +81 | intentionally-dropped (LEDGER.md) | see ledger row; later PRs: #81, #57, #48, #28 |
 | `Sub_Ghz/protocols/m1_secplus_v2_decode.c` | M +1 | carried-by-patch -> #39 (LEDGER.md) | see ledger row; later PRs: #53, #48, #19 |
@@ -97,21 +97,27 @@ basis-end: `074ff394ae771a17fcb568d47b12e23ebd4a560c`
 | `build.sh` | M +115 | — (changed by merge-era work (not a legacy-fork delta)) | canonical cross-platform release build: derived stem, clean-tree gate, CRC contract, manifest (issue #40, PR #59) (#59, #48) |
 | `cmake/m1_01/CMakeLists.txt` | M +42 | intentionally-dropped (LEDGER.md) | see ledger row; later PRs: #93, #86, #82, #75, #72, #71, #66, #53, #48, #19, #15 |
 | `cmake/m1_01/verify_merge_ledger.sh` | A +75 | — (new file added by merge-era work) | merge-ledger completeness gate (issue #38, PR #51) (#51) |
-| `docs/README.md` | M +1 | — (changed by merge-era work (not a legacy-fork delta)) | documentation index for the adopted base (merge 1), extended per unit (#75, #48) |
+| `docs/README.md` | M +13 | — (changed by merge-era work (not a legacy-fork delta)) | documentation index for the adopted base (merge 1), extended per unit (#75, #48) |
 | `docs/architecture.md` | M +466 | — (changed by merge-era work (not a legacy-fork delta)) | new-base architecture overview, updated by every unit that changes subsystems (#93, #88, #86, #85, #82, #81, #78, #75, #71, #68, #66, #62, #61, #48) |
 | `docs/build-and-debug.md` | M +142 | — (changed by merge-era work (not a legacy-fork delta)) | canonical build/CRC/manifest documentation (issues #40/#41) (#61, #59, #48) |
-| `docs/ir-provisioning.md` | A +151 | — (new file added by merge-era work) | IR database provisioning guide (PR-5, bounds table PR-5 harden; starter-pack pointer added by this release) (#78, #75) |
+| `docs/ir-provisioning.md` | A +159 | — (new file added by merge-era work) | IR database provisioning guide (PR-5, bounds table PR-5 harden; starter-pack pointer added by this release) (#78, #75) |
+| `docs/merge/DELTA_AUDIT.md` | A +721 | — (new file added by merge-era work) | this audit: the issue #45 final-gate record (this release) (—) |
 | `docs/merge/LEDGER.md` | A +1968 | — (new file added by merge-era work) | merge ledger itself (issue #38, PR #51) (#51) |
 | `docs/protocols/README.md` | M +2 | — (changed by merge-era work (not a legacy-fork delta)) | protocol index updated for the CLI and USB-CDC pages (issues #44) (#65, #64, #48) |
 | `docs/protocols/cli.md` | A +291 | — (new file added by merge-era work) | console command reference for the ported CLI diagnostics (issue #44, PR #65) (#65) |
-| `docs/protocols/firmware-update.md` | M +440 | — (changed by merge-era work (not a legacy-fork delta)) | flash layout, boot failsafe, DFU and rollback documentation (issue #41, PRs #61/#62; release-state sweep by this release) (#62, #61, #48) |
+| `docs/protocols/firmware-update.md` | M +441 | — (changed by merge-era work (not a legacy-fork delta)) | flash layout, boot failsafe, DFU and rollback documentation (issue #41, PRs #61/#62; release-state sweep by this release) (#62, #61, #48) |
 | `docs/protocols/usb-cdc.md` | A +135 | — (new file added by merge-era work) | USB CDC RX diagnostics documentation (issue #44, PRs #64/#65) (#65, #64) |
+| `docs/releases.md` | M +60 | — (changed by merge-era work (not a legacy-fork delta)) | release and version policy page, rewritten for the 0.9.0.0-UFO release state by this release (#48) |
+| `docs/releases/0.9.0.0-UFO.md` | A +205 | — (new file added by merge-era work) | v0.9.0.0-UFO release notes (this release) (—) |
+| `docs/releases/0.9.0.0-ufo-smoke-checklist.md` | A +63 | — (new file added by merge-era work) | archived on-device smoke checklist aggregating the open hardware-acceptance issues (this release) (—) |
+| `docs/releases/irdb-attribution.md` | A +166 | — (new file added by merge-era work) | CC0-1.0 text and attribution for the IR starter database (this release) (—) |
 | `docs/security.md` | M +46 | — (changed by merge-era work (not a legacy-fork delta)) | security architecture incl. RNG/crypto notes (PR-8/PR-9) (#85, #82, #48) |
 | `docs/security/wifi-credential-threat-model.md` | A +152 | — (new file added by merge-era work) | WiFi credential threat model (issue #42, PR-9) (#88, #85) |
 | `documentation/0.9.0.0-ufo-verification.md` | A +104 | — (new file added by merge-era work) | release verification record: milestone state, version surfaces, build + parity evidence (this release) (—) |
 | `documentation/mbt.md` | M +43 | — (changed by merge-era work (not a legacy-fork delta)) | build-tool walkthrough tracking the derived stem (issues #40/#41; stem sweep merge 1) (#61, #59, #48) |
 | `documentation/merge1-baseline-evidence.md` | A +273 | — (new file added by merge-era work) | merge-1 virgin-baseline evidence at the upstream pin (issue #37) (#48) |
 | `documentation/stability_phase5_validation.md` | A +132 | carried-by-patch -> #52 (LEDGER.md) | see ledger row; later PRs: #55, #48, #34 |
+| `documentation/usingVSCode.md` | M +1 | — (changed by merge-era work (not a legacy-fork delta)) | VS Code walkthrough; build-target name swept to the derived stem by this release (#48) |
 | `lfrfid/lfrfid.c` | M +9 | carried-by-patch -> #39 (LEDGER.md) | see ledger row; later PRs: #53, #48, #19 |
 | `lfrfid/lfrfid_protocol_em4100.c` | M +25 | carried-by-patch -> #46 (LEDGER.md) | see ledger row; later PRs: #56, #53, #48, #34, #19 |
 | `lfrfid/lfrfid_protocol_h10301.c` | M +16 | carried-by-patch -> #46 (LEDGER.md) | see ledger row; later PRs: #56, #53, #48, #34, #19 |
@@ -220,6 +226,7 @@ basis-end: `074ff394ae771a17fcb568d47b12e23ebd4a560c`
 | `m1_csrc/tests/test_feedback_manager.c` | M +96 | — (changed by merge-era work (not a legacy-fork delta)) | pre-existing host test adjusted by its unit (see PR refs) (#68, #48) |
 | `scripts/check_no_raw_bkp_writes.sh` | A +74 | — (new file added by merge-era work) | guard asserting no raw backup-register writes (issue #41, PR #61) (#61) |
 | `scripts/crc_parity_golden.txt` | A +42 | — (new file added by merge-era work) | golden digests for the CRC emitter parity harness (issue #40, PR #59) (#59) |
+| `scripts/fetch_ir_starter_db.sh` | A +127 | — (new file added by merge-era work) | reproducible fetch/pack step for the IR starter-database release asset at the pinned Flipper-IRDB commit (this release) (—) |
 | `scripts/portable_hash.sh` | A +33 | — (new file added by merge-era work) | portable md5/sha256 helpers for Git-Bash/Linux/macOS (issue #40, PR #59) (#59) |
 | `scripts/program.jlink` | M +4 | — (changed by merge-era work (not a legacy-fork delta)) | SWD programming script tracking the derived stem (#48, #47) |
 | `scripts/run_host_tests.sh` | A +100 | — (new file added by merge-era work) | host-test aggregator running the wired suites (PR-1, extended per unit) (#93, #88, #86, #85, #82, #81, #78, #75, #72, #71, #68, #66) |
@@ -227,6 +234,7 @@ basis-end: `074ff394ae771a17fcb568d47b12e23ebd4a560c`
 | `scripts/verify_esp_interface_contract.sh` | M +21 | — (changed by merge-era work (not a legacy-fork delta)) | ESP SPI interface contract check, updated for the version-derived build (issue #40) (#59, #48) |
 | `tools/WINDOWS_VERIFICATION.md` | A +79 | — (new file added by merge-era work) | Windows verification adapter guide (issue #49) (#53) |
 | `tools/check_case_sensitivity.py` | A +266 | carried-by-patch -> #46 (LEDGER.md) | see ledger row; later PRs: #56, #48, #34 |
+| `tools/check_delta_audit.py` | A +396 | — (new file added by merge-era work) | machine gate behind this audit: regenerates and verifies zero unexplained rows (this release) (—) |
 | `tools/crc_test_vectors.py` | A +106 | — (new file added by merge-era work) | deterministic CRC test-vector generator (issue #40, PR #59) (#59) |
 | `tools/emulate_srec_cat_crc.py` | A +114 | — (new file added by merge-era work) | pure-Python srec_cat CRC emitter for hosts without SRecord (issue #49, PR #53) (#53) |
 | `tools/gcc-nosan/gcc-nosan.c` | A +134 | — (new file added by merge-era work) | gcc shim landing the Windows verification adapters (issue #49, PR #53) (#53) |
