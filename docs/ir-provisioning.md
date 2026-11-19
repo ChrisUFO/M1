@@ -26,6 +26,14 @@ under `0:/IR`:
 - **Canonical source:** the [Flipper IRDB](https://github.com/Lucaslhm/Flipper-IRDB)
   (CC0-1.0). Any Flipper-compatible `.ir` file works; `.ir` files that use a
   protocol this firmware cannot encode are skipped safely (see below).
+- **Release starter pack:** firmware releases ship a curated starter database
+  (`TVs`, `ACs`, `Audio_and_Video_Receivers`, `Streaming_Devices`,
+  `Projectors` at a pinned Flipper-IRDB commit) as a downloadable zip whose
+  `IR/` folder can be extracted straight to the card root — see the release
+  notes and [`releases/irdb-attribution.md`](releases/irdb-attribution.md)
+  for the pin, license and caveats, and
+  [`scripts/fetch_ir_starter_db.sh`](../scripts/fetch_ir_starter_db.sh) for
+  the reproducible packaging step.
 - **Category** = the first directory level below `0:/IR`; it becomes a row of
   the browser's category list. Deeper directory levels (typically
   `Brand/Device.ir`) are flattened into that category's device list, so both

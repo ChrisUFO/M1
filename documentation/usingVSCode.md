@@ -31,7 +31,7 @@
 1. After the project is configured and the build files are written, go to the CMake extension side panel
 2. Under 'Project Status' find 'Build'
 3. Under 'Build' you will find '[Targets in preset]' place your mouse over those words and to the right there will be a pencil icon that appears, select the icon
-4. In the search bar there will be a selection for the build targets, select 'MonstaTek_M1_v0800' or similar depending on the revision of firmware that is available
+4. In the search bar there will be a selection for the build targets, select 'M1_v0.9.0.0-UFO' or similar depending on the revision of firmware that is available
 5. Once the correct target is selected, move your mouse to the 'Build' line and select the icon to the right of the word 'Build', this will start building the project
 6. Building will take some time to complete
 ### Running the project
