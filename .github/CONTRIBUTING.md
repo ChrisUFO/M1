@@ -69,6 +69,37 @@ This project and everyone participating in it is governed by our [Code of Conduc
    `cmake/m1_01/verify_merge_ledger.sh` keeps the ledger complete (run it after
    editing; regenerate structure with `python tools/gen_merge_ledger.py`).
 
+4. **Syncing With Upstream (future syncs)**
+   This fork tracks `upstream` (MonstaTek/M1). Since the merge-1 ancestry
+   graft, syncing is an **ordinary merge** — no special strategy, no `-X ours`:
+
+   ```bash
+   git fetch upstream
+   git merge upstream/main
+   ```
+
+   Conflict policy:
+
+   - Resolve conflicts as usual, but keep the fork's carried layer intact:
+     if a conflicted hunk is fork carry-layer content (check the
+     [merge ledger](../docs/merge/LEDGER.md) and the release
+     [delta audit](../docs/merge/DELTA_AUDIT.md) for whether the file is fork
+     carry), re-apply the fork's change on top of the upstream side — do not
+     let an upstream refactor silently delete a carried feature.
+   - Prefer the upstream side wholesale for vendor trees the fork keeps
+     pristine (`Drivers/`, `Middlewares/`): the fork carries no deltas there
+     by policy, so any conflict is upstream churn, not ours.
+   - Never re-merge the `legacy/v0.8.11` tag; recover a specific legacy
+     change with `git cherry-pick` from its history instead (the graft
+     recorded that line as already merged).
+   - Run `git config merge.renormalize true` once per clone (see
+     [DEVELOPMENT.md](../DEVELOPMENT.md) — Merge Policy) or text-file merges
+     degenerate into whole-file EOL conflicts.
+   - After the merge, update the delta audit for the new release cut
+     (`python tools/check_delta_audit.py --emit`, see
+     [DELTA_AUDIT.md](../docs/merge/DELTA_AUDIT.md)) so the fork-vs-upstream
+     story stays explainable.
+
 ## How to Submit Changes
 
 1. Update your fork to the latest upstream version
