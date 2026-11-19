@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Tests: guard-exit regression pins for the BLE advertisement start/stop
+  paths (PLAN unit PR-14, remediation for PR #93 / issue #11 review
+  residue) — the host suite now pins the refusal *bodies*, not just the
+  ordering/polarity of their conditions: the feature-gate refusal block
+  keeps its `return ERROR;` and never sends the adv command, the
+  non-OK-reply block keeps its `return ERROR;` and never latches
+  active, and the stop confirmation `stopped = 1U` exists exactly once,
+  only inside the brace-matched `classify == M1_BT_ADV_REPLY_OK`
+  condition with no `||` bypass. Deleting any of the three guard exits
+  (verified by mutation: M1/M2/M3 each applied in isolation) fails CI.
+
 ## [0.9.0.0-UFO] - 2026-11-19
 
 First fork release cut on the adopted upstream 0.8.1.0 base (pin
