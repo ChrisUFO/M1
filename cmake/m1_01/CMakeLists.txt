@@ -494,6 +494,7 @@ set(M1_APP_SOURCES
     ../../m1_csrc/m1_bq27421.c
     ../../m1_csrc/m1_bq27421_boot_guard.c
     ../../m1_csrc/m1_bt.c
+    ../../m1_csrc/m1_bt_adv.c
     ../../m1_csrc/m1_buzzer.c
     ../../m1_csrc/m1_cli.c
     ../../m1_csrc/m1_cli_help.c

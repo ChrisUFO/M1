@@ -42,6 +42,10 @@
 #include "m1_file_browser.h"
 #include "m1_sdcard_provision.h"
 #include "m1_virtual_kb.h"
+#include "m1_bt_adv.h"
+#include "m1_settings.h"
+#include "m1_settings_store.h"
+#include "m1_esp_feature_gate.h"
 
 /*************************** D E F I N E S ************************************/
 
@@ -135,6 +139,7 @@ void bluetooth_scan_devices(void);
 void bluetooth_signal_meter(void);
 void bluetooth_gatt_explorer(void);
 void bluetooth_saved(void);
+void bluetooth_adv_editor(void);
 static uint16_t bt_scan_parse_output(const char *resp_text);
 static uint8_t bt_cmd_process(const char *cmd_option, char *resp_buf, uint16_t resp_buf_size, uint32_t timeout_sec);
 extern void  esp32_main_init(void);
@@ -180,6 +185,13 @@ typedef struct {
 static uint8_t bt_prepare_esp32_cmd_path(bt_cmd_prep_ctx_t *ctx, uint8_t show_init_screen, uint8_t show_fail_screen);
 static void bt_restore_esp32_cmd_path(const bt_cmd_prep_ctx_t *ctx);
 
+/* Advertisement editor (PR-12): session state + the gated transport,
+ * defined with the editor section below but declared here because
+ * menu_bluetooth_exit() must stop advertising on Bluetooth exit. */
+static void    bt_adv_exec_stop(void);
+static uint8_t g_bt_adv_custom_len;
+static char    g_bt_adv_custom_file[24];
+
 
 /*************** F U N C T I O N   I M P L E M E N T A T I O N ****************/
 
@@ -206,8 +218,14 @@ void menu_bluetooth_init(void)
 /*============================================================================*/
 void  menu_bluetooth_exit(void)
 {
-    /* Leaving Bluetooth: stop background discovery and release the ESP32 path, then reset
-     * the chip. The shared table lives only for the session, so clear the selection. */
+    /* Leaving Bluetooth: stop any advertising the editor started (the
+     * stop verb is only ever sent when a gated start succeeded), stop
+     * background discovery and release the ESP32 path, then reset the
+     * chip. The shared table lives only for the session, so clear the
+     * selection and the session-local adv payload pick. */
+    bt_adv_exec_stop();
+    g_bt_adv_custom_len = 0U;
+    g_bt_adv_custom_file[0] = '\0';
     bt_session_end();
     ble_sel_clear();
     g_ble_scan_count = 0U;
@@ -1568,6 +1586,553 @@ void bluetooth_saved(void)
 
     m1_fb_deinit();
 } // void bluetooth_saved(void)
+
+
+
+
+/*============================================================================*/
+/*
+ * Bluetooth advertisement editor (PR-12 of the Merge 3 series, issue #11).
+ *
+ * Rows: Name (vkb edit), Preset (LEFT/RIGHT cycle; OK on Custom opens the
+ * SD picker), Interval (LEFT/RIGHT cycle the ms presets), SD payload (OK
+ * picks a .adv hex file under 0:/ble, session-local), and Start/Stop
+ * advertising (gated transport). Edits apply to the settings store live
+ * via the typed setters; one atomic settings_save() on BACK (the shared
+ * settings_exit_save idiom), so the editor is fully usable -- configure
+ * and persist -- on ESP32 firmware that lacks the adv verb; only the
+ * Start action refuses, through the live feature gate.
+ */
+/*============================================================================*/
+
+/* vkb caps filename-style entry at its own 20-char buffer; the editor
+ * clamps a store-loaded name to the same bound so an over-long
+ * hand-edited settings.cfg value stays editable and buildable (the
+ * payload builder independently refuses names that cannot fit). */
+#define BT_ADV_NAME_EDIT_MAX   20U
+
+/* Editor rows (order is the on-screen order). */
+typedef enum
+{
+    BT_ADV_ROW_NAME     = 0,
+    BT_ADV_ROW_PRESET   = 1,
+    BT_ADV_ROW_INTERVAL = 2,
+    BT_ADV_ROW_FILE     = 3,
+    BT_ADV_ROW_RUN      = 4,
+    BT_ADV_ROW__COUNT
+} bt_adv_row_t;
+
+/* Advertisement lifecycle: set ONLY after the console confirmed ADV:OK,
+ * cleared only by the stop path -- those two are the only adv writers.
+ * (g_bt_adv_active plus the session custom-payload state live here;
+ * g_bt_adv_custom_len / g_bt_adv_custom_file are file-scope, declared
+ * with the prototypes above for menu_bluetooth_exit's cleanup.) */
+static uint8_t g_bt_adv_active = 0U;
+
+/* Session-local custom payload buffer picked from 0:/ble (not persisted:
+ * the store has no filename field by design -- pick again on re-entry). */
+static uint8_t g_bt_adv_custom[M1_BT_ADV_MAX_PAYLOAD];
+
+/* Editor interval table + reload mapping moved into the pure core
+ * (m1_bt_adv.c): m1_bt_adv_interval_ms / m1_bt_adv_interval_index /
+ * m1_bt_adv_preset_clamp carry the typed contracts and the host
+ * suite's executable coverage. */
+
+/* Read + parse one .adv hex-text file into the session custom payload. */
+static uint8_t bt_adv_load_custom_file(const char *dir, const char *filename)
+{
+    char path[96];
+    const char *sep = "";
+    FIL file;
+    UINT n;
+    FRESULT rr;
+
+    if ((dir == NULL) || (filename == NULL)) { return 0U; }
+    if ((dir[0] != '\0') && (dir[strlen(dir) - 1U] != '/')) { sep = "/"; }
+    (void)snprintf(path, sizeof(path), "%s%s%s", dir, sep, filename);
+
+    if (!m1_bt_adv_file_is_adv(filename))
+    {
+        bt_message_screen("Payload", "Not .adv file", filename);
+        return 0U;
+    }
+    if (m1_fb_open_file(&file, path) != 0)
+    {
+        bt_message_screen("Payload", "Open failed", filename);
+        return 0U;
+    }
+    rr = m1_fb_read_file(&file, g_bt_scratch, 255U, &n);
+    (void)m1_fb_close_file(&file);
+    if (rr != FR_OK)
+    {
+        bt_message_screen("Payload", "Read failed", filename);
+        return 0U;
+    }
+    g_bt_scratch[n] = '\0';
+
+    if (m1_bt_adv_custom_parse(g_bt_scratch, g_bt_adv_custom,
+                               &g_bt_adv_custom_len) != 0)
+    {
+        g_bt_adv_custom_len = 0U;
+        g_bt_adv_custom_file[0] = '\0';
+        bt_message_screen("Payload", "Bad adv hex", "Max 31 bytes");
+        return 0U;
+    }
+    strncpy(g_bt_adv_custom_file, filename, sizeof(g_bt_adv_custom_file) - 1U);
+    g_bt_adv_custom_file[sizeof(g_bt_adv_custom_file) - 1U] = '\0';
+    return 1U;
+}
+
+/* SD payload picker over 0:/ble (same browser idiom as bluetooth_saved,
+ * restricted to .adv files by the loader's extension check). Returns 1
+ * when a valid payload was loaded into the session state. */
+static uint8_t bt_adv_pick_custom(void)
+{
+    S_M1_Buttons_Status this_button_status;
+    S_M1_Main_Q_t q_item;
+    const S_M1_file_info *f_info;
+    BaseType_t ret;
+    uint8_t exit_pick = 0U;
+    uint8_t loaded = 0U;
+
+    if (!m1_fb_check_existence(BLE_SAVE_DIR)) { (void)m1_fb_make_dir(BLE_SAVE_DIR); }
+    m1_fb_set_start_dir(BLE_SAVE_DIR);
+    m1_fb_init(&m1_u8g2);
+
+    m1_u8g2_firstpage();
+    u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+    u8g2_SetFont(&m1_u8g2, M1_DISP_MAIN_MENU_FONT_N);
+    m1_u8g2_nextpage();
+    (void)m1_fb_display(NULL);
+
+    while (!exit_pick)
+    {
+        ret = xQueueReceive(main_q_hdl, &q_item, portMAX_DELAY);
+        if ((ret == pdTRUE) && (q_item.q_evt_type == Q_EVENT_KEYPAD))
+        {
+            memset(&this_button_status, 0, sizeof(this_button_status));
+            (void)xQueueReceive(button_events_q_hdl, &this_button_status, 0);
+
+            if (this_button_status.event[BUTTON_BACK_KP_ID] == BUTTON_EVENT_CLICK)
+            {
+                exit_pick = 1U;
+            }
+            else
+            {
+                f_info = m1_fb_display(&this_button_status);
+                if ((f_info != NULL) && (f_info->status == FB_OK) && f_info->file_is_selected)
+                {
+                    if (bt_adv_load_custom_file(f_info->dir_name, f_info->file_name))
+                    {
+                        loaded = 1U;
+                        exit_pick = 1U;
+                    }
+                    xQueueReset(button_events_q_hdl);
+                    (void)m1_fb_display(NULL);   /* keep browsing on a reject */
+                }
+            }
+        }
+    }
+
+    m1_fb_deinit();
+    return loaded;
+}
+
+/* Secondary hint line for a gate refusal, derived from the state:
+ * only OLDER is genuinely a firmware-version problem (the remedy is
+ * flashing the advertise-capable image). Every ABSENT reason -- dead
+ * console, failed round trip, unrecognized version marker -- is a
+ * link/console problem; telling that user to update firmware would
+ * send them hunting for an image when the fix is the connection. */
+static const char *bt_adv_gate_hint(const esp_feature_gate_result_t *gate)
+{
+    if ((gate != NULL) && (gate->state == ESP_FW_OLDER))
+    {
+        return "Update ESP fw";
+    }
+    return "Check ESP32";
+}
+
+/* THE gated advertise transport: every adv send funnels through here.
+ * The live feature gate runs FIRST -- on ABSENT/OLDER its diagnostic is
+ * shown and NOTHING is sent to a console that has no adv verb. */
+static uint8_t bt_adv_exec_start(const char *name, uint8_t preset,
+                                 uint16_t interval_ms)
+{
+    esp_feature_gate_result_t gate;
+    uint8_t payload[M1_BT_ADV_MAX_PAYLOAD];
+    uint8_t plen = 0U;
+    char cmd[M1_BT_ADV_CMD_MAX];
+
+    if (preset == (uint8_t)M1_BT_ADV_PRESET_CUSTOM)
+    {
+        if (g_bt_adv_custom_len == 0U)
+        {
+            bt_message_screen("Advertise", "No SD payload", "Pick one first");
+            return ERROR;
+        }
+        if (m1_bt_adv_build_payload(preset, name, g_bt_adv_custom,
+                                    g_bt_adv_custom_len, payload, &plen) != 0)
+        {
+            bt_message_screen("Advertise", "Payload invalid", "Bad SD file");
+            return ERROR;
+        }
+    }
+    else if (m1_bt_adv_build_payload(preset, name, NULL, 0U, payload, &plen) != 0)
+    {
+        bt_message_screen("Advertise", "Payload invalid", "Check name");
+        return ERROR;
+    }
+    else
+    {
+        ;   /* payload built */
+    }
+
+    /* The BLE console session must be up (idempotent -- the Bluetooth
+     * menu entry normally already started it). */
+    if (bt_session_ensure() != SUCCESS)
+    {
+        bt_message_screen("Advertise", "BLE not ready", "Try again");
+        return ERROR;
+    }
+
+    /* Live handshake BEFORE any write: the ESP32 must answer `version`
+     * with ESPFW >= the advertise minimum (1.2.0.0). Until the external
+     * firmware carrying the adv verb is flashed, the currently paired
+     * 1.1.0.0 image is honestly OLDER and this is the only outcome the
+     * Start action can produce -- by design, with nothing sent. */
+    (void)esp_feature_gate_query(ESP_FEATURE_BLE_ADVERTISE, &gate);
+    if (!esp_feature_gate_allows(gate.state))
+    {
+        bt_message_screen("Advertise", esp_feature_gate_diag(&gate),
+                          bt_adv_gate_hint(&gate));
+        return ERROR;
+    }
+
+    if (m1_bt_adv_build_cmd(cmd, (size_t)sizeof(cmd), (uint32_t)interval_ms,
+                            payload, plen) < 0)
+    {
+        bt_message_screen("Advertise", "Command invalid", "Check interval");
+        return ERROR;
+    }
+
+    if (bt_cmd_process(cmd, g_bt_scratch, (uint16_t)sizeof(g_bt_scratch), 4U) != SUCCESS)
+    {
+        bt_message_screen("Advertise", "No reply", "Check ESP32");
+        return ERROR;
+    }
+    if (m1_bt_adv_classify_reply(g_bt_scratch) != M1_BT_ADV_REPLY_OK)
+    {
+        bt_message_screen("Advertise", "Adv failed", "ESP32 refused");
+        return ERROR;
+    }
+
+    g_bt_adv_active = 1U;   /* only after the console confirmed ADV:OK */
+    return SUCCESS;
+}
+
+/* Stop advertising (only ever sent when a start succeeded on gated
+ * firmware), then return the console to background discovery. The
+ * stop reply is classified exactly like the start path: a timeout or
+ * an ADV:FAIL line surfaces "Adv stop failed" instead of a silent
+ * success. The latch clears on every path -- the Bluetooth-menu exit
+ * (stop before the ESP32 reset) remains the backstop that ends
+ * advertising -- but the user is told when the console did not
+ * confirm the stop. */
+static void bt_adv_exec_stop(void)
+{
+    char stopcmd[M1_BT_ADV_CMD_MAX];
+    uint8_t stopped = 0U;
+
+    if (!g_bt_adv_active) { return; }
+    if ((m1_bt_adv_build_stop_cmd(stopcmd, (size_t)sizeof(stopcmd)) > 0) &&
+        (bt_cmd_process(stopcmd, g_bt_scratch, (uint16_t)sizeof(g_bt_scratch), 3U) == SUCCESS) &&
+        (m1_bt_adv_classify_reply(g_bt_scratch) == M1_BT_ADV_REPLY_OK))
+    {
+        stopped = 1U;
+    }
+
+    if (!stopped)
+    {
+        bt_message_screen("Advertise", "Adv stop failed", "Check ESP32");
+    }
+
+    g_bt_adv_active = 0U;
+    bt_session_resume_scan();
+}
+
+/* Editor screen body: one row line per visible entry, clipped to the
+ * scrollbar lane. */
+static void bt_adv_row_text(uint8_t row, char *out, uint8_t out_size,
+                            const char *name, uint8_t preset,
+                            uint16_t interval_ms)
+{
+    char vbuf[24];
+
+    switch (row)
+    {
+        case BT_ADV_ROW_NAME:
+            (void)snprintf(out, out_size, "Name: %s",
+                           (name[0] != '\0') ? name : "(none)");
+            break;
+        case BT_ADV_ROW_PRESET:
+            (void)m1_bt_adv_preset_name(preset, vbuf, (uint8_t)sizeof(vbuf));
+            (void)snprintf(out, out_size, "Preset: %s", vbuf);
+            break;
+        case BT_ADV_ROW_INTERVAL:
+            (void)snprintf(out, out_size, "Interval: %u ms", (unsigned)interval_ms);
+            break;
+        case BT_ADV_ROW_FILE:
+            (void)snprintf(out, out_size, "SD: %s",
+                           (g_bt_adv_custom_file[0] != '\0') ? g_bt_adv_custom_file : "none");
+            break;
+        default:
+            (void)snprintf(out, out_size, g_bt_adv_active ? "Stop advertising"
+                                                          : "Start advertising");
+            break;
+    }
+}
+
+/* Action-bar affordances that match the OK behavior row by row (pure
+ * over their arguments so the host suite compiles them verbatim and
+ * pins the mapping): PRESET opens the picker only on CUSTOM, otherwise
+ * OK cycles the preset; INTERVAL cycles; FILE picks; NAME edits; RUN
+ * toggles advertising. The hint names the keys that actually change
+ * something on the selected row. */
+static const char *bt_adv_ok_label(uint8_t sel, uint8_t preset,
+                                   uint8_t adv_active)
+{
+    if (sel == (uint8_t)BT_ADV_ROW_RUN)
+    {
+        return adv_active ? "Stop" : "Start";
+    }
+    if (sel == (uint8_t)BT_ADV_ROW_PRESET)
+    {
+        return (preset == (uint8_t)M1_BT_ADV_PRESET_CUSTOM) ? "Pick" : "Cycle";
+    }
+    if (sel == (uint8_t)BT_ADV_ROW_INTERVAL)
+    {
+        return "Cycle";
+    }
+    if (sel == (uint8_t)BT_ADV_ROW_FILE)
+    {
+        return "Pick";
+    }
+    return "Edit";   /* BT_ADV_ROW_NAME */
+}
+
+static const char *bt_adv_hint(uint8_t sel)
+{
+    if ((sel == (uint8_t)BT_ADV_ROW_PRESET) ||
+        (sel == (uint8_t)BT_ADV_ROW_INTERVAL))
+    {
+        return "L/R change";
+    }
+    return "OK select";
+}
+
+static void bt_adv_gui_update(uint8_t sel, uint8_t top, const char *name,
+                              uint8_t preset, uint16_t interval_ms)
+{
+    const uint8_t VIS = 3U;
+    uint8_t r;
+    uint8_t row_y = (uint8_t)(14 + M1_GUI_FONT_HEIGHT);
+    char line[36];
+    const char *ok_label;
+
+    m1_u8g2_firstpage();
+    bt_draw_title("Adv Editor");
+
+    for (r = 0U; (r < VIS) && ((top + r) < (uint8_t)BT_ADV_ROW__COUNT); r++)
+    {
+        uint8_t row = (uint8_t)(top + r);
+        bt_adv_row_text(row, line, (uint8_t)sizeof(line), name, preset, interval_ms);
+        if (row == sel)
+        {
+            u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+            u8g2_DrawBox(&m1_u8g2, 0, (int)(row_y - M1_GUI_FONT_HEIGHT + 1), 122, M1_GUI_FONT_HEIGHT + 1);
+            u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_BG);
+        }
+        bt_draw_str_clipped(2, row_y, line, 120);
+        u8g2_SetDrawColor(&m1_u8g2, M1_DISP_DRAW_COLOR_TXT);
+        row_y = (uint8_t)(row_y + M1_GUI_FONT_HEIGHT + M1_GUI_ROW_SPACING);
+    }
+
+    bt_draw_scrollbar(sel, (uint16_t)BT_ADV_ROW__COUNT, VIS, 15, 51);
+
+    ok_label = bt_adv_ok_label(sel, preset, g_bt_adv_active);
+    bt_draw_actionbar(ok_label, bt_adv_hint(sel));
+    m1_u8g2_nextpage();
+}
+
+void bluetooth_adv_editor(void)
+{
+    char name[BT_ADV_NAME_EDIT_MAX + 1U];
+    char vkb_in[BT_ADV_NAME_EDIT_MAX + 1U];
+    char vkb_out[BT_ADV_NAME_EDIT_MAX + 1U];
+    uint8_t preset;
+    uint8_t iv_idx;
+    uint8_t sel = 0U;
+    uint8_t top = 0U;
+    uint8_t session_dirty = 0U;
+    const S_M1_Settings_t *cfg = settings_get();
+
+    /* Load persisted config, clamped into the editable ranges. */
+    strncpy(name, cfg->bt_adv_name, BT_ADV_NAME_EDIT_MAX);
+    name[BT_ADV_NAME_EDIT_MAX] = '\0';
+    preset = m1_bt_adv_preset_clamp(cfg->bt_preset);
+    iv_idx = m1_bt_adv_interval_index(cfg->bt_interval_ms);
+
+    bt_adv_gui_update(sel, top, name, preset, m1_bt_adv_interval_ms(iv_idx));
+
+    for (;;)
+    {
+        uint8_t btn = bt_wait_button();
+        uint8_t vis_low = top;
+        uint8_t vis_high = (uint8_t)(top + 2U);
+
+        if (btn == BUTTON_BACK_KP_ID)
+        {
+            /* Leaving the editor ends this session's advertising (no
+             * hidden background state), then one atomic save. */
+            bt_adv_exec_stop();
+            /* The stop + discovery-resume exchange above can queue a
+             * stale button status: settings_exit_save() clears only
+             * main_q, and the menu task pairs one notification with
+             * one status from this 1-deep queue -- a survivor would
+             * permanently skew that pairing (the next real press is
+             * lost, the stale one replayed as a phantom menu action).
+             * Drop it here, the exit-time companion to the RUN-row
+             * reset. */
+            xQueueReset(button_events_q_hdl);
+            settings_exit_save(session_dirty);
+            break;
+        }
+        if (btn == BUTTON_UP_KP_ID)
+        {
+            sel = (uint8_t)((sel == 0U) ? ((uint8_t)BT_ADV_ROW__COUNT - 1U)
+                                        : (uint8_t)(sel - 1U));
+        }
+        else if (btn == BUTTON_DOWN_KP_ID)
+        {
+            sel = (uint8_t)((sel + 1U) % (uint8_t)BT_ADV_ROW__COUNT);
+        }
+        else if ((btn == BUTTON_LEFT_KP_ID) || (btn == BUTTON_RIGHT_KP_ID))
+        {
+            int dir = (btn == BUTTON_RIGHT_KP_ID) ? 1 : -1;
+
+            if (sel == (uint8_t)BT_ADV_ROW_PRESET)
+            {
+                preset = (uint8_t)(((int)preset + dir + (int)M1_BT_ADV_PRESET__COUNT)
+                                   % (int)M1_BT_ADV_PRESET__COUNT);
+                settings_set_bt_preset(preset);
+                session_dirty = 1U;
+            }
+            else if (sel == (uint8_t)BT_ADV_ROW_INTERVAL)
+            {
+                iv_idx = (uint8_t)(((int)iv_idx + dir + (int)M1_BT_ADV_INTERVAL_COUNT)
+                                   % (int)M1_BT_ADV_INTERVAL_COUNT);
+                settings_set_bt_interval_ms(m1_bt_adv_interval_ms(iv_idx));
+                session_dirty = 1U;
+            }
+        }
+        else if (btn == BUTTON_OK_KP_ID)
+        {
+            switch (sel)
+            {
+                case BT_ADV_ROW_NAME:
+                    /* Seed the keyboard with the current name (or a
+                     * neutral default) so BACK-only visits change
+                     * nothing; confirmation persists live. */
+                    if (name[0] != '\0')
+                    {
+                        strncpy(vkb_in, name, sizeof(vkb_in) - 1U);
+                        vkb_in[sizeof(vkb_in) - 1U] = '\0';
+                        if (m1_vkb_get_filename("Adv name", vkb_in, vkb_out, 0U))
+                        {
+                            strncpy(name, vkb_out, BT_ADV_NAME_EDIT_MAX);
+                            name[BT_ADV_NAME_EDIT_MAX] = '\0';
+                            settings_set_bt_adv_name(name);
+                            session_dirty = 1U;
+                        }
+                    }
+                    else
+                    {
+                        strcpy(vkb_in, "beacon");
+                        if (m1_vkb_get_filename("Adv name", vkb_in, vkb_out, 1U))
+                        {
+                            strncpy(name, vkb_out, BT_ADV_NAME_EDIT_MAX);
+                            name[BT_ADV_NAME_EDIT_MAX] = '\0';
+                            settings_set_bt_adv_name(name);
+                            session_dirty = 1U;
+                        }
+                    }
+                    xQueueReset(button_events_q_hdl);
+                    break;
+                case BT_ADV_ROW_PRESET:
+                    if (preset == (uint8_t)M1_BT_ADV_PRESET_CUSTOM)
+                    {
+                        (void)bt_adv_pick_custom();
+                        xQueueReset(button_events_q_hdl);
+                    }
+                    else
+                    {
+                        /* OK advances the preset one step forward --
+                         * the same cycle LEFT/RIGHT performs -- so the
+                         * "Cycle" label is honest. Persisted live like
+                         * every other value change; no console
+                         * exchange, so no queue reset is needed. */
+                        preset = (uint8_t)((preset + 1U) % (uint8_t)M1_BT_ADV_PRESET__COUNT);
+                        settings_set_bt_preset(preset);
+                        session_dirty = 1U;
+                    }
+                    break;
+                case BT_ADV_ROW_INTERVAL:
+                    /* OK advances the interval one step forward --
+                     * the same cycle LEFT/RIGHT performs -- so the row
+                     * labelled "Edit" genuinely edits. Persisted live
+                     * like every other value change; no console
+                     * exchange, so no queue reset is needed here. */
+                    iv_idx = (uint8_t)((iv_idx + 1U) % (uint8_t)M1_BT_ADV_INTERVAL_COUNT);
+                    settings_set_bt_interval_ms(m1_bt_adv_interval_ms(iv_idx));
+                    session_dirty = 1U;
+                    break;
+                case BT_ADV_ROW_FILE:
+                    (void)bt_adv_pick_custom();
+                    xQueueReset(button_events_q_hdl);
+                    break;
+                case BT_ADV_ROW_RUN:
+                    if (g_bt_adv_active) { bt_adv_exec_stop(); }
+                    else
+                    {
+                        (void)bt_adv_exec_start(name, preset,
+                                                m1_bt_adv_interval_ms(iv_idx));
+                    }
+                    /* Both RUN paths run multi-second console exchanges
+                     * (gated start, or stop + discovery resume); any
+                     * click queued meanwhile is stale -- with the latch
+                     * cleared it would restart advertising on the next
+                     * loop turn with no user intent. Drop it before the
+                     * next bt_wait_button, mirroring every sibling
+                     * branch's post-sub-screen reset. */
+                    xQueueReset(button_events_q_hdl);
+                    break;
+                default:
+                    /* Inert by design: no row may inherit the start/stop
+                     * transport -- every BT_ADV_ROW_* id has an explicit
+                     * case above (host-suite-pinned). */
+                    break;
+            }
+        }
+
+        /* Keep the selection inside the visible window. */
+        if (sel < vis_low)                { top = sel; }
+        else if (sel > vis_high)          { top = (uint8_t)(sel - 2U); }
+        if (top > (uint8_t)(BT_ADV_ROW__COUNT - 3U)) { top = (uint8_t)(BT_ADV_ROW__COUNT - 3U); }
+
+        bt_adv_gui_update(sel, top, name, preset, m1_bt_adv_interval_ms(iv_idx));
+    }
+} // void bluetooth_adv_editor(void)
 
 
 

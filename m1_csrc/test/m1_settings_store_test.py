@@ -284,6 +284,25 @@ int main(void)
         CHECK(settings_equal(&g_m1_settings, &ref), "round-trip preserves every field");
     }
 
+    /* 2b: BLE advertisement editor shape (PR-12): exactly the values
+     * the Adv Editor persists -- vkb-bounded name, a valid preset id,
+     * a shipped interval preset -- round-trip through the real
+     * serialize/parse core. */
+    {
+        S_M1_Settings_t ref;
+        strcpy(g_m1_settings.bt_adv_name, "m1beacon");
+        g_m1_settings.bt_preset = 4;      /* Custom (SD) */
+        g_m1_settings.bt_interval_ms = 1000; /* shipped preset */
+        ref = g_m1_settings;
+
+        CHECK(settings_serialize(buf, sizeof(buf), &len), "editor shape serializes");
+        settings_reset_defaults();
+        CHECK(settings_parse_buffer(buf, len), "editor shape parses");
+        CHECK(settings_equal(&g_m1_settings, &ref),
+              "editor shape round-trips (name/preset/interval)");
+        settings_reset_defaults();
+    }
+
     /* 3: defaults round-trip (all-default file is valid and stable) */
     {
         S_M1_Settings_t ref;

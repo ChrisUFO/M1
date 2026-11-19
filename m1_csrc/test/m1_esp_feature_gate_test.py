@@ -25,7 +25,8 @@ Layers:
      negatives (missing field, non-numeric field, 256, 1000, 3-digit
      cap, lowercase marker, no marker at all, NULL);
    - minimum table: join {1,1,0,0} (PR-11 pairing), advertise
-     {1,0,0,0}, unknown feature refused;
+     {1,2,0,0} (PR-12: the first adv-verb image), unknown feature
+     refused;
    - THE query matrix (live console simulated, cache controlled):
        console dead            -> ABSENT / NO_CONSOLE / refused
        version round trip fail -> ABSENT / TRANSPORT / refused
@@ -268,8 +269,8 @@ static void test_minimums(void)
            m[0] == 1 && m[1] == 1 && m[2] == 0 && m[3] == 0,
            "wifi join minimum {1,1,0,0} (PR-11 pairing)");
     CHECKN(esp_feature_minimum(ESP_FEATURE_BLE_ADVERTISE, m) &&
-           m[0] == 1 && m[1] == 0 && m[2] == 0 && m[3] == 0,
-           "ble advertise minimum {1,0,0,0}");
+           m[0] == 1 && m[1] == 2 && m[2] == 0 && m[3] == 0,
+           "ble advertise minimum {1,2,0,0} (PR-12: first adv-verb image)");
     CHECKN(esp_feature_minimum((esp_feature_t)99, m) == false,
            "unknown feature refused");
     CHECKN(esp_feature_minimum(ESP_FEATURE_WIFI_JOIN, NULL) == false,
@@ -281,7 +282,7 @@ static void test_query_matrix(void)
 {
     const uint8_t min_v[] = {1, 1, 0, 0};
     const uint8_t older_v[] = {0, 9, 9, 9};
-    const uint8_t newer_v[] = {1, 0, 1, 0};
+    const uint8_t newer_v[] = {1, 2, 0, 1};
     const uint8_t cache_new_v[] = {9, 9, 9, 9};
     const uint8_t cache_other_new_v[] = {2, 0, 0, 0};
     uint8_t m[4];
@@ -321,8 +322,8 @@ static void test_query_matrix(void)
     expect_state("equivalent", ESP_FEATURE_WIFI_JOIN, ESP_FW_EQUIVALENT,
                  RS, true, min_v, false, true, "ESP fw supported");
 
-    /* 5. live > minimum. */
-    sim_reset(true, true, "ESPFW 1.0.1.0\r\n>> ");
+    /* 5. live > minimum (BLE advertise minimum is 1.2.0.0, PR-12). */
+    sim_reset(true, true, "ESPFW 1.2.0.1\r\n>> ");
     expect_state("newer", ESP_FEATURE_BLE_ADVERTISE, ESP_FW_NEWER,
                  RS, true, newer_v, true, true, "ESP fw newer");
 
@@ -349,9 +350,10 @@ static void test_query_matrix(void)
     }
 
     /* 8. VBAT-loss direction: record cleared, live current -> allowed.
-     * The live answer is authoritative in BOTH directions. */
+     * The live answer is authoritative in BOTH directions. (Live
+     * 1.2.0.0 == the PR-12 advertise minimum.) */
     m1cp_esp_version_init();   /* host: clears to unavailable */
-    sim_reset(true, true, "ESPFW 1.0.0.0\r\n>> ");
+    sim_reset(true, true, "ESPFW 1.2.0.0\r\n>> ");
     {
         esp_feature_gate_result_t r;
         esp_fw_state_t s = esp_feature_gate_query(ESP_FEATURE_BLE_ADVERTISE, &r);

@@ -112,8 +112,10 @@ typedef enum
  * required to report (declared in-tree as ESP32C6_FW_VERSION_LINE;
  * the console firmware itself is external) -- so the gate
  * accepts only firmware that answers the live handshake with the join
- * handler aboard; PR-12 owns the advertise-command minimum (still at
- * the pre-pairing placeholder).*/
+ * handler aboard; PR-12 pins the advertise minimum to 1.2.0.0, the
+ * version the first console image carrying the `adv` verb must report
+ * (no such image exists yet: the paired 1.1.0.0 firmware is honestly
+ * OLDER -- configure and save work, advertising is refused).*/
 typedef enum
 {
     ESP_FEATURE_WIFI_JOIN     = 0,  /* PR-11: AP join handler on the console firmware */
