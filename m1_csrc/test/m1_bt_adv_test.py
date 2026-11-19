@@ -1161,22 +1161,43 @@ def static_checks():
     #     range. Both helpers are pure but sit in the HAL-bound TU
     #     outside the compiled harnesses, so their contracts get
     #     static pins here.
+    #
+    #     Pin the RETURN, not just the comparison: a looser pattern (the
+    #     original one matched `== ms ... DEFAULT_MS` anywhere and the
+    #     clamp's `? preset :` regardless of operator) stays green when
+    #     the default loop returns via `break` -- mapping a stored 0 to
+    #     the 100 ms entry instead of the documented 1000 ms -- or when
+    #     the clamp operator is inverted to `>`. Mutation-verified.
     iv_fn = function(bt, "bt_adv_interval_index")
     CHECK(
-        re.search(r"==\s*ms.*M1_BT_ADV_INTERVAL_DEFAULT_MS", iv_fn, re.S) is not None,
-        "interval mapping: exact table match first, then the "
-        "documented 1000 ms default entry",
+        re.search(r"==\s*ms\s*\)\s*\{\s*return\s+i\s*;", iv_fn) is not None,
+        "interval mapping: an exact table match returns its own index",
+    )
+    CHECK(
+        re.search(
+            r"==\s*\(uint16_t\)\s*M1_BT_ADV_INTERVAL_DEFAULT_MS\s*\)"
+            r"\s*\{\s*return\s+i\s*;",
+            iv_fn,
+        )
+        is not None,
+        "interval mapping: a stored value outside the table returns the "
+        "documented 1000 ms default entry's index (return, not break)",
+    )
+    CHECK(
+        re.search(r"return\s+0U\s*;", iv_fn) is not None,
+        "interval mapping: still yields a valid index if the table lacks the default",
     )
     clamp_fn = function(bt, "bt_adv_preset_clamp")
     CHECK(
         re.search(
-            r"M1_BT_ADV_PRESET__COUNT.*\?\s*preset\s*:\s*"
-            r"\(uint8_t\)\s*M1_BT_ADV_PRESET_NAME",
+            r"preset\s*<\s*\(uint8_t\)\s*M1_BT_ADV_PRESET__COUNT\s*\)\s*\?\s*"
+            r"preset\s*:\s*\(uint8_t\)\s*M1_BT_ADV_PRESET_NAME",
             clamp_fn,
             re.S,
         )
         is not None,
-        "preset clamp keeps in-range ids, clamps the rest to PRESET_NAME",
+        "preset clamp keeps in-range ids (< PRESET__COUNT) and clamps "
+        "the rest to PRESET_NAME",
     )
 
     # 14. Samsung table self-consistency (iter-2 Advisory): the
