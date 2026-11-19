@@ -5,7 +5,7 @@
 The issue #45 final gate requires that `git diff upstream/main..main` show
 **exactly the justified carry layer — nothing unexplained**. This document is
 that audit, cut at the v0.9.0.0-UFO release commit, and it is machine-checked:
-`python tools/check_delta_audit.py` recomputes the diff at the recorded basis and
+`python tools/check_delta_audit.py` recomputes the diff at `HEAD` and
 fails on any unexplained or stale row (exit 0 = zero unexplained rows).
 
 ## Basis
@@ -14,21 +14,25 @@ fails on any unexplained or stale row (exit 0 = zero unexplained rows).
   `2af1f8a339dbe629f36a0551de4293b161179b71` (upstream 0.8.1.0). The gate
   asserts `git merge-base upstream/main <basis-end>` equals this pin, so the
   audit can never silently widen to include upstream's own later movement.
-- Fork side: the release commit recorded below.
-- Enumeration: `git diff --name-only upstream/main <basis-end>` — every file
-  whose blob differs.
+- Fork side: the release commit recorded below. It must be an ancestor of
+  `HEAD`; coverage is always evaluated at `HEAD`, so a commit made after the
+  cut cannot add a differing file that escapes the audit.
+- Enumeration: `git diff --name-only upstream/main HEAD` — every file whose
+  blob differs.
 
 ## Method
 
 Each differing file lands in exactly one class:
 
-1. **Content** — the file has text hunks under a whitespace-ignored diff
-   (`git diff -w --numstat`, the same standard the merge ledger uses, so
-   EOL/restyle noise can neither hide a real delta nor masquerade as one).
+1. **Content** — the file has text hunks under a carriage-return-ignored diff
+   (`git diff --ignore-cr-at-eol --numstat`). Only CRs are ignored, never all
+   whitespace: a delta that changes nothing but whitespace inside a literal is
+   a real content change and is audited, while the merge-1 CRLF→LF
+   renormalization stays classifiable as EOL-only.
    Content rows cite the merge ledger
    ([LEDGER.md](LEDGER.md)) where a legacy-fork disposition exists, and
    otherwise carry an explicit merge-era explanation (gloss + landing PRs).
-2. **EOL-only** — the blob differs but `-w` finds zero hunks: the merge-1
+2. **EOL-only** — the blob differs but `--ignore-cr-at-eol` finds zero hunks: the merge-1
    LF renormalization (commit `07a24e8`, `.gitattributes` LF-in-repo policy)
    rewrote upstream's CRLF-stored files to LF with no content change. These
    are enumerated in the appendix and explained as a class; individually they
@@ -711,7 +715,7 @@ m1_csrc/m1_types_def.h
 ## Appendix: EOL-only files
 
 Every file below differs from `upstream/main` **only** by line endings (zero
-content hunks under `git diff -w`); the merge-1 LF renormalization explains
+content hunks under `git diff --ignore-cr-at-eol`); the merge-1 LF renormalization explains
 them as a class. The gate holds the list exhaustive: a file may not appear
 here unless it is in the recorded diff with no content delta, and no EOL-only
 file may be missing.
@@ -723,7 +727,7 @@ python tools/check_delta_audit.py
 ```
 
 Requires the `upstream` remote fetched. The gate re-derives both classes at
-the recorded basis, re-reads the ledger dispositions at that commit, and
-verifies the tables above row for row — fail-closed on anything unexplained,
-missing, or stale. Regenerate the body after a future release cut with
+`HEAD`, re-reads the ledger dispositions at `HEAD`, and verifies the tables
+above row for row — fail-closed on anything unexplained, missing, or stale,
+and on a recorded basis that is not an ancestor of `HEAD`. Regenerate the body after a future release cut with
 `python tools/check_delta_audit.py --emit` (see the tool header for details).

@@ -10,15 +10,23 @@ recorded in ``docs/merge/DELTA_AUDIT.md``:
   row in the audit table (citing the merge-ledger disposition where one
   exists, or the merge-era change otherwise) or as an **EOL-only** entry
   (blob differs solely by the merge-1 LF renormalization; zero content
-  hunks under ``git diff -w``);
+  hunks under ``git diff --ignore-cr-at-eol``);
 * no table row is stale (every row corresponds to a real diff entry).
 
-Content classification uses whitespace-ignored diffs (``git diff -w``),
-the same standard the merge ledger itself uses, so EOL/restyle noise
-cannot hide real deltas -- and conversely must not masquerade as one.
+Content classification ignores carriage returns only (``git diff
+--ignore-cr-at-eol``), never all whitespace: a delta that changes
+nothing but whitespace *inside* a literal is a real content change and
+must be audited, while the merge-1 CRLF->LF renormalization stays
+classifiable as EOL-only.
+
+Coverage is always evaluated at ``HEAD``. The ``basis-end`` recorded in
+the doc is provenance for when the table was cut: it must resolve and be
+an ancestor of ``HEAD``, so a commit made after the cut cannot add a
+differing file that escapes the audit.
 
 Fail-closed: any unexplained or stale row, any diff-side file missing
-from the doc, or an unresolvable recorded basis exits non-zero.
+from the doc, an unresolvable recorded basis, or a basis that is not an
+ancestor of ``HEAD`` exits non-zero.
 
 Usage (from the repository root):
 
@@ -224,7 +232,7 @@ def classify(up, end):
     """Return (files_all, content) where content maps path -> (status, add)."""
     files_all = [f for f in git("diff", "--name-only", up, end).splitlines() if f]
     content = {}
-    for line in git("diff", "-w", "--numstat", up, end).splitlines():
+    for line in git("diff", "--ignore-cr-at-eol", "--numstat", up, end).splitlines():
         if not line:
             continue
         add, dele, path = line.split("\t")
@@ -317,15 +325,21 @@ def doc_basis(doc):
 
 def check(up):
     doc = open(REPO_FILES["DOC"], encoding="utf-8").read()
-    end = doc_basis(doc)
-    # basis must resolve and upstream must still be the merge base of it
-    git("rev-parse", f"{end}^{{commit}}")
-    base = git("merge-base", up, end).strip()
+    basis = doc_basis(doc)
+    # Provenance: the recorded basis must resolve and upstream must still be
+    # its merge base (the audit may never silently widen to include upstream's
+    # own later movement)...
+    git("rev-parse", f"{basis}^{{commit}}")
+    base = git("merge-base", up, basis).strip()
     pin = git("rev-parse", up).strip()
     if base != pin:
         sys.exit(f"FAIL: merge-base({up}, basis) = {base} != pin {pin}")
-    ledger = load_ledger(end)
-    _, missing, _, content, eol_only = emit(up, end, ledger)
+    # ...and it must be an ancestor of HEAD, so coverage below (evaluated at
+    # HEAD, not at the recorded basis) still describes this tree.
+    if git("merge-base", basis, "HEAD").strip() != basis:
+        sys.exit("FAIL: recorded basis is not an ancestor of HEAD")
+    ledger = load_ledger("HEAD")
+    _, missing, _, content, eol_only = emit(up, "HEAD", ledger)
 
     def between(mark):
         i = doc.index(mark[0]) + len(mark[0])
@@ -351,7 +365,7 @@ def check(up):
     for p in sorted(doc_eol - want_eol):
         fails.append(f"stale appendix entry (not in the recorded diff): {p}")
 
-    print(f"delta-audit gate: basis {end[:12]}")
+    print(f"delta-audit gate: basis {basis[:12]} (evaluated at HEAD)")
     print(
         f"  content rows: {len(want_rows)} "
         f"({sum(1 for p in want_rows if p in ledger)} ledger-cited, "
