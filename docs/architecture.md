@@ -119,6 +119,13 @@ IR database browser reads the Flipper IRDB layout under `0:/IR`
 (see [IR database provisioning](ir-provisioning.md) and the Infrared
 subsystem section below).
 
+The `0:/ble` folder carries two distinct text conventions: saved scan
+records (`*.ble`, written by Device Details — an `Address:` header plus
+the raw `list <id>` detail block) and advertisement payload files
+(`*.adv`, read by the BLE advertisement editor — plain hex text of the
+raw 31-byte advertising payload, whitespace-tolerant, validated on
+load against the Bluetooth AD-structure grammar and the legacy cap).
+
 ### User settings (`0:/System/settings.cfg`)
 
 Durable user settings live in `0:/System/settings.cfg`
@@ -438,6 +445,57 @@ ESP-side command) and the accepted link exposure are documented in
 Reconnect policy: exactly one attempt per boot at first Wi-Fi-menu
 entry, first credentialed row in store order, re-verified and
 re-decrypted at join time, 15 s budget.
+
+*BLE advertisement* (issue #11, PR-12) rides the same console session
+through the Bluetooth → Adv Editor screen. Command grammar (built by
+`m1_csrc/m1_bt_adv.c`, appended CRLF by the BT plumbing):
+
+```
+adv <interval_units> <PAYLOAD-HEX>    start advertising
+adv stop                              stop advertising
+```
+
+`<interval_units>` is the advertising interval in the **BLE-standard
+0.625 ms unit** — the native unit of `esp_ble_gap_set_adv_params`
+`adv_int_min`/`adv_int_max` on the ESP32 side, so the console handler
+passes it through with no arithmetic. The plan's `<interval_ms>` field
+was deliberately changed to units on the wire (a documented deviation):
+the STM32 converts the user's millisecond preset exactly
+(`m1_bt_adv_ms_to_units()`: ms × 8 ÷ 5; only multiples of 5 ms, and
+only inside the BLE range 20 ms..10.24 s → 0x20..0x4000 units) and
+refuses anything non-representable rather than send a rounded
+interval. The shipped ms presets (100/250/500/1000/2000) all convert
+losslessly. `<PAYLOAD-HEX>` is the complete raw advertising payload as
+uppercase hex, already validated against the Bluetooth AD-structure
+grammar (`[length][type][data]` walks ending exactly on a structure
+boundary) and the 31-byte legacy cap. Expected ESP-side behavior for
+the external firmware follow-up: set the raw adv data
+(`esp_ble_gap_config_adv_data_raw`), set
+`adv_int_min = adv_int_max = <interval_units>`, advertise; reply with
+a **line-anchored** `ADV:OK` (started/stopped) or `ADV:FAIL` line —
+the STM32 classifier (`m1_bt_adv_classify_reply`) ignores marker
+substrings mid-line (the console echoes the typed command) and treats
+anything unrecognizable as an honest failure. Presets live only on
+the STM32 (`m1_bt_adv.c`'s fixed-byte table: Apple proximity
+continuity 0x07 skeleton, Samsung Easysetup, Microsoft Swift Pair —
+protocol facts with documented provenance, plus flags+name and
+custom-from-SD payloads), so the console handler stays generic: raw
+bytes + interval, no preset table duplicated on the ESP32.
+
+The advertise **minimum is pinned to ESPFW 1.2.0.0** — the version the
+first console image carrying the `adv` verb must report. No such image
+exists yet: the currently paired image (1.1.0.0, join-handler firmware
+with no advertise verb) is honestly *OLDER*, so the gate shows "ESP
+update required" and **nothing is sent** — the editor remains fully
+usable for configuring and persisting the name/preset/interval
+(settings store fields `bt_adv_name`/`bt_preset`/`bt_interval_ms`,
+one atomic `settings_save()` on BACK). `adv stop` is only ever sent
+after a gated start succeeded (the `g_bt_adv_active` latch), and
+leaving the Bluetooth menu stops advertising. When the external
+advertise firmware lands it must answer `version` with ≥ 1.2.0.0 and
+`ESP32C6_FW_VERSION_LINE` moves with it (tracked in the follow-up
+issue). The vendor `AT+BLEADVDATAEX` define in the SPI-AT example is
+not used by any shipped feature.
 
 ## Infrared subsystem
 

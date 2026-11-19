@@ -11,6 +11,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fork: BLE advertisement config editor (issue #11, PR-12 of the Merge
+  3 series) — the full STM32-side editor under Bluetooth → Adv Editor;
+  advertising executes only on gated ESP32 firmware.
+  - Payload presets (`m1_csrc/m1_bt_adv.c/.h`, pure host-testable
+    core): Apple proximity pair (company 0x004C continuity Nearby
+    Action `1E FF 4C 00 07 19 …` skeleton, 31 bytes — the full legacy
+    cap), Samsung Easysetup (0x0075 `1B FF 75 00 42 09 …`, 28 bytes),
+    Microsoft Swift Pair (`06 FF 06 00 03 00 80`, 7 bytes — the plan's
+    anchor literal corrected to the Core-Spec length count so the
+    structure passes the module's own validator), a flags+name beacon,
+    and custom payloads from SD (`0:/ble/*.adv` hex text). All bytes
+    are protocol facts with documented provenance; no GPL application
+    code. AD-structure validity and the 31-byte cap are enforced at
+    build time.
+  - Editor: advertisement name (virtual keyboard), preset selection,
+    interval presets (100/250/500/1000/2000 ms), a saved-payload
+    browser over `0:/ble`, and Start/Stop. Persistence rides the PR-1
+    store fields (`bt_adv_name`/`bt_preset`/`bt_interval_ms`) with one
+    atomic `settings_save()` on BACK; the custom SD pick is
+    session-local (no new storage).
+  - Advertise command path: `adv <interval_units> <PAYLOAD-HEX>` plus
+    `adv stop`, built by refuse-not-truncate builders. The wire
+    interval is in BLE-native 0.625 ms units (a documented deviation
+    from the plan's `<interval_ms>`: the STM32 converts the ms preset
+    exactly — ms × 8 ÷ 5, multiples of 5 ms inside 20 ms..10.24 s —
+    so the ESP32 handler needs no lossy arithmetic). Replies classify
+    by line-anchored `ADV:OK` / `ADV:FAIL` markers.
+  - Gate + flash-gate: the advertise minimum is pinned to ESPFW
+    1.2.0.0 — the version the first console image carrying the `adv`
+    verb must report. The currently paired 1.1.0.0 image is honestly
+    OLDER: "ESP update required", nothing sent; configure-and-save
+    works today. `adv stop` is only ever sent after a gated start
+    succeeded (active-latch), and Bluetooth exit stops advertising.
+  - Host suite `m1_csrc/test/m1_bt_adv_test.py` (wired into
+    `scripts/run_host_tests.sh`): preset provenance pins, validator
+    battery, interval conversion and bounds, exact command strings,
+    classifier echo battery, gate pairing battery (paired 1.1.0.0 →
+    OLDER/refused; 1.2.0.0 → allowed; stale DR2/DR3 never gates), and
+    static seams pinning gate-before-write ordering and the ADV:OK
+    success latch. Editor-shaped settings round-trip added to the
+    settings-store suite.
 - Fork: Wi-Fi join flow + ESP32 join handler (issue #42 completion,
   PR-11 of the Merge 3 series) — the user-facing join/reconnect
   experience over the PR-9 encrypted-credential store and the PR-10
