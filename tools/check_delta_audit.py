@@ -11,7 +11,10 @@ recorded in ``docs/merge/DELTA_AUDIT.md``:
   exists, or the merge-era change otherwise) or as an **EOL-only** entry
   (blob differs solely by the merge-1 LF renormalization; zero content
   hunks under ``git diff --ignore-cr-at-eol``);
-* no table row is stale (every row corresponds to a real diff entry).
+* no table row is stale (every row corresponds to a real diff entry), and
+  every Change cell matches the recomputed status/add-count -- except the
+  audit's own row, which is rendered ``M (self)`` (or ``A (self)``) because
+  rewriting the table changes that file's own add-count.
 
 Content classification ignores carriage returns only (``git diff
 --ignore-cr-at-eol``), never all whitespace: a delta that changes
@@ -287,7 +290,13 @@ def emit(up, end, ledger):
     missing = []
     for path in sorted(content):
         status, add = content[path]
-        delta = "rename" if status == "R100" else f"{status} +{add}"
+        if path == REPO_FILES["DOC"]:
+            # Self-reference: rewriting this table changes this file's own
+            # add-count, so a numeric cell could never be stable. The marker
+            # is what the gate expects for this one row.
+            delta = f"{status[:1]} (self)"
+        else:
+            delta = "rename" if status == "R100" else f"{status} +{add}"
         if path in ledger:
             refs = ", ".join(pr_refs(up, end, path))
             extra = f"; later PRs: {refs}" if refs else ""
@@ -345,7 +354,12 @@ def check(up):
         i = doc.index(mark[0]) + len(mark[0])
         return doc[i : doc.index(mark[1])]
 
-    doc_rows = set(re.findall(r"^\| `([^`]+)` \|", between(CONTENT_MARK), re.M))
+    doc_cells = {}
+    for line in between(CONTENT_MARK).splitlines():
+        m = re.match(r"^\| `([^`]+)` \| ([^|]*?)\s*\|", line)
+        if m:
+            doc_cells[m.group(1)] = m.group(2).strip()
+    doc_rows = set(doc_cells)
     doc_eol = set(
         l.strip()
         for l in between(EOL_MARK).splitlines()
@@ -360,6 +374,17 @@ def check(up):
         fails.append(f"diff file missing from the audit table: {p}")
     for p in sorted(doc_rows - want_rows):
         fails.append(f"stale audit row (not in the recorded diff): {p}")
+    for p in sorted(want_rows & doc_rows):
+        status, add = content[p]
+        if p == REPO_FILES["DOC"]:
+            expected = f"{status[:1]} (self)"
+        else:
+            expected = "rename" if status == "R100" else f"{status} +{add}"
+        got = doc_cells[p]
+        if got != expected:
+            fails.append(
+                f"stale Change cell for {p}: doc has {got!r}, diff says {expected!r}"
+            )
     for p in sorted(want_eol - doc_eol):
         fails.append(f"EOL-only file missing from the appendix: {p}")
     for p in sorted(doc_eol - want_eol):
