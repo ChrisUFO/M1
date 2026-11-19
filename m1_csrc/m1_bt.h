@@ -44,5 +44,6 @@ void bluetooth_scan_devices(void);
 void bluetooth_signal_meter(void);
 void bluetooth_gatt_explorer(void);
 void bluetooth_saved(void);
+void bluetooth_adv_editor(void);
 
 #endif /* M1_BT_H_ */

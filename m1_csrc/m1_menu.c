@@ -509,11 +509,19 @@ S_M1_Menu_t menu_Bluetooth_Saved =
     "Saved", bluetooth_saved, NULL, NULL, 0, 0, NULL, NULL, {NULL}
 };
 
+/* Advertisement config editor (issue #11): configure + persist the adv
+ * name/preset/interval and the SD custom payload; the Start action is
+ * runtime-gated on the ESP32 advertise firmware (PR-10 live gate). */
+S_M1_Menu_t menu_Bluetooth_AdvEditor =
+{
+    "Adv Editor", bluetooth_adv_editor, NULL, NULL, 0, 0, NULL, NULL, {NULL}
+};
+
 
 S_M1_Menu_t menu_Bluetooth =
 {
-    "Bluetooth", menu_bluetooth_init, menu_bluetooth_exit, NULL, 4, 0, menu_m1_icon_bluetooth, NULL,
-    {&menu_Bluetooth_ScanDevices, &menu_Bluetooth_SignalMeter, &menu_Bluetooth_GattExplorer, &menu_Bluetooth_Saved}
+    "Bluetooth", menu_bluetooth_init, menu_bluetooth_exit, NULL, 5, 0, menu_m1_icon_bluetooth, NULL,
+    {&menu_Bluetooth_ScanDevices, &menu_Bluetooth_SignalMeter, &menu_Bluetooth_GattExplorer, &menu_Bluetooth_Saved, &menu_Bluetooth_AdvEditor}
 };
 
 /* NOTE: MonstaShark capture moved INTO the Wi-Fi menu (menu_Capture_Network /

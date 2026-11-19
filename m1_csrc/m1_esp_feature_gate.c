@@ -95,12 +95,18 @@ static bool esp_gate_console_version_reply_seam(char *buf, uint16_t buf_size,
  * Esp_spi_at/.../esp_at_list.h, whose `AT+CWJAP` join handler is the
  * matching CTRL_REQ_CONNECT_AP implementation; the console firmware
  * itself is external); the host suite pins
- * the two constants together so they cannot drift. BLE stays at the
- * pre-pairing placeholder until PR-12 lands its advertise command. */
+ * the two constants together so they cannot drift. PR-12 pins the
+ * advertise minimum to 1.2.0.0 -- the version the FIRST console image
+ * that carries the `adv` verb must report. No such image exists yet:
+ * the currently paired 1.1.0.0 image has no advertise command, so the
+ * gate honestly reports OLDER for it ("ESP update required" -- the
+ * editor configures and saves, advertising refuses). When the external
+ * advertise firmware lands it must answer `version` with >= 1.2.0.0
+ * and ESP32C6_FW_VERSION_LINE moves with it (follow-up issue). */
 static const uint8_t s_feature_min[ESP_FEATURE__COUNT][4] =
 {
     { 1u, 1u, 0u, 0u },   /* ESP_FEATURE_WIFI_JOIN     */
-    { 1u, 0u, 0u, 0u }    /* ESP_FEATURE_BLE_ADVERTISE */
+    { 1u, 2u, 0u, 0u }    /* ESP_FEATURE_BLE_ADVERTISE */
 };
 
 /* User-facing diagnostics, one per state (ABSENT split by reason).
