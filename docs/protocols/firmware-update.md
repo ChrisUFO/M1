@@ -506,7 +506,7 @@ None of this is executable in CI. It is tracked as the issue #41 hardware gate
 ## Recovery and rollback status
 
 The source contains a manual alternate-bank rollback path, but it is not part
-of the supported FW 0.8.0.5 release claim and has not been hardware-qualified for
+of the v0.9.0.0-UFO release claim and has not been hardware-qualified for
 this release. Automatic failed-boot rollback is not implemented; boot-time
 integrity detection and boot/swap accounting are (see "Boot failsafe" above),
 and a failed boot offers bounded DFU entry (see "DFU entry" above). Supported

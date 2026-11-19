@@ -46,6 +46,11 @@ See [HARDWARE.md](HARDWARE.md) for more details.
 - [Merge ledger](docs/merge/LEDGER.md) – Disposition of every fork-changed file
   vs the upstream 0.8.1.0 base (issue #38): what the base already covers, what
   follow-up patches carry, what was dropped and why
+- [Release delta audit](docs/merge/DELTA_AUDIT.md) – Machine-checked audit of
+  `git diff upstream/main..main` at the v0.9.0.0-UFO release: every difference
+  mapped to a ledger disposition or an explained merge-era change (issue #45)
+- [Release notes](docs/releases/0.9.0.0-UFO.md) – v0.9.0.0-UFO release notes:
+  carried features, dropped/superseded work, known limits, IR starter database
 
 ## Building
 

@@ -3,8 +3,9 @@
 This directory is the entry point for M1 firmware, hardware, interface, test,
 release, and operational documentation.
 
-> **Documentation status:** These pages were reconciled for the FW 0.8.0.5
-> integration. Items marked **Needs validation** are not
+> **Documentation status:** These pages were reconciled for the **v0.9.0.0-UFO**
+> release on the adopted upstream 0.8.1.0 base (2026-11-19). Items marked
+> **Needs validation** are not
 > established product requirements and must be confirmed by the responsible
 > firmware, hardware, security, or manufacturing owner.
 
@@ -41,6 +42,14 @@ release, and operational documentation.
   test layers, and release gates.
 - [Release and version policy](releases.md) — version authority, artifact
   provenance, regions, and release manifest requirements.
+- [Release notes](releases/0.9.0.0-UFO.md) — the v0.9.0.0-UFO release notes:
+  carried features, dropped/superseded work, known limits, and the IR starter
+  database. Companion records: the IR database attribution
+  ([releases/irdb-attribution.md](releases/irdb-attribution.md)), the archived
+  on-device smoke checklist
+  ([releases/0.9.0.0-ufo-smoke-checklist.md](releases/0.9.0.0-ufo-smoke-checklist.md)),
+  and the release verification record
+  ([`../documentation/0.9.0.0-ufo-verification.md`](../documentation/0.9.0.0-ufo-verification.md)).
 - [Known issues and engineering validation](known-issues.md) — unresolved risks
   recovered from the engineering log and source comments.
 - [Security architecture](security.md) — implemented evidence, unverified
@@ -63,7 +72,7 @@ These files remain useful and are not replaced silently:
 | [`../documentation/mbt.md`](../documentation/mbt.md) | Detailed build-tool and CRC commands |
 | [`../documentation/usingVSCode.md`](../documentation/usingVSCode.md) | VS Code walkthrough |
 | [`../Changes log.txt`](../Changes%20log.txt) | Historical engineering journal; not authoritative for current requirements |
-| [`../CHANGELOG.md`](../CHANGELOG.md) | Historical changelog pending version reconciliation |
+| [`../CHANGELOG.md`](../CHANGELOG.md) | Keep-a-Changelog record; `[0.9.0.0-UFO]` is the current release section |
 | [`../documentation/MP Multitool M1 IO test.ods`](../documentation/MP%20Multitool%20M1%20IO%20test.ods) | Manufacturing I/O source sheet |
 | [`../documentation/Multitool M1 External GPIO Connection Terminal.ods`](../documentation/Multitool%20M1%20External%20GPIO%20Connection%20Terminal.ods) | External connector source sheet |
 | [`../documentation/Multitool M1 Function.ods`](../documentation/Multitool%20M1%20Function.ods) | Button/function source sheet |

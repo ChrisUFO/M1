@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0.0-UFO] - 2026-11-19
+
+First fork release cut on the adopted upstream 0.8.1.0 base (pin
+`2af1f8a339db`, merge-1 ancestry graft): every change below ships in the
+`M1_v0.9.0.0-UFO` artifacts. The rollback comparator accepts this version
+over both prior lines (0.8.11 legacy, 0.8.1.0 upstream).
+
 ### Added
 
 - Fork: BLE advertisement config editor (issue #11, PR-12 of the Merge
@@ -867,6 +874,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hashes portably (`md5sum`/`md5 -q`, `sha256sum`/`shasum -a 256`, shared
   implementation in `scripts/portable_hash.sh`) with identical keys on every
   host
+- Fork: release cut v0.9.0.0-UFO (issue #45) — release notes
+  (`docs/releases/0.9.0.0-UFO.md`) enumerating carried features,
+  dropped/superseded work and known limits; the machine-checked release
+  delta audit (`docs/merge/DELTA_AUDIT.md` +
+  `tools/check_delta_audit.py`) proving `git diff upstream/main..main`
+  has zero unexplained rows; the IR starter-database packaging
+  (`scripts/fetch_ir_starter_db.sh`, CC0-1.0 attribution in
+  `docs/releases/irdb-attribution.md`, `.ir` files stay out of git as
+  release assets); the archived on-device smoke checklist aggregating the
+  open hardware-acceptance issues
+  (`docs/releases/0.9.0.0-ufo-smoke-checklist.md`); the release
+  verification record (`documentation/0.9.0.0-ufo-verification.md`); the
+  upstream future-sync instruction in CONTRIBUTING; and the stale
+  0.8.0.5-era release docs (`docs/releases.md`, `docs/README.md`,
+  `docs/protocols/firmware-update.md`, `documentation/usingVSCode.md`)
+  rewritten for this release's policy and state
 - Fork: filename/include case corrected for case-sensitive filesystems
   (issue #46) — `m1_csrc/Res_String.{c,h}` → `res_string.{c,h}` and
   `Battery/Golden_Image_0420.h` → `golden_image_0420.h` (renamed with
