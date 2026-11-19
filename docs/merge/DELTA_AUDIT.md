@@ -52,7 +52,7 @@ names — a Linux-build fix, not a content change.
 
 ## Summary
 
-basis-end: `07ec6e0d71dfc4bdc5f6a723581d7ebc2f3faf6b`
+basis-end: `3a0325a2c37b1921bdd3e42c8936cc6d31cd9ad3`
 
 | Content rows (table below) | **202** |
 | — cited to a merge-ledger disposition | 73 |
@@ -246,7 +246,7 @@ basis-end: `07ec6e0d71dfc4bdc5f6a723581d7ebc2f3faf6b`
 | `scripts/verify_esp_interface_contract.sh` | M +21 | — (changed by merge-era work (not a legacy-fork delta)) | ESP SPI interface contract check, updated for the version-derived build (issue #40) (#59, #48) |
 | `tools/WINDOWS_VERIFICATION.md` | A +79 | — (new file added by merge-era work) | Windows verification adapter guide (issue #49) (#53) |
 | `tools/check_case_sensitivity.py` | A +266 | carried-by-patch -> #46 (LEDGER.md) | see ledger row; later PRs: #56, #48, #34 |
-| `tools/check_delta_audit.py` | A +410 | — (new file added by merge-era work) | machine gate behind this audit: regenerates and verifies zero unexplained rows (this release) (#95) |
+| `tools/check_delta_audit.py` | A +435 | — (new file added by merge-era work) | machine gate behind this audit: regenerates and verifies zero unexplained rows (this release) (#95) |
 | `tools/crc_test_vectors.py` | A +106 | — (new file added by merge-era work) | deterministic CRC test-vector generator (issue #40, PR #59) (#59) |
 | `tools/emulate_srec_cat_crc.py` | A +114 | — (new file added by merge-era work) | pure-Python srec_cat CRC emitter for hosts without SRecord (issue #49, PR #53) (#53) |
 | `tools/gcc-nosan/gcc-nosan.c` | A +134 | — (new file added by merge-era work) | gcc shim landing the Windows verification adapters (issue #49, PR #53) (#53) |
