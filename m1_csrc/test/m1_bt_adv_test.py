@@ -72,7 +72,11 @@ Layers:
      path goes only through bt_adv_exec_start;
    - g_bt_adv_active is set only after the ADV:OK classification (no
      success without the console's confirmation), with the comparison
-     polarity pinned (classify != OK refuses; == OK stops);
+     polarity pinned (classify != OK refuses; == OK stops) and the
+     guard-exit bodies pinned (each refusal block keeps its
+     `return ERROR;` and never does the thing it prevents; the stop
+     latch `stopped = 1U` exists exactly once, inside the
+     brace-matched classify==OK condition with no `||` bypass);
    - adv stop is only ever sent while advertising is active
      (bt_adv_exec_stop guards on g_bt_adv_active, and menu exit funnels
      through it), and the stop reply is CONSULTED: classification
@@ -185,6 +189,28 @@ def function(text, name):
         if depth == 0:
             return text[start : match.end() + token.end()]
     raise AssertionError(name)
+
+
+def if_body(text, cond):
+    """Brace-matched body of the first `if (<cond>) { ... }` whose
+    condition is exactly `cond` (string/comment aware -- same token
+    discipline as function())."""
+    start = text.index(f"if ({cond})")
+    open_at = text.index("{", start)
+    depth = 1
+    body = text[open_at + 1 :]
+    for token in re.finditer(
+        r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'])*\'|'
+        r"//[^\n]*|/\*[\s\S]*?\*/|[{}]",
+        body,
+    ):
+        if token.group() == "{":
+            depth += 1
+        elif token.group() == "}":
+            depth -= 1
+        if depth == 0:
+            return body[: token.start()]
+    raise AssertionError(f"if ({cond}) block")
 
 
 def host_cc():
@@ -1107,6 +1133,35 @@ def static_checks():
         "start refuses on a non-OK reply (polarity: classify != OK)",
     )
 
+    # 3b. Guard-exit pins (PR-14 remediation): the ordering and
+    #     polarity pins above survive deletion of the guard's own
+    #     `return ERROR;` -- the gate would be queried but ignored and
+    #     the adv command sent anyway (verified: three such mutants
+    #     passed the whole suite on main). The refusal BODIES must
+    #     refuse: each guard block contains its error return and never
+    #     the thing it exists to prevent.
+    gate_block = if_body(exec_fn, "!esp_feature_gate_allows(gate.state)")
+    CHECK(
+        "return ERROR;" in gate_block,
+        "gate refusal block returns ERROR (refuses, never falls through "
+        "to the adv send)",
+    )
+    CHECK(
+        "bt_cmd_process(" not in gate_block,
+        "gate refusal block never sends the adv command",
+    )
+    nok_block = if_body(
+        exec_fn,
+        "m1_bt_adv_classify_reply(g_bt_scratch) != M1_BT_ADV_REPLY_OK",
+    )
+    CHECK(
+        "return ERROR;" in nok_block,
+        "non-OK reply block returns ERROR (refuses, never falls through to the latch)",
+    )
+    CHECK(
+        "g_bt_adv_active = 1U" not in nok_block,
+        "non-OK reply block never latches active",
+    )
 
     # 4. The stop verb is only ever sent while advertising is active, and
     #    the editor/menu funnel through bt_adv_exec_stop.
@@ -1159,6 +1214,30 @@ def static_checks():
         "stop still resumes background discovery",
     )
 
+    # 4c. Stop-confirmation body (PR-14 remediation): `stopped = 1U`
+    #     may exist only inside the brace-matched block whose condition
+    #     chains the built command, the successful send, AND the
+    #     classify==OK term -- no `||` bypass, no second unconditional
+    #     assignment (the unconditional-latch mutant passed the whole
+    #     suite on main; the polarity pin alone cannot see it).
+    CHECK(
+        stop_fn.count("stopped = 1U") == 1,
+        "stopped is assigned exactly once in bt_adv_exec_stop",
+    )
+    stop_ok_m = re.search(
+        r"if\s*\(([^{}]*m1_bt_adv_classify_reply\([^{}]*\)\s*==\s*"
+        r"M1_BT_ADV_REPLY_OK\s*\))\)\s*\{([^{}]*)stopped\s*=\s*1U\s*;",
+        stop_fn,
+    )
+    CHECK(
+        stop_ok_m is not None,
+        "stopped = 1U sits inside the classify==OK guarded block",
+    )
+    if stop_ok_m is not None:
+        CHECK(
+            "||" not in stop_ok_m.group(1),
+            "stop confirmation condition has no || bypass (no unconditional stopped)",
+        )
 
     # 5. The adv verb never appears outside the gated transport /
     #    guarded stop: no other writer of the advertise command.
