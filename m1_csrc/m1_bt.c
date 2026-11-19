@@ -1841,16 +1841,31 @@ static uint8_t bt_adv_exec_start(const char *name, uint8_t preset,
 }
 
 /* Stop advertising (only ever sent when a start succeeded on gated
- * firmware), then return the console to background discovery. */
+ * firmware), then return the console to background discovery. The
+ * stop reply is classified exactly like the start path: a timeout or
+ * an ADV:FAIL line surfaces "Adv stop failed" instead of a silent
+ * success. The latch clears on every path -- the Bluetooth-menu exit
+ * (stop before the ESP32 reset) remains the backstop that ends
+ * advertising -- but the user is told when the console did not
+ * confirm the stop. */
 static void bt_adv_exec_stop(void)
 {
     char stopcmd[M1_BT_ADV_CMD_MAX];
+    uint8_t stopped = 0U;
 
     if (!g_bt_adv_active) { return; }
-    if (m1_bt_adv_build_stop_cmd(stopcmd, (size_t)sizeof(stopcmd)) > 0)
+    if ((m1_bt_adv_build_stop_cmd(stopcmd, (size_t)sizeof(stopcmd)) > 0) &&
+        (bt_cmd_process(stopcmd, g_bt_scratch, (uint16_t)sizeof(g_bt_scratch), 3U) == SUCCESS) &&
+        (m1_bt_adv_classify_reply(g_bt_scratch) == M1_BT_ADV_REPLY_OK))
     {
-        (void)bt_cmd_process(stopcmd, g_bt_scratch, (uint16_t)sizeof(g_bt_scratch), 3U);
+        stopped = 1U;
     }
+
+    if (!stopped)
+    {
+        bt_message_screen("Advertise", "Adv stop failed", "Check ESP32");
+    }
+
     g_bt_adv_active = 0U;
     bt_session_resume_scan();
 }

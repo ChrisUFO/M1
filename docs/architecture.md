@@ -495,7 +495,11 @@ leaving the Bluetooth menu stops advertising. When the external
 advertise firmware lands it must answer `version` with ≥ 1.2.0.0 and
 `ESP32C6_FW_VERSION_LINE` moves with it (tracked in the follow-up
 issue). The vendor `AT+BLEADVDATAEX` define in the SPI-AT example is
-not used by any shipped feature.
+not used by any shipped feature. The stop reply is classified with
+the same line-anchored discipline: a missed stop (timeout or
+`ADV:FAIL`) surfaces "Adv stop failed" to the user while still
+clearing the latch — the Bluetooth-menu exit (stop before the ESP32
+reset) remains the backstop that ends advertising.
 
 ## Infrared subsystem
 

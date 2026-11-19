@@ -65,7 +65,9 @@ Layers:
      success without the console's confirmation);
    - adv stop is only ever sent while advertising is active
      (bt_adv_exec_stop guards on g_bt_adv_active, and menu exit funnels
-     through it);
+     through it), and the stop reply is CONSULTED: classification
+     precedes the latch clear and a non-OK/timeout reply surfaces the
+     "Adv stop failed / Check ESP32" message (never a silent success);
    - menu wiring: Bluetooth menu has 5 children ending with the
      Adv Editor leaf; bluetooth_adv_editor is declared in m1_bt.h;
    - persistence: the editor applies settings_set_bt_adv_name /
@@ -731,6 +733,35 @@ def static_checks():
     )
     menu_exit = function(bt, "menu_bluetooth_exit")
     CHECK("bt_adv_exec_stop();" in menu_exit, "Bluetooth exit stops advertising first")
+
+    # 4b. Harden V1 (PR #93): the stop path CONSULTS the reply -- a
+    #     non-OK or timed-out stop is never treated as a silent
+    #     success. The classification gates a failure branch that
+    #     surfaces the message screen; the latch still clears on every
+    #     path (menu exit remains the backstop) and discovery resumes.
+    CHECK(
+        "bt_cmd_process(" in stop_fn and "m1_bt_adv_classify_reply(" in stop_fn,
+        "stop path consults the console reply (send result + classifier)",
+    )
+    CHECK(
+        stop_fn.index("m1_bt_adv_classify_reply")
+        < stop_fn.index("g_bt_adv_active = 0U"),
+        "stop classification precedes the latch clear",
+    )
+    CHECK(
+        "M1_BT_ADV_REPLY_OK" in stop_fn,
+        "only an ADV:OK-classified reply counts as stopped",
+    )
+    CHECK(
+        "bt_message_screen(" in stop_fn
+        and '"Adv stop failed"' in stop_fn
+        and '"Check ESP32"' in stop_fn,
+        "stop failure message exists (Adv stop failed / Check ESP32)",
+    )
+    CHECK(
+        "bt_session_resume_scan();" in stop_fn,
+        "stop still resumes background discovery",
+    )
 
     # 5. The adv verb never appears outside the gated transport /
     #    guarded stop: no other writer of the advertise command.

@@ -43,7 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     verb must report. The currently paired 1.1.0.0 image is honestly
     OLDER: "ESP update required", nothing sent; configure-and-save
     works today. `adv stop` is only ever sent after a gated start
-    succeeded (active-latch), and Bluetooth exit stops advertising.
+    succeeded (active-latch), its reply is classified with the same
+    discipline — a timeout or `ADV:FAIL` surfaces "Adv stop failed"
+    instead of a silent success — and Bluetooth exit stops
+    advertising.
   - Host suite `m1_csrc/test/m1_bt_adv_test.py` (wired into
     `scripts/run_host_tests.sh`): preset provenance pins, validator
     battery, interval conversion and bounds, exact command strings,
