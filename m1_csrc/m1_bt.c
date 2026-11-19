@@ -1762,6 +1762,21 @@ static uint8_t bt_adv_pick_custom(void)
     return loaded;
 }
 
+/* Secondary hint line for a gate refusal, derived from the state:
+ * only OLDER is genuinely a firmware-version problem (the remedy is
+ * flashing the advertise-capable image). Every ABSENT reason -- dead
+ * console, failed round trip, unrecognized version marker -- is a
+ * link/console problem; telling that user to update firmware would
+ * send them hunting for an image when the fix is the connection. */
+static const char *bt_adv_gate_hint(const esp_feature_gate_result_t *gate)
+{
+    if ((gate != NULL) && (gate->state == ESP_FW_OLDER))
+    {
+        return "Update ESP fw";
+    }
+    return "Check ESP32";
+}
+
 /* THE gated advertise transport: every adv send funnels through here.
  * The live feature gate runs FIRST -- on ABSENT/OLDER its diagnostic is
  * shown and NOTHING is sent to a console that has no adv verb. */
@@ -1814,7 +1829,7 @@ static uint8_t bt_adv_exec_start(const char *name, uint8_t preset,
     if (!esp_feature_gate_allows(gate.state))
     {
         bt_message_screen("Advertise", esp_feature_gate_diag(&gate),
-                          "Update ESP fw");
+                          bt_adv_gate_hint(&gate));
         return ERROR;
     }
 
@@ -2051,8 +2066,15 @@ void bluetooth_adv_editor(void)
                     {
                         (void)bt_adv_exec_start(name, preset,
                                                 s_bt_adv_intervals[iv_idx]);
-                        xQueueReset(button_events_q_hdl);
                     }
+                    /* Both RUN paths run multi-second console exchanges
+                     * (gated start, or stop + discovery resume); any
+                     * click queued meanwhile is stale -- with the latch
+                     * cleared it would restart advertising on the next
+                     * loop turn with no user intent. Drop it before the
+                     * next bt_wait_button, mirroring every sibling
+                     * branch's post-sub-screen reset. */
+                    xQueueReset(button_events_q_hdl);
                     break;
             }
         }
