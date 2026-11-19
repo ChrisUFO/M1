@@ -52,7 +52,7 @@ names — a Linux-build fix, not a content change.
 
 ## Summary
 
-basis-end: `3a0325a2c37b1921bdd3e42c8936cc6d31cd9ad3`
+basis-end: `6d592fb90c421c3e32b66565606b28faeac57725`
 
 | Content rows (table below) | **202** |
 | — cited to a merge-ledger disposition | 73 |
@@ -125,7 +125,7 @@ basis-end: `3a0325a2c37b1921bdd3e42c8936cc6d31cd9ad3`
 | `docs/releases/irdb-attribution.md` | A +166 | — (new file added by merge-era work) | CC0-1.0 text and attribution for the IR starter database (this release) (#95) |
 | `docs/security.md` | M +46 | — (changed by merge-era work (not a legacy-fork delta)) | security architecture incl. RNG/crypto notes (PR-8/PR-9) (#85, #82, #48) |
 | `docs/security/wifi-credential-threat-model.md` | A +152 | — (new file added by merge-era work) | WiFi credential threat model (issue #42, PR-9) (#88, #85) |
-| `documentation/0.9.0.0-ufo-verification.md` | A +236 | — (new file added by merge-era work) | release verification record: milestone state, version surfaces, build + parity evidence (this release) (#95) |
+| `documentation/0.9.0.0-ufo-verification.md` | A +249 | — (new file added by merge-era work) | release verification record: milestone state, version surfaces, build + parity evidence (this release) (#95) |
 | `documentation/mbt.md` | M +43 | — (changed by merge-era work (not a legacy-fork delta)) | build-tool walkthrough tracking the derived stem (issues #40/#41; stem sweep merge 1) (#61, #59, #48) |
 | `documentation/merge1-baseline-evidence.md` | A +273 | — (new file added by merge-era work) | merge-1 virgin-baseline evidence at the upstream pin (issue #37) (#48) |
 | `documentation/stability_phase5_validation.md` | A +132 | carried-by-patch -> #52 (LEDGER.md) | see ledger row; later PRs: #55, #48, #34 |
